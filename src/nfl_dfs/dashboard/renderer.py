@@ -820,13 +820,24 @@ def _render_snap_share_cell(usage: SnapShareUsage) -> str:
     s = usage.snap_share
     last = _fmt_pct(s.offense_pct_last_week)
     trailing = _fmt_pct(s.offense_pct_trailing)
+    trend = ""
+    # A real role-consolidating-or-fading signal, not just the blended trailing figure (Fantasy
+    # Football Expert's dashboard review) -- flagged only past a 10pt gap so normal week-to-week
+    # noise doesn't light up as a false trend.
+    if s.offense_pct_last_week is not None and s.offense_pct_trailing is not None:
+        delta = s.offense_pct_last_week - s.offense_pct_trailing
+        if abs(delta) >= 0.10:
+            css = "trend-up" if delta > 0 else "trend-down"
+            arrow = "&#9650;" if delta > 0 else "&#9660;"
+            trend = f' <span class="{css}">{arrow} {abs(delta) * 100:.0f}pt</span>'
     return (
-        f'<div class="cell-main">{last or "--"} last wk</div>'
+        f'<div class="cell-main">{last or "--"} last wk{trend}</div>'
         f'<div class="cell-sub">{trailing or "--"} trailing ({s.weeks_played}wk)</div>'
     )
 
 
-def _render_red_zone_cell(usage: RedZoneUsage) -> str:
+def _render_red_zone_cell(record: PlayerDetailRecord) -> str:
+    usage = record.usage.red_zone
     if usage.reason is not None:
         return _na(usage.reason)
     lines = []
@@ -843,7 +854,11 @@ def _render_red_zone_cell(usage: RedZoneUsage) -> str:
         # A real, distinguishable "not applicable role" state, not missing data -- e.g. a pure
         # WR/TE has no RB-role red-zone row at all. Muted, but not styled as an error/na state.
         return '<span class="muted">No red-zone role recorded (RB carries or WR/TE targets)</span>'
-    return "<br>".join(lines)
+    # A raw red-zone share means little without the team's own red-zone-trip frequency to weigh it
+    # against (Fantasy Football Expert's dashboard review) -- the closest already-computed proxy is
+    # this team's live implied point total, shown alongside rather than the share floating alone.
+    context = f'<div class="cell-sub">Team implied total: {record.implied_total:.1f}</div>' if record.implied_total is not None else ""
+    return "<br>".join(lines) + context
 
 
 def _render_own_scheme_cell(splits: OwnSchemeSplits) -> str:
@@ -914,7 +929,17 @@ def _render_game_environment_cell(record: PlayerDetailRecord) -> str:
         badges.append(_injury_badge(ge.injury_uncertainty_flag))
     badges_html = f'<div class="badges">{"".join(badges)}</div>' if badges else ""
     score = _fmt_num(ge.composite_score, 1) or "--"
-    return f'<div class="cell-main">{score} / 100</div>{badges_html}'
+    # The 0-100 composite hides direction -- a 3pt road dog in a 51pt game and a 10pt home favorite
+    # in a 44pt game can land on the same composite score but imply opposite player-selection
+    # theses (Fantasy Football Expert's dashboard review). Show the raw numbers alongside, not just
+    # the folded score.
+    extra = []
+    if record.implied_total is not None:
+        extra.append(f"implied {record.implied_total:.1f}")
+    if record.stack_context is not None:
+        extra.append(f"{record.stack_context.home_team} {record.stack_context.home_spread:+.1f}")
+    extra_html = f'<div class="cell-sub">{_esc(" · ".join(extra))}</div>' if extra else ""
+    return f'<div class="cell-main">{score} / 100</div>{extra_html}{badges_html}'
 
 
 def _render_ownership_cell(record: PlayerDetailRecord) -> str:
@@ -940,6 +965,123 @@ def _render_ownership_cell(record: PlayerDetailRecord) -> str:
         f'<div class="cell-main">{ownership.projected_ownership:.1f}% proj</div>'
         f"{baseline_sub}{badges_html}"
     )
+
+
+def _render_projection_cell(record: PlayerDetailRecord) -> str:
+    if record.projection is None:
+        return _na(record.projection_reason, fallback="no blended projection for this player")
+    return f'<span class="num">{record.projection:.1f}</span>'
+
+
+def _render_value_cell(record: PlayerDetailRecord) -> str:
+    value = record.value
+    if value is None:
+        return "&mdash;"
+    return f'<span class="num">{value:.2f}</span>'
+
+
+_BRING_BACK_STATUS_NOTES: dict[str, str] = {
+    "no_confident_candidate": "no confident bring-back candidate",
+    "environment_unavailable": "game environment unavailable",
+    "game_stack_not_viable": "game stack not viable",
+}
+
+
+def _render_stack_cell(record: PlayerDetailRecord) -> str:
+    ctx = record.stack_context
+    if ctx is None:
+        return _na(record.stack_context_reason, fallback="no StackProfile for this player's game")
+    badges = []
+    if ctx.is_primary_stack_candidate:
+        badges.append(
+            _badge(
+                f"Primary #{ctx.primary_stack_rank}",
+                "badge-stack-primary",
+                "Ranked primary-stack candidate for this game's anchor team, by target share "
+                "(StackProfile, correlation/stack_profile.py).",
+            )
+        )
+    if ctx.is_bring_back_candidate:
+        badges.append(
+            _badge(
+                "Bring-back",
+                "badge-stack-bringback",
+                "Live bring-back candidate for this game's stack thesis (StackProfile).",
+            )
+        )
+    badges_html = f'<div class="badges">{"".join(badges)}</div>' if badges else ""
+    sub_parts = [f"{ctx.home_team} {ctx.home_spread:+.1f}"]
+    if ctx.game_stack_viability is not None:
+        sub_parts.append(f"game stack {ctx.game_stack_viability:.0f}")
+    status_note = _BRING_BACK_STATUS_NOTES.get(ctx.bring_back_status)
+    if status_note and not ctx.is_bring_back_candidate:
+        sub_parts.append(status_note)
+    main = f'<div class="cell-main">{_fmt_num(ctx.single_team_viability, 0) or "--"} viability</div>'
+    sub = f'<div class="cell-sub">{_esc(" · ".join(sub_parts))}</div>'
+    return main + sub + badges_html
+
+
+_SLATE_WINDOW_LABELS: dict[str, str] = {
+    "early": "Early (1pm ET)",
+    "late": "Late (4pm ET)",
+    "snf": "SNF",
+    "mnf": "MNF",
+    "tnf": "TNF",
+    "other": "Other",
+}
+
+
+def _render_slate_window_cell(record: PlayerDetailRecord) -> str:
+    if record.slate_window is None:
+        return _na(record.slate_window_reason, fallback="no kickoff time known for this player's game")
+    return _esc(_SLATE_WINDOW_LABELS.get(record.slate_window, record.slate_window))
+
+
+def _render_injury_cell(record: PlayerDetailRecord) -> str:
+    if record.injury is None:
+        # "Not on the injury report" is real, positive information (presumed healthy) -- a
+        # different case from "no injury data was supplied at all" (composition/player_detail.py's
+        # `_injury` composer, ADR-0027), distinguished here by substring rather than importing that
+        # module's private reason constant.
+        if record.injury_reason and "presumed healthy" in record.injury_reason:
+            return '<span class="muted">Healthy</span>'
+        return _na(record.injury_reason, fallback="no injury data for this player")
+    injury = record.injury
+    return (
+        f'<div class="cell-main">{_esc(injury.status)} &middot; {_esc(injury.body_part)}</div>'
+        f'<div class="cell-sub">Impact {injury.impact_rating}/10</div>'
+    )
+
+
+def _expand_block(label: str, content_html: str) -> str:
+    return (
+        f'<div class="expand-block"><div class="expand-label">{_esc(label)}</div>'
+        f'<div class="expand-value">{content_html}</div></div>'
+    )
+
+
+_SKILL_POSITIONS: frozenset[str] = frozenset({"RB", "WR", "TE"})
+
+
+def _render_player_expand_content(record: PlayerDetailRecord) -> str:
+    """The deep-detail fields that don't earn a default-visible column (UI/UX's "wrong altitude
+    for a scannable default view" call, ADR-0027) -- shown per row on click, not hidden entirely.
+    Position-appropriate by construction: the skill-only blocks (role/snap/red-zone) are simply
+    omitted for QB/DST, and `own_scheme_splits.applicable` already gates itself, rather than this
+    function hardcoding a second, parallel position check.
+    """
+    blocks = []
+    if record.position in _SKILL_POSITIONS:
+        blocks.append(_expand_block("Role Share", _render_role_share_cell(record.usage.role_share)))
+        blocks.append(_expand_block("Snap Share", _render_snap_share_cell(record.usage.snap_share)))
+        blocks.append(_expand_block("Red Zone", _render_red_zone_cell(record)))
+    if record.own_scheme_splits.applicable:
+        blocks.append(_expand_block("Own Scheme Split", _render_own_scheme_cell(record.own_scheme_splits)))
+    blocks.append(_expand_block("Opp Coverage Faced", _render_coverage_tendency_cell(record.matchup_this_week)))
+    blocks.append(_expand_block("Game Environment", _render_game_environment_cell(record)))
+    blocks.append(_expand_block("Slate Window", _render_slate_window_cell(record)))
+    blocks.append(_expand_block("Injury", _render_injury_cell(record)))
+    return '<div class="expand-grid">' + "".join(blocks) + "</div>"
 
 
 def _position_sort_key(record: PlayerDetailRecord) -> tuple[int, str, str]:
@@ -973,6 +1115,55 @@ def _render_position_filters(player_details: list[PlayerDetailRecord]) -> str:
     return '<div class="pos-filters">' + "".join(buttons) + "</div>"
 
 
+def _player_view(position: str) -> str:
+    """Coarse Skill/QB/DST grouping (ADR-0027, per the Fantasy Football Expert's finding that QB
+    and DST are evaluated on fundamentally different mechanisms than the role-share/red-zone frame
+    that correctly drives RB/WR/TE, and UI/UX's recommendation to split them as their own sub-tab
+    rather than force them through that frame). Every field on `PlayerDetailRecord` already adapts
+    to position on its own (`own_scheme_splits.applicable`, `usage` sections only populate for
+    skill positions, etc.) -- this grouping controls which ROWS a sub-tab shows, not a second,
+    separately-maintained column manifest; `_render_player_expand_content` already renders the
+    right depth per row by construction, so a shared column set doesn't reintroduce the noise this
+    split exists to remove.
+    """
+    if position in _SKILL_POSITIONS:
+        return "skill"
+    if position == "QB":
+        return "qb"
+    if position == "DST":
+        return "dst"
+    return "other"
+
+
+_VIEW_LABELS: dict[str, str] = {"skill": "Skill (RB/WR/TE)", "qb": "QB", "dst": "DST"}
+
+
+def _render_view_filters(player_details: list[PlayerDetailRecord]) -> str:
+    views_present = sorted({_player_view(r.position) for r in player_details} & set(_VIEW_LABELS), key=lambda v: list(_VIEW_LABELS).index(v))
+    buttons = [
+        '<div class="view-filter active" data-view="ALL" onclick="setViewFilter(\'ALL\', this)">All positions</div>'
+    ]
+    for view in views_present:
+        buttons.append(
+            f'<div class="view-filter" data-view="{view}" onclick="setViewFilter(\'{view}\', this)">'
+            f"{_esc(_VIEW_LABELS[view])}</div>"
+        )
+    return '<div class="view-filters">' + "".join(buttons) + "</div>"
+
+
+# (column index, header label, sort type) for every sortable column -- column index must match the
+# literal <td> order built in _render_player_detail_tab below.
+_SORTABLE_COLUMNS: tuple[tuple[int, str, str], ...] = (
+    (0, "Player", "str"),
+    (1, "Pos", "str"),
+    (2, "Team", "str"),
+    (4, "Salary", "num"),
+    (5, "Projection", "num"),
+    (6, "Value", "num"),
+    (7, "Proj Own%", "num"),
+)
+
+
 def _render_player_detail_tab(
     player_details: list[PlayerDetailRecord], lineup_membership: dict[str, list[int]]
 ) -> str:
@@ -982,16 +1173,24 @@ def _render_player_detail_tab(
     legend = (
         "<details class=\"legend\"><summary>What&rsquo;s shown here, and what&rsquo;s left out"
         "</summary><div class=\"legend-body\">"
-        "<p><strong>Excluded from every row, for now:</strong> "
+        "<p><strong>Default columns vs. row detail (ADR-0027):</strong> the visible grid is "
+        "deliberately lean (identity, salary, projection, value, ownership/leverage, stack "
+        "context) so a 300-600 row pool stays scannable -- click a row to expand the rest (role "
+        "share, snap share, red zone, own man/zone scheme split, opponent coverage faced, game "
+        "environment, slate window, injury). Skill-only sections (role/snap/red-zone) are simply "
+        "omitted from the expand for QB/DST rather than shown empty, and <code>own_scheme_splits"
+        "</code> is omitted whenever <code>applicable</code> is <code>False</code>.</p>"
+        "<p><strong>Still excluded from every row:</strong> "
         "<code>matchup_this_week.own_unit_grade</code>/<code>opponent_unit_grade</code> "
         "(team-level run-block/run-defense, pass-block/pass-rush, or opponent coverage grade, "
         "per position) are computed by <code>MatchupContext</code> (ADR-0022 Round B, "
         "<code>matchup/context.py</code>) when a caller supplies <code>matchup_facets</code> to "
         "<code>build_player_detail_record</code> &mdash; but this dashboard's own render pipeline "
         "does not yet thread those facet pulls through, so these fields still read as "
-        "<code>None</code> here specifically (not because the formula is unimplemented). A real "
-        "per-row column is a small follow-up once that wiring exists; omitted here rather than "
-        "shown as a column of misleading <code>None</code>s that look like missing data.</p>"
+        "<code>None</code> here specifically (not because the formula is unimplemented). Also "
+        "still out: a lineup-*set*-level ownership rollup (does the 3-lineup set actually span "
+        "chalk-to-leverage) and a real ceiling/variance metric -- both flagged in this round's "
+        "dashboard review, both explicitly deferred (ceiling needs its own formula-design pass).</p>"
         "<p><strong>Narrowed at this render layer</strong> (present in the underlying "
         "<code>PlayerDetailRecord</code>, not shown in full here): snap share's "
         "<code>defense_pct</code>/<code>st_pct</code> (structurally near-zero for a rostered "
@@ -1010,6 +1209,7 @@ def _render_player_detail_tab(
         "</div></details>"
     )
 
+    view_filters = _render_view_filters(player_details)
     position_filters = _render_position_filters(player_details)
 
     search = (
@@ -1017,6 +1217,15 @@ def _render_player_detail_tab(
         '<input type="text" id="player-search" placeholder="Filter by player, team, or position...'
         '" oninput="filterPlayerDetailRows()">'
         '<span id="player-search-count" class="search-count"></span>'
+        "</div>"
+    )
+    viability = (
+        '<div class="viability-row">'
+        '<label><input type="checkbox" id="show-unviable" onchange="filterPlayerDetailRows()"> '
+        "Show players with no salary/projection</label>"
+        '<label>Min value ($/1K): <input type="number" id="value-floor" step="0.1" '
+        'placeholder="0" onchange="filterPlayerDetailRows()"></label>'
+        '<button type="button" onclick="resetPlayerDetailFilters()">Reset filters</button>'
         "</div>"
     )
 
@@ -1031,33 +1240,48 @@ def _render_player_detail_tab(
         opponent_cell = (
             "&mdash;" if record.opponent_team_this_week is None else _esc(record.opponent_team_this_week)
         )
+        has_baseline = "1" if record.salary is not None and record.projection is not None else "0"
+        value = record.value
+        value_sort = "" if value is None else f"{value:.4f}"
+        projected_own_sort = "" if record.ownership is None else f"{record.ownership.projected_ownership:.4f}"
         rows.append(
-            f'<tr class="player-row" data-position="{_esc(record.position)}">'
-            f"<td>{player_cell}</td>"
-            f"<td>{_esc(record.position)}</td>"
-            f"<td>{_esc(record.team)}</td>"
+            f'<tr class="player-row" data-position="{_esc(record.position)}" '
+            f'data-view="{_player_view(record.position)}" data-has-baseline="{has_baseline}" '
+            f'data-value="{value_sort}" onclick="togglePlayerExpand(this)">'
+            f'<td data-sort-value="{_esc(identity.display_name)}">{player_cell}</td>'
+            f'<td data-sort-value="{_esc(record.position)}">{_esc(record.position)}</td>'
+            f'<td data-sort-value="{_esc(record.team)}">{_esc(record.team)}</td>'
             f"<td>{opponent_cell}</td>"
-            f"<td>{_render_salary_cell(record)}</td>"
-            f"<td>{_render_role_share_cell(record.usage.role_share)}</td>"
-            f"<td>{_render_snap_share_cell(record.usage.snap_share)}</td>"
-            f"<td>{_render_red_zone_cell(record.usage.red_zone)}</td>"
-            f"<td>{_render_own_scheme_cell(record.own_scheme_splits)}</td>"
-            f"<td>{_render_coverage_tendency_cell(record.matchup_this_week)}</td>"
-            f"<td>{_render_game_environment_cell(record)}</td>"
-            f"<td>{_render_ownership_cell(record)}</td>"
+            f'<td data-sort-value="{record.salary or ""}">{_render_salary_cell(record)}</td>'
+            f'<td data-sort-value="{record.projection if record.projection is not None else ""}">{_render_projection_cell(record)}</td>'
+            f'<td data-sort-value="{value_sort}">{_render_value_cell(record)}</td>'
+            f'<td data-sort-value="{projected_own_sort}">{_render_ownership_cell(record)}</td>'
+            f"<td>{_render_stack_cell(record)}</td>"
             "</tr>"
+            f'<tr class="player-expand-row" hidden><td colspan="9">{_render_player_expand_content(record)}</td></tr>'
         )
+
+    header_cells = []
+    all_headers = ["Player", "Pos", "Team", "Opp", "Salary", "Projection", "Value", "Proj Own%", "Stack"]
+    sortable_by_index = {idx: sort_type for idx, _label, sort_type in _SORTABLE_COLUMNS}
+    for idx, label in enumerate(all_headers):
+        if idx in sortable_by_index:
+            sort_type = sortable_by_index[idx]
+            header_cells.append(
+                f'<th class="sortable" onclick="sortPlayerDetailRows({idx}, \'{sort_type}\', this)">{label}</th>'
+            )
+        else:
+            header_cells.append(f"<th>{label}</th>")
 
     table = (
         '<div class="table-scroll"><table class="player-detail-table"><thead><tr>'
-        "<th>Player</th><th>Pos</th><th>Team</th><th>Opp</th><th>Salary</th>"
-        "<th>Role Share</th><th>Snap Share</th><th>Red Zone</th>"
-        "<th>Own Scheme Split</th><th>Opp Coverage Faced</th><th>Game Environment</th>"
-        "<th>Ownership / Leverage</th>"
-        "</tr></thead><tbody>" + "".join(rows) + "</tbody></table></div>"
+        + "".join(header_cells)
+        + "</tr></thead><tbody>"
+        + "".join(rows)
+        + "</tbody></table></div>"
     )
 
-    return legend + position_filters + search + table
+    return legend + view_filters + position_filters + search + viability + table
 
 
 # ------------------------------------------------------------------------------------------
@@ -1142,6 +1366,8 @@ td { padding: 7px 10px; border-bottom: 1px solid var(--border); vertical-align: 
 }
 .badge-chalk { background: var(--amber); color: #1e1b0a; }
 .badge-leverage { background: var(--green); color: #fff; }
+.badge-stack-primary { background: var(--accent); color: #fff; }
+.badge-stack-bringback { background: var(--accent-light); color: var(--accent); border: 1px solid var(--accent); }
 .legend { margin-bottom: 12px; background: var(--bg2); border: 1px solid var(--border); border-radius: var(--radius); padding: 8px 14px; }
 .legend summary { cursor: pointer; font-weight: 600; color: var(--fg2); font-size: 0.82rem; }
 .legend-body { margin-top: 8px; font-size: 0.8rem; color: var(--fg2); line-height: 1.5; }
@@ -1153,6 +1379,36 @@ td { padding: 7px 10px; border-bottom: 1px solid var(--border); vertical-align: 
   background: var(--bg2); color: var(--fg); font-size: 0.85rem;
 }
 .search-count { color: var(--fg2); font-size: 0.78rem; }
+.view-filters { display: flex; gap: 6px; margin: 0 0 8px; flex-wrap: wrap; }
+.view-filter {
+  padding: 7px 16px; border-radius: 20px; font-size: 0.82rem; font-weight: 700;
+  cursor: pointer; background: var(--bg2); border: 1px solid var(--accent); color: var(--accent);
+}
+.view-filter.active { background: var(--accent); color: #fff; }
+.viability-row {
+  margin-bottom: 10px; display: flex; align-items: center; gap: 16px; flex-wrap: wrap;
+  font-size: 0.8rem; color: var(--fg2);
+}
+.viability-row input[type="number"] { width: 70px; padding: 4px 6px; border-radius: 6px; border: 1px solid var(--border); background: var(--bg2); color: var(--fg); }
+.viability-row button {
+  padding: 5px 12px; border-radius: 8px; border: 1px solid var(--border); background: var(--bg2);
+  color: var(--fg2); cursor: pointer; font-size: 0.78rem;
+}
+th.sortable { cursor: pointer; user-select: none; }
+th.sortable:after { content: " ⇅"; color: var(--fg3); font-size: 0.7rem; }
+th.sortable.sort-asc:after { content: " ↑"; color: var(--accent); }
+th.sortable.sort-desc:after { content: " ↓"; color: var(--accent); }
+tr.player-row { cursor: pointer; }
+tr.player-row:hover { background: var(--bg3); }
+tr.player-expand-row td { background: var(--bg3); border-bottom: 2px solid var(--border); padding: 12px 16px; }
+.expand-grid { display: flex; flex-wrap: wrap; gap: 16px; }
+.expand-block { min-width: 150px; }
+.expand-label {
+  font-size: 0.65rem; text-transform: uppercase; letter-spacing: 0.03em; color: var(--fg2);
+  font-weight: 700; margin-bottom: 3px;
+}
+.trend-up { color: var(--green); font-weight: 700; }
+.trend-down { color: var(--red); font-weight: 700; }
 .ge-pair { display: flex; gap: 14px; }
 .ge-pair > div { flex: 1; min-width: 90px; }
 .cell-injury { display: flex; align-items: center; gap: 6px; margin-top: 4px; }
@@ -1171,6 +1427,7 @@ function showTab(name) {
 }
 
 var activePositionFilter = 'ALL';
+var activeViewFilter = 'ALL';
 
 function setPositionFilter(pos, btn) {
   activePositionFilter = pos;
@@ -1180,27 +1437,120 @@ function setPositionFilter(pos, btn) {
   filterPlayerDetailRows();
 }
 
+function setViewFilter(view, btn) {
+  activeViewFilter = view;
+  document.querySelectorAll('.view-filter').forEach(function (b) {
+    b.classList.toggle('active', b === btn);
+  });
+  filterPlayerDetailRows();
+}
+
+function togglePlayerExpand(row) {
+  var expandRow = row.nextElementSibling;
+  if (!expandRow || !expandRow.classList.contains('player-expand-row')) { return; }
+  var expanded = row.classList.toggle('expanded');
+  expandRow.hidden = !expanded;
+}
+
 function filterPlayerDetailRows() {
   var query = document.getElementById('player-search').value.trim().toLowerCase();
-  var rows = document.querySelectorAll('#panel-players .player-row');
+  var showUnviable = document.getElementById('show-unviable').checked;
+  var floorInput = document.getElementById('value-floor');
+  var floor = floorInput && floorInput.value !== '' ? parseFloat(floorInput.value) : null;
+  var rows = document.querySelectorAll('#panel-players tr.player-row');
   var shown = 0;
   rows.forEach(function (row) {
     var textMatch = row.textContent.toLowerCase().indexOf(query) !== -1;
     var posMatch = activePositionFilter === 'ALL' || row.dataset.position === activePositionFilter;
-    var match = textMatch && posMatch;
+    var viewMatch = activeViewFilter === 'ALL' || row.dataset.view === activeViewFilter;
+    var hasBaseline = row.dataset.hasBaseline === '1';
+    var viableMatch = showUnviable || hasBaseline;
+    var rawValue = row.dataset.value;
+    var value = rawValue !== '' ? parseFloat(rawValue) : null;
+    var floorMatch = floor === null || value === null || value >= floor;
+    var match = textMatch && posMatch && viewMatch && viableMatch && floorMatch;
     row.style.display = match ? '' : 'none';
+    var expandRow = row.nextElementSibling;
+    if (expandRow && expandRow.classList.contains('player-expand-row')) {
+      if (!match) { expandRow.hidden = true; row.classList.remove('expanded'); }
+    }
     if (match) { shown += 1; }
   });
   var counter = document.getElementById('player-search-count');
   if (counter) { counter.textContent = shown + ' / ' + rows.length + ' players'; }
 }
 
+function resetPlayerDetailFilters() {
+  document.getElementById('player-search').value = '';
+  document.getElementById('show-unviable').checked = false;
+  document.getElementById('value-floor').value = '';
+  activePositionFilter = 'ALL';
+  activeViewFilter = 'ALL';
+  document.querySelectorAll('.pos-filter').forEach(function (b) { b.classList.toggle('active', b.dataset.pos === 'ALL'); });
+  document.querySelectorAll('.view-filter').forEach(function (b) { b.classList.toggle('active', b.dataset.view === 'ALL'); });
+  filterPlayerDetailRows();
+}
+
+function sortPlayerDetailRows(colIndex, type, headerEl) {
+  var table = headerEl.closest('table');
+  var tbody = table.querySelector('tbody');
+  var mainRows = Array.prototype.slice.call(tbody.querySelectorAll('tr.player-row'));
+  var pairs = mainRows.map(function (row) {
+    var next = row.nextElementSibling;
+    var expandRow = (next && next.classList.contains('player-expand-row')) ? next : null;
+    return [row, expandRow];
+  });
+  var desc = headerEl.dataset.sortDir !== 'desc';
+  table.querySelectorAll('th.sortable').forEach(function (th) {
+    th.classList.remove('sort-asc', 'sort-desc');
+    delete th.dataset.sortDir;
+  });
+  headerEl.dataset.sortDir = desc ? 'desc' : 'asc';
+  headerEl.classList.add(desc ? 'sort-desc' : 'sort-asc');
+  pairs.sort(function (a, b) {
+    var va = a[0].children[colIndex].dataset.sortValue;
+    var vb = b[0].children[colIndex].dataset.sortValue;
+    if (type === 'num') {
+      var na = (va === '' || va === undefined) ? -Infinity : parseFloat(va);
+      var nb = (vb === '' || vb === undefined) ? -Infinity : parseFloat(vb);
+      return desc ? nb - na : na - nb;
+    }
+    var sa = (va || '').toLowerCase();
+    var sb = (vb || '').toLowerCase();
+    if (sa < sb) { return desc ? 1 : -1; }
+    if (sa > sb) { return desc ? -1 : 1; }
+    return 0;
+  });
+  pairs.forEach(function (pair) {
+    tbody.appendChild(pair[0]);
+    if (pair[1]) { tbody.appendChild(pair[1]); }
+  });
+}
+
 document.addEventListener('DOMContentLoaded', function () {
   var counter = document.getElementById('player-search-count');
   if (counter) {
-    var total = document.querySelectorAll('#panel-players .player-row').length;
+    var total = document.querySelectorAll('#panel-players tr.player-row').length;
     counter.textContent = total + ' / ' + total + ' players';
   }
+
+  // Default the soft viability floor to this slate's own bottom-quartile value, applied
+  // immediately (not just hinted) so the page opens already scannable -- never a silent/hardcoded
+  // cutoff, though: the input stays visible, pre-filled (not blank), and one click (Reset filters)
+  // from showing everyone again.
+  var floorInput = document.getElementById('value-floor');
+  if (floorInput) {
+    var values = Array.prototype.slice.call(document.querySelectorAll('#panel-players tr.player-row'))
+      .map(function (row) { return row.dataset.value; })
+      .filter(function (v) { return v !== '' && v !== undefined; })
+      .map(function (v) { return parseFloat(v); })
+      .sort(function (a, b) { return a - b; });
+    if (values.length > 0) {
+      var defaultFloor = values[Math.floor(values.length * 0.25)];
+      floorInput.value = defaultFloor.toFixed(2);
+    }
+  }
+  filterPlayerDetailRows();
 });
 """
 

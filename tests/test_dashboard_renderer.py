@@ -430,6 +430,21 @@ def test_normal_case_renders_all_three_tabs_and_real_lineup_data():
     assert "vs 14.0% baseline (-9.5pt)" in html
     assert ">Leverage<" in html  # leverage badge, not the chalk badge
 
+    # New (ADR-0027): projection/value/stack-context/slate-window/injury real values appear.
+    assert "18.7" in html  # projection
+    assert "2.88" in html  # value: 18.7 / (6500 / 1000)
+    assert ">Primary #1<" in html  # stack_context.is_primary_stack_candidate badge
+    assert "AAA -3.5" in html  # stack_context.home_spread
+    assert "62 viability" in html  # stack_context.single_team_viability
+    assert "Early (1pm ET)" in html  # slate_window
+    assert "Q &middot; Ankle" in html  # injury.status / body_part
+    assert "Impact 3/10" in html  # injury.impact_rating
+
+    # Sortable columns, view sub-tabs, and per-row expand markup are present.
+    assert "sortPlayerDetailRows" in html
+    assert 'class="view-filter' in html
+    assert 'class="player-expand-row"' in html
+
     # Search filter present for the browsable player table.
     assert 'id="player-search"' in html
 
@@ -478,6 +493,13 @@ def test_missing_fields_show_reason_strings_not_blank_or_none():
     assert "no GameEnvironmentScore supplied for this team this week." in html
     # No LeverageAssessment supplied -> real reason string shown.
     assert "no LeverageAssessment found for this player." in html
+    # New (ADR-0027): projection/stack-context/slate-window/implied-total missing -> real reasons.
+    assert "no blended projection found for this player." in html
+    assert "no StackProfile found for this player&#x27;s game." in html
+    assert "no kickoff time known for this player&#x27;s game." in html
+    # Not on the injury report is real, positive information -- rendered plainly, not as an N/A.
+    assert "Healthy" in html
+    assert "presumed healthy" not in html  # the raw reason text stays internal, not user-facing
 
     # Never the bare literal "None" standing in for one of these missing values.
     assert "<td>None</td>" not in html
@@ -538,8 +560,8 @@ def test_position_filter_buttons_only_include_positions_present_in_the_data():
     assert 'data-pos="DST"' not in html
 
     # Each row carries its own position for the client-side filter to match against.
-    assert '<tr class="player-row" data-position="WR">' in html
-    assert '<tr class="player-row" data-position="RB">' in html
+    assert '<tr class="player-row" data-position="WR"' in html
+    assert '<tr class="player-row" data-position="RB"' in html
 
 
 def test_position_filter_buttons_and_search_box_both_present_in_output():

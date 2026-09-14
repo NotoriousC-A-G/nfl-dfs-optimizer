@@ -157,6 +157,65 @@ def main() -> None:
     weekly = build_weekly_output(lineups, identities, stack_profiles)
 
     # ------------------------------------------------------------------------------------------
+    # Fetched early (ADR-0027) so PlayerDetailRecords below can join real StackProfile/injury/
+    # slate-window/implied-total data, not just the Slate Overview tab further down -- this is the
+    # SAME odds/injury pull the Slate Overview section already made, just moved earlier and reused
+    # rather than fetched twice.
+    # ------------------------------------------------------------------------------------------
+    print("=== Fetching real Odds API spreads/totals and injury data (also feeds Player Detail) ===")
+
+    import requests
+
+    odds_response = requests.get(
+        ODDS_URL,
+        params={
+            "regions": "us",
+            "markets": "spreads,totals",
+            "oddsFormat": "american",
+            "apiKey": config.odds_api_key,
+        },
+        timeout=20.0,
+    )
+    odds_response.raise_for_status()
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        odds_games = parse_dk_odds_events(odds_response.json())
+    for w in caught:
+        print(f"  WARNING (odds): {w.message}")
+    odds_by_pair = {(g.away_team, g.home_team): g for g in odds_games}
+    print(f"  {len(odds_games)} game(s) with a DraftKings odds line.")
+
+    print("Fetching real injury data (RotoGrinders Situation Room)...")
+    try:
+        injury_entries = fetch_injury_report()
+        print(f"  {len(injury_entries)} injury report row(s)")
+    except Exception as exc:  # noqa: BLE001
+        print(f"  FAILED: {exc}")
+        injury_entries = []
+
+    def _injury_statuses_for(team: str) -> list[PlayerInjuryStatus]:
+        return [
+            PlayerInjuryStatus(status=entry.status, impact_rating=entry.impact_rating)
+            for _, entry in team_injuries(team, identities, injury_entries)
+        ]
+
+    injury_by_canonical_id = {
+        identity.canonical_id: entry
+        for team in slate_teams
+        for identity, entry in team_injuries(team, identities, injury_entries)
+    }
+    print(f"  {len(injury_by_canonical_id)} reconciled player(s) matched to an injury report row.\n")
+
+    kickoff_utc_by_team: dict[str, str] = {}
+    implied_total_by_team: dict[str, float] = {}
+    for game in dk_slate.games:
+        kickoff_utc_by_team[game.away_team] = game.start_time_utc
+        kickoff_utc_by_team[game.home_team] = game.start_time_utc
+        odds = odds_by_pair.get((game.away_team, game.home_team))
+        if odds is not None and odds.home_spread is not None and odds.away_spread is not None and odds.total is not None:
+            implied_total_by_team.update(implied_team_totals(odds))
+
+    # ------------------------------------------------------------------------------------------
     # Player Detail: build real PlayerDetailRecords for this slate's FULL reconciled player pool
     # (not just the 27 lineup slots) -- a "browsable" dashboard tab is more representative of the
     # real deliverable with the whole slate's pool than with just the 3 lineups' worth of names.
@@ -243,6 +302,10 @@ def main() -> None:
             game_environment_by_team=game_environment_by_team,
             projections_by_canonical_id=projections_by_canonical_id,
             leverage_by_native_id=leverage_by_native_id,
+            stack_profiles=stack_profiles,
+            injury_by_canonical_id=injury_by_canonical_id,
+            kickoff_utc_by_team=kickoff_utc_by_team,
+            implied_total_by_team=implied_total_by_team,
         )
         player_details.append(record)
 
@@ -272,42 +335,7 @@ def main() -> None:
     # RotoGrinders Situation Room injury data.
     # ------------------------------------------------------------------------------------------
     print("=== Building real Slate Overview rows (odds, weather, GameEnvironmentScore) ===")
-
-    print("Fetching real Odds API spreads/totals...")
-    import requests
-
-    odds_response = requests.get(
-        ODDS_URL,
-        params={
-            "regions": "us",
-            "markets": "spreads,totals",
-            "oddsFormat": "american",
-            "apiKey": config.odds_api_key,
-        },
-        timeout=20.0,
-    )
-    odds_response.raise_for_status()
-    with warnings.catch_warnings(record=True) as caught:
-        warnings.simplefilter("always")
-        odds_games = parse_dk_odds_events(odds_response.json())
-    for w in caught:
-        print(f"  WARNING (odds): {w.message}")
-    odds_by_pair = {(g.away_team, g.home_team): g for g in odds_games}
-    print(f"  {len(odds_games)} game(s) with a DraftKings odds line.")
-
-    print("Fetching real injury data (RotoGrinders Situation Room)...")
-    try:
-        injury_entries = fetch_injury_report()
-        print(f"  {len(injury_entries)} injury report row(s)")
-    except Exception as exc:  # noqa: BLE001
-        print(f"  FAILED: {exc}")
-        injury_entries = []
-
-    def _injury_statuses_for(team: str) -> list[PlayerInjuryStatus]:
-        return [
-            PlayerInjuryStatus(status=entry.status, impact_rating=entry.impact_rating)
-            for _, entry in team_injuries(team, identities, injury_entries)
-        ]
+    print("  (reusing the Odds API/injury pull already fetched above for Player Detail)")
 
     print("Fetching real weather (Open-Meteo primary, NWS cross-check)...")
     weather_by_home_team: dict[str, WeatherReading] = {}
