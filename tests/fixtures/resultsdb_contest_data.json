@@ -1,0 +1,675 @@
+{
+  "contest": {
+    "contestId": 147325137,
+    "contestName": "NFL $3M MEGA Millionaire [$1M to 1st + ToC Semifinal Entry]",
+    "contestDate": "2023-09-10T13:00:00",
+    "entryCost": 4444.0,
+    "multiEntryMax": 23,
+    "contestSize": 768,
+    "cashLine": 145,
+    "duplicateLineups": 8,
+    "uniqueLineups": 764,
+    "totalPrizes": 3072667.0,
+    "totalLineupsEntered": 768
+  },
+  "players": {
+    "926:0": {
+      "playerId": 926,
+      "firstName": "Davante",
+      "lastName": "Adams",
+      "fullName": "Davante Adams",
+      "salary": 7900,
+      "position": "WR",
+      "rosterPosition": "WR",
+      "currentTeam": "LV",
+      "currentTeamId": 2138,
+      "eventId": 5658310,
+      "eventTeamId": 56583101,
+      "homeVisitor": "Visitor",
+      "favDog": "Dog",
+      "projPoints": 16.69,
+      "ownership": 7.42,
+      "actualPoints": 12.6,
+      "statDetails": "66 RecYds, 6 Rec, ",
+      "madeCut": 0
+    },
+    "1013:0": {
+      "playerId": 1013,
+      "firstName": "Keenan",
+      "lastName": "Allen",
+      "fullName": "Keenan Allen",
+      "salary": 7300,
+      "position": "WR",
+      "rosterPosition": "WR",
+      "currentTeam": "LAC",
+      "currentTeamId": 2202,
+      "eventId": 5658320,
+      "eventTeamId": 56583202,
+      "homeVisitor": "Home",
+      "favDog": "Favorite",
+      "projPoints": 16.37,
+      "ownership": 12.37,
+      "actualPoints": 14.2,
+      "statDetails": "6 RuYds, 76 RecYds, 6 Rec, ",
+      "madeCut": 0
+    },
+    "1343:0": {
+      "playerId": 1343,
+      "firstName": "Odell",
+      "lastName": "Beckham Jr.",
+      "fullName": "Odell Beckham Jr.",
+      "salary": 5000,
+      "position": "WR",
+      "rosterPosition": "WR",
+      "currentTeam": "BAL",
+      "currentTeamId": 2170,
+      "eventId": 5658330,
+      "eventTeamId": 56583302,
+      "homeVisitor": "Home",
+      "favDog": "Favorite",
+      "projPoints": 9.36,
+      "ownership": 0.65,
+      "actualPoints": 5.7,
+      "statDetails": "37 RecYds, 2 Rec, ",
+      "madeCut": 0
+    },
+    "8494:0": {
+      "playerId": 8494,
+      "firstName": "Washington",
+      "lastName": "Defense",
+      "fullName": "Washington Defense",
+      "salary": 2800,
+      "position": "D",
+      "rosterPosition": "D",
+      "currentTeam": "WAS",
+      "currentTeamId": 2021,
+      "eventId": 5658280,
+      "eventTeamId": 56582802,
+      "homeVisitor": "Home",
+      "favDog": "Favorite",
+      "projPoints": 7.7,
+      "ownership": 48.31,
+      "actualPoints": 11.0,
+      "statDetails": "3 SACK, 2 DFR,  14-20 Points Allowed ",
+      "madeCut": 0
+    },
+    "25839:0": {
+      "playerId": 25839,
+      "firstName": "Tyreek",
+      "lastName": "Hill",
+      "fullName": "Tyreek Hill",
+      "salary": 8200,
+      "position": "WR",
+      "rosterPosition": "WR",
+      "currentTeam": "MIA",
+      "currentTeamId": 1990,
+      "eventId": 5658320,
+      "eventTeamId": 56583201,
+      "homeVisitor": "Visitor",
+      "favDog": "Dog",
+      "projPoints": 20.48,
+      "ownership": 36.72,
+      "actualPoints": 47.5,
+      "statDetails": "2 RecTD, 215 RecYds, 11 Rec, 1 100+Rec, ",
+      "madeCut": 0
+    }
+  },
+  "exposures": {
+    "100": {
+      "exposureCounts": {
+        "926:0": {
+          "exposureCt": 57,
+          "exposurePerc": 7.42
+        },
+        "1013:0": {
+          "exposureCt": 95,
+          "exposurePerc": 12.37
+        },
+        "1343:0": {
+          "exposureCt": 5,
+          "exposurePerc": 0.65
+        },
+        "8494:0": {
+          "exposureCt": 371,
+          "exposurePerc": 48.31
+        },
+        "25839:0": {
+          "exposureCt": 282,
+          "exposurePerc": 36.72
+        }
+      }
+    },
+    "20": {
+      "exposureCounts": {
+        "926:0": {
+          "exposureCt": 1,
+          "exposurePerc": 0.65
+        },
+        "1013:0": {
+          "exposureCt": 22,
+          "exposurePerc": 14.38
+        },
+        "8494:0": {
+          "exposureCt": 96,
+          "exposurePerc": 62.75
+        },
+        "25839:0": {
+          "exposureCt": 129,
+          "exposurePerc": 84.31
+        }
+      }
+    },
+    "10": {
+      "exposureCounts": {
+        "1013:0": {
+          "exposureCt": 14,
+          "exposurePerc": 18.42
+        },
+        "8494:0": {
+          "exposureCt": 51,
+          "exposurePerc": 67.11
+        },
+        "25839:0": {
+          "exposureCt": 70,
+          "exposurePerc": 92.11
+        }
+      }
+    },
+    "1": {
+      "exposureCounts": {
+        "8494:0": {
+          "exposureCt": 4,
+          "exposurePerc": 57.14
+        },
+        "25839:0": {
+          "exposureCt": 7,
+          "exposurePerc": 100.0
+        }
+      }
+    }
+  },
+  "users": {
+    "PetrGibbons": {
+      "userId": "PetrGibbons",
+      "totalPlayers": 65,
+      "totalRosters": 14,
+      "uniqueRosters": 14,
+      "maxExposure": 50.0,
+      "lineupsCashing": 2,
+      "lineupsInPercentile1": 0,
+      "lineupsInPercentile2": 0,
+      "lineupsInPercentile5": 1,
+      "lineupsInPercentile10": 1,
+      "lineupsInPercentile20": 3,
+      "lineupsInPercentile50": 5,
+      "totalEntryCost": 62216.0,
+      "totalWinning": 19000.0,
+      "roi": -43216.0,
+      "exposures": {
+        "8490:0": {
+          "playerId": "8490:0",
+          "playerCt": 2,
+          "playerExposure": 14.29,
+          "playerLeverage": 8.69
+        },
+        "75693:0": {
+          "playerId": "75693:0",
+          "playerCt": 2,
+          "playerExposure": 14.29,
+          "playerLeverage": -4.98
+        },
+        "50547:0": {
+          "playerId": "50547:0",
+          "playerCt": 2,
+          "playerExposure": 14.29,
+          "playerLeverage": 3.35
+        },
+        "33516:0": {
+          "playerId": "33516:0",
+          "playerCt": 2,
+          "playerExposure": 14.29,
+          "playerLeverage": 1.53
+        },
+        "8709:0": {
+          "playerId": "8709:0",
+          "playerCt": 7,
+          "playerExposure": 50.0,
+          "playerLeverage": 15.62
+        },
+        "33338:0": {
+          "playerId": "33338:0",
+          "playerCt": 3,
+          "playerExposure": 21.43,
+          "playerLeverage": 19.09
+        },
+        "64507:0": {
+          "playerId": "64507:0",
+          "playerCt": 5,
+          "playerExposure": 35.71,
+          "playerLeverage": 0.55
+        },
+        "55094:0": {
+          "playerId": "55094:0",
+          "playerCt": 1,
+          "playerExposure": 7.14,
+          "playerLeverage": 5.32
+        },
+        "136555:0": {
+          "playerId": "136555:0",
+          "playerCt": 2,
+          "playerExposure": 14.29,
+          "playerLeverage": 4.52
+        },
+        "8494:0": {
+          "playerId": "8494:0",
+          "playerCt": 5,
+          "playerExposure": 35.71,
+          "playerLeverage": -12.6
+        },
+        "33090:0": {
+          "playerId": "33090:0",
+          "playerCt": 4,
+          "playerExposure": 28.57,
+          "playerLeverage": 12.68
+        },
+        "63756:0": {
+          "playerId": "63756:0",
+          "playerCt": 1,
+          "playerExposure": 7.14,
+          "playerLeverage": -7.05
+        },
+        "63567:0": {
+          "playerId": "63567:0",
+          "playerCt": 5,
+          "playerExposure": 35.71,
+          "playerLeverage": 28.03
+        },
+        "10211:0": {
+          "playerId": "10211:0",
+          "playerCt": 1,
+          "playerExposure": 7.14,
+          "playerLeverage": 0.5
+        },
+        "1013:0": {
+          "playerId": "1013:0",
+          "playerCt": 1,
+          "playerExposure": 7.14,
+          "playerLeverage": -5.23
+        },
+        "47332:0": {
+          "playerId": "47332:0",
+          "playerCt": 2,
+          "playerExposure": 14.29,
+          "playerLeverage": 0.23
+        },
+        "47863:0": {
+          "playerId": "47863:0",
+          "playerCt": 2,
+          "playerExposure": 14.29,
+          "playerLeverage": 12.21
+        },
+        "8485:0": {
+          "playerId": "8485:0",
+          "playerCt": 1,
+          "playerExposure": 7.14,
+          "playerLeverage": -0.93
+        },
+        "63616:0": {
+          "playerId": "63616:0",
+          "playerCt": 2,
+          "playerExposure": 14.29,
+          "playerLeverage": 9.08
+        },
+        "33823:0": {
+          "playerId": "33823:0",
+          "playerCt": 1,
+          "playerExposure": 7.14,
+          "playerLeverage": -14.6
+        },
+        "68220:0": {
+          "playerId": "68220:0",
+          "playerCt": 2,
+          "playerExposure": 14.29,
+          "playerLeverage": 11.95
+        },
+        "63503:0": {
+          "playerId": "63503:0",
+          "playerCt": 1,
+          "playerExposure": 7.14,
+          "playerLeverage": -1.19
+        },
+        "26343:0": {
+          "playerId": "26343:0",
+          "playerCt": 2,
+          "playerExposure": 14.29,
+          "playerLeverage": 12.47
+        },
+        "63504:0": {
+          "playerId": "63504:0",
+          "playerCt": 1,
+          "playerExposure": 7.14,
+          "playerLeverage": 4.41
+        },
+        "8474:0": {
+          "playerId": "8474:0",
+          "playerCt": 2,
+          "playerExposure": 14.29,
+          "playerLeverage": 8.95
+        },
+        "88998:0": {
+          "playerId": "88998:0",
+          "playerCt": 1,
+          "playerExposure": 7.14,
+          "playerLeverage": 2.84
+        },
+        "64586:0": {
+          "playerId": "64586:0",
+          "playerCt": 2,
+          "playerExposure": 14.29,
+          "playerLeverage": -5.63
+        },
+        "51700:0": {
+          "playerId": "51700:0",
+          "playerCt": 1,
+          "playerExposure": 7.14,
+          "playerLeverage": 2.84
+        },
+        "7884:0": {
+          "playerId": "7884:0",
+          "playerCt": 1,
+          "playerExposure": 7.14,
+          "playerLeverage": 2.71
+        },
+        "58120:0": {
+          "playerId": "58120:0",
+          "playerCt": 1,
+          "playerExposure": 7.14,
+          "playerLeverage": 3.88
+        },
+        "146096:0": {
+          "playerId": "146096:0",
+          "playerCt": 1,
+          "playerExposure": 7.14,
+          "playerLeverage": 6.36
+        },
+        "40663:0": {
+          "playerId": "40663:0",
+          "playerCt": 5,
+          "playerExposure": 35.71,
+          "playerLeverage": 21.78
+        },
+        "19141:0": {
+          "playerId": "19141:0",
+          "playerCt": 1,
+          "playerExposure": 7.14,
+          "playerLeverage": 1.8
+        },
+        "76845:0": {
+          "playerId": "76845:0",
+          "playerCt": 1,
+          "playerExposure": 7.14,
+          "playerLeverage": 0.11
+        },
+        "26360:0": {
+          "playerId": "26360:0",
+          "playerCt": 1,
+          "playerExposure": 7.14,
+          "playerLeverage": 2.32
+        },
+        "96290:0": {
+          "playerId": "96290:0",
+          "playerCt": 2,
+          "playerExposure": 14.29,
+          "playerLeverage": 13.12
+        },
+        "51195:0": {
+          "playerId": "51195:0",
+          "playerCt": 1,
+          "playerExposure": 7.14,
+          "playerLeverage": 0.76
+        },
+        "2823:0": {
+          "playerId": "2823:0",
+          "playerCt": 1,
+          "playerExposure": 7.14,
+          "playerLeverage": 1.8
+        },
+        "33207:0": {
+          "playerId": "33207:0",
+          "playerCt": 1,
+          "playerExposure": 7.14,
+          "playerLeverage": -9.53
+        },
+        "40550:0": {
+          "playerId": "40550:0",
+          "playerCt": 1,
+          "playerExposure": 7.14,
+          "playerLeverage": -0.28
+        },
+        "8464:0": {
+          "playerId": "8464:0",
+          "playerCt": 1,
+          "playerExposure": 7.14,
+          "playerLeverage": 3.62
+        },
+        "52623:0": {
+          "playerId": "52623:0",
+          "playerCt": 2,
+          "playerExposure": 14.29,
+          "playerLeverage": 12.86
+        },
+        "123168:0": {
+          "playerId": "123168:0",
+          "playerCt": 1,
+          "playerExposure": 7.14,
+          "playerLeverage": -4.45
+        },
+        "33399:0": {
+          "playerId": "33399:0",
+          "playerCt": 1,
+          "playerExposure": 7.14,
+          "playerLeverage": -19.03
+        },
+        "163239:0": {
+          "playerId": "163239:0",
+          "playerCt": 3,
+          "playerExposure": 21.43,
+          "playerLeverage": 18.31
+        },
+        "53421:0": {
+          "playerId": "53421:0",
+          "playerCt": 4,
+          "playerExposure": 28.57,
+          "playerLeverage": 19.33
+        },
+        "93289:0": {
+          "playerId": "93289:0",
+          "playerCt": 1,
+          "playerExposure": 7.14,
+          "playerLeverage": 5.58
+        },
+        "33781:0": {
+          "playerId": "33781:0",
+          "playerCt": 1,
+          "playerExposure": 7.14,
+          "playerLeverage": -10.96
+        },
+        "33441:0": {
+          "playerId": "33441:0",
+          "playerCt": 1,
+          "playerExposure": 7.14,
+          "playerLeverage": -3.02
+        },
+        "44721:0": {
+          "playerId": "44721:0",
+          "playerCt": 1,
+          "playerExposure": 7.14,
+          "playerLeverage": 3.36
+        },
+        "61444:0": {
+          "playerId": "61444:0",
+          "playerCt": 5,
+          "playerExposure": 35.71,
+          "playerLeverage": 28.42
+        },
+        "6816:0": {
+          "playerId": "6816:0",
+          "playerCt": 5,
+          "playerExposure": 35.71,
+          "playerLeverage": 30.37
+        },
+        "63693:0": {
+          "playerId": "63693:0",
+          "playerCt": 4,
+          "playerExposure": 28.57,
+          "playerLeverage": 19.72
+        },
+        "51175:0": {
+          "playerId": "51175:0",
+          "playerCt": 1,
+          "playerExposure": 7.14,
+          "playerLeverage": 6.36
+        },
+        "926:0": {
+          "playerId": "926:0",
+          "playerCt": 1,
+          "playerExposure": 7.14,
+          "playerLeverage": -0.28
+        },
+        "56280:0": {
+          "playerId": "56280:0",
+          "playerCt": 1,
+          "playerExposure": 7.14,
+          "playerLeverage": -7.83
+        },
+        "8492:0": {
+          "playerId": "8492:0",
+          "playerCt": 1,
+          "playerExposure": 7.14,
+          "playerLeverage": 1.67
+        },
+        "135400:0": {
+          "playerId": "135400:0",
+          "playerCt": 1,
+          "playerExposure": 7.14,
+          "playerLeverage": -4.58
+        },
+        "8687:0": {
+          "playerId": "8687:0",
+          "playerCt": 4,
+          "playerExposure": 28.57,
+          "playerLeverage": 24.4
+        },
+        "8468:0": {
+          "playerId": "8468:0",
+          "playerCt": 1,
+          "playerExposure": 7.14,
+          "playerLeverage": 6.23
+        },
+        "8465:0": {
+          "playerId": "8465:0",
+          "playerCt": 1,
+          "playerExposure": 7.14,
+          "playerLeverage": 4.28
+        },
+        "47299:0": {
+          "playerId": "47299:0",
+          "playerCt": 1,
+          "playerExposure": 7.14,
+          "playerLeverage": 1.8
+        },
+        "188670:0": {
+          "playerId": "188670:0",
+          "playerCt": 1,
+          "playerExposure": 7.14,
+          "playerLeverage": 5.84
+        },
+        "140160:0": {
+          "playerId": "140160:0",
+          "playerCt": 2,
+          "playerExposure": 14.29,
+          "playerLeverage": 7.91
+        },
+        "33269:0": {
+          "playerId": "33269:0",
+          "playerCt": 1,
+          "playerExposure": 7.14,
+          "playerLeverage": -3.15
+        }
+      }
+    },
+    "clayton24": {
+      "userId": "clayton24",
+      "totalPlayers": 9,
+      "totalRosters": 1,
+      "uniqueRosters": 1,
+      "maxExposure": 100.0,
+      "lineupsCashing": 0,
+      "lineupsInPercentile1": 0,
+      "lineupsInPercentile2": 0,
+      "lineupsInPercentile5": 0,
+      "lineupsInPercentile10": 0,
+      "lineupsInPercentile20": 0,
+      "lineupsInPercentile50": 0,
+      "totalEntryCost": 4444.0,
+      "totalWinning": 0.0,
+      "roi": -4444.0,
+      "exposures": {
+        "8494:0": {
+          "playerId": "8494:0",
+          "playerCt": 1,
+          "playerExposure": 100.0,
+          "playerLeverage": 51.69
+        },
+        "40663:0": {
+          "playerId": "40663:0",
+          "playerCt": 1,
+          "playerExposure": 100.0,
+          "playerLeverage": 86.07
+        },
+        "50547:0": {
+          "playerId": "50547:0",
+          "playerCt": 1,
+          "playerExposure": 100.0,
+          "playerLeverage": 89.06
+        },
+        "33213:0": {
+          "playerId": "33213:0",
+          "playerCt": 1,
+          "playerExposure": 100.0,
+          "playerLeverage": 96.22
+        },
+        "55185:0": {
+          "playerId": "55185:0",
+          "playerCt": 1,
+          "playerExposure": 100.0,
+          "playerLeverage": 94.4
+        },
+        "126944:0": {
+          "playerId": "126944:0",
+          "playerCt": 1,
+          "playerExposure": 100.0,
+          "playerLeverage": 55.34
+        },
+        "33207:0": {
+          "playerId": "33207:0",
+          "playerCt": 1,
+          "playerExposure": 100.0,
+          "playerLeverage": 83.33
+        },
+        "8590:0": {
+          "playerId": "8590:0",
+          "playerCt": 1,
+          "playerExposure": 100.0,
+          "playerLeverage": 89.19
+        },
+        "40550:0": {
+          "playerId": "40550:0",
+          "playerCt": 1,
+          "playerExposure": 100.0,
+          "playerLeverage": 92.58
+        }
+      }
+    }
+  }
+}

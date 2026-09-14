@@ -23,6 +23,33 @@ report is what Section 6's formulas get finalized against once all sources are c
 - Not yet checked: NFL WeatherEdge endpoint specifically (Section 4 also calls this out). Follow-up
   task.
 
+## RotoGrinders ResultsDB (added post-Phase-0, ADR-0023)
+
+**Status: confirmed working, no session cookie needed at all — the one reverse-engineered source in this
+project that isn't auth-gated.** Full investigation, live findings, and the ingestion module built against it
+are in ADR-0023 (`docs/adr/0023-resultsdb-contest-history.md`); summarized here for this report's index:
+
+- `resultsdb/nfl` is a RotoGrinders-branded wrapper around a FantasyLabs "Contests Dashboard" app
+  (`terminal.fantasylabs.com/contests?brand=rotogrinders&sportid=1&date=...`), confirmed via the page's own
+  `<iframe>`. It's per-*contest* post-contest field data (real settled DK GPPs), not a projection archive.
+- Underneath that UI is a public, unauthenticated JSON API: `service.fantasylabs.com/contest-sources` (which
+  DK draft groups are live for a date) → `.../live-contests` (real contests within a draft group, `contest_id`
+  + `is_primary`/`multi_entry_max`/etc.) → `dh5nxc6yx3kwy.cloudfront.net/contests/nfl/<date>/<contest_id>/
+  data/` (the real payload: per-player ownership/actuals/box-score line, per-user roster/ROI, salary/flex/
+  stack usage by percentile tier) and a sibling `.../lineups/` payload (per-distinct-roster dup counts,
+  `lineupTrends`, team/game stacks — confirmed available, not yet ingested).
+- One real auth-shaped gotcha: `service.fantasylabs.com` 403s Python's default `requests` User-Agent (basic
+  bot-filtering, not session auth) — fixed the same way as RotoGrinders LineupHQ/Situation Room, a
+  browser-shaped `User-Agent` header.
+- **Coverage confirmed live: the 2020 season through today** (every 2020-2026 contest tried returns real data;
+  every 2017-2019 contest tried 403s) — six real seasons, informing PRD Section 11 item 4's resolution.
+- **Real surprise worth flagging for anyone building on top of this:** a single date/draft-group can carry
+  more than one `is_primary` contest at once (a live 2023 pull found both the true, 150-max-entry, 28,029-
+  entry "Millionaire" and a separate, smaller, pricier "MEGA Millionaire" both flagged `is_primary=true`).
+  `is_primary` alone is not a safe way to pick "the" flagship contest — see ADR-0023's
+  `select_millionaire_maker_contest` for the `multi_entry_max == 150` disambiguation this project uses
+  instead.
+
 ## Footballguys
 
 **Status: confirmed working end-to-end, session captured.**
@@ -112,6 +139,17 @@ report is what Section 6's formulas get finalized against once all sources are c
 - Player ID here (`playerDkId`) is DK's own ID — this is one side of the Section 11 item 3 ID
   reconciliation problem; PFF/RotoGrinders/Footballguys each use their own ID scheme and none of
   them are `playerDkId`.
+- **Correction (ADR-0023, `docs/adr/0023-resultsdb-contest-history.md`): Section 4's "post-lock actual
+  ownership for backtesting" claim does NOT hold for DK's public endpoints — live-tested this round, not
+  assumed.** `GET https://api.draftkings.com/scores/v1/leaderboards/{contestId}?format=json&embed=leaderboard`
+  and `GET https://api.draftkings.com/scores/v2/entries/{draftGroupId}/{entryKeys}?format=json&embed=roster`
+  (the actual leaderboard/ownership-shaped endpoints, per community documentation) both returned a live
+  `400 {"errorStatus":{"code":"SCO101","developerMessage":"Invalid userKey."}}` when called unauthenticated
+  against a real settled contest — a DK session-auth rejection (`iv`/`jwe` cookies, confirmed against a
+  third-party DK API client's own requirements), not a not-found or rate-limit error. `contests/v1/contests/
+  {contestId}?format=json` (contest metadata/payout structure) IS public and confirmed working, but carries no
+  ownership data. Post-lock ownership for backtesting instead comes from RotoGrinders ResultsDB (new section
+  earlier in this report, right after RotoGrinders) — real, and confirmed to need no auth at all.
 
 ## nflverse / nfl-data-py
 
