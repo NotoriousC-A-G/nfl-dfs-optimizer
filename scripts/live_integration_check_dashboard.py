@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import warnings
 
+from nfl_dfs.analysis.ownership_calibration import run_full_calibration
 from nfl_dfs.composition.player_detail import build_gsis_to_pff_id_map, build_player_detail_record
 from nfl_dfs.config import config
 from nfl_dfs.dashboard.renderer import SlateGameRow, write_dashboard_html
@@ -34,6 +35,7 @@ from nfl_dfs.game_environment.score import (
 from nfl_dfs.ingestion.nflverse import fetch_pace_proe
 from nfl_dfs.ingestion.odds_api import ODDS_URL, fetch_dk_implied_totals, implied_team_totals, parse_dk_odds_events
 from nfl_dfs.ingestion.pff import fetch_matchup_grades, team_coverage_tendency
+from nfl_dfs.ingestion.rotogrinders import filter_to_main_slate, parse_projected_ownership
 from nfl_dfs.ingestion.rotogrinders_injuries import fetch_injury_report
 from nfl_dfs.ingestion.snap_share import fetch_snap_shares
 from nfl_dfs.ingestion.usage_share import ROLE_RB, ROLE_WR, aggregate_player_trailing_red_zone, fetch_role_shares
@@ -44,6 +46,7 @@ from nfl_dfs.normalization.matcher import reconcile_week
 from nfl_dfs.normalization.registry import PlayerRegistry
 from nfl_dfs.optimizer.lineup import LineupGenerationError, generate_lineups
 from nfl_dfs.output.weekly_output import build_weekly_output
+from nfl_dfs.ownership.leverage import build_leverage_assessments
 from nfl_dfs.projection.blend import (
     build_projection_pool,
     extract_dk_salary,
@@ -189,6 +192,24 @@ def main() -> None:
 
     gsis_to_pff_id = build_gsis_to_pff_id_map(crosswalk)
 
+    print("Building real chalk/leverage assessments (ADR-0025/0026)...")
+    leverage_by_native_id: dict[str, object] = {}
+    if rg_payload:
+        all_ownership_rows = parse_projected_ownership(rg_payload)
+        main_slate_rows = filter_to_main_slate(all_ownership_rows)
+        print(f"  {len(all_ownership_rows)} players across every slate window, {len(main_slate_rows)} on the main slate")
+        try:
+            calibration_bundle = run_full_calibration()
+            assessments = build_leverage_assessments(main_slate_rows, calibration_bundle.production)
+            leverage_by_native_id = {a.native_id: a for a in assessments}
+            n_chalk = sum(1 for a in assessments if a.is_chalk)
+            n_leverage = sum(1 for a in assessments if a.is_leverage)
+            print(f"  {len(assessments)} assessments built: {n_chalk} chalk, {n_leverage} leverage")
+        except ValueError as exc:
+            print(f"  FAILED to build production calibration: {exc}")
+    else:
+        print("  no RotoGrinders payload this pull -- skipping ownership/leverage")
+
     opponent_of: dict[str, str] = {}
     for g in dk_slate.games:
         opponent_of[g.away_team] = g.home_team
@@ -221,6 +242,7 @@ def main() -> None:
             team_coverage_tendency=coverage_tendency_by_team,
             game_environment_by_team=game_environment_by_team,
             projections_by_canonical_id=projections_by_canonical_id,
+            leverage_by_native_id=leverage_by_native_id,
         )
         player_details.append(record)
 
@@ -229,10 +251,12 @@ def main() -> None:
     populated_role_share = sum(1 for r in player_details if r.usage.role_share.role_share is not None)
     populated_own_scheme = sum(1 for r in player_details if r.own_scheme_splits.reason is None and r.own_scheme_splits.applicable)
     populated_ge = sum(1 for r in player_details if r.game_environment is not None and r.game_environment.is_available)
+    populated_ownership = sum(1 for r in player_details if r.ownership is not None)
     print(
         f"  Populated: role_share={populated_role_share}/{len(player_details)}, "
         f"own_scheme_splits={populated_own_scheme}/{len(player_details)}, "
-        f"game_environment={populated_ge}/{len(player_details)}"
+        f"game_environment={populated_ge}/{len(player_details)}, "
+        f"ownership={populated_ownership}/{len(player_details)}"
     )
 
     # ------------------------------------------------------------------------------------------

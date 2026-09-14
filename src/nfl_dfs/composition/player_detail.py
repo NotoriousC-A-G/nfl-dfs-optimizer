@@ -101,6 +101,7 @@ from nfl_dfs.ingestion.snap_share import PlayerSnapShare
 from nfl_dfs.ingestion.usage_share import ROLE_RB, ROLE_WR, PlayerRoleShare, RoleShareResult
 from nfl_dfs.matchup.context import MatchupFacetInputs, resolve_own_opponent_unit_grades
 from nfl_dfs.normalization.identity import MatchMethod, PlayerIdentity
+from nfl_dfs.ownership.leverage import LeverageAssessment
 from nfl_dfs.projection.blend import PlayerProjection
 
 # `own_scheme_splits` (PFF `receiving/scheme`) is scoped to WR/TE/receiving-back per ADR-0022's
@@ -120,6 +121,12 @@ _NO_SALARY_REASON = (
     "no DK salary found for this player -- no PlayerProjection was supplied/matched for this "
     "canonical_id, or the matched PlayerProjection's own salary field is unresolved (no "
     "identity.sources['draftkings'] match, per projection/blend.py's own _salary_for)."
+)
+
+_NO_OWNERSHIP_REASON = (
+    "no LeverageAssessment found for this player -- either leverage_by_native_id wasn't supplied to "
+    "this composer call, this player has no identity.sources['rotogrinders'] match, or this player "
+    "isn't a core position (ownership/leverage.py's CORE_POSITIONS, ADR-0026)."
 )
 
 _MATCHUP_GRADE_NOTE = (
@@ -241,6 +248,13 @@ class PlayerDetailRecord:
     here, mirroring every other section's "read-model over an existing fact, not a new source of
     truth" discipline. `salary_reason` is populated exactly when `salary is None` (no matching
     `PlayerProjection` supplied, or one was found but its own `salary` is unresolved).
+
+    `ownership` (ADR-0026) is this player's live chalk/leverage read, sourced from an already-built
+    `LeverageAssessment` pool (`ownership/leverage.py`'s `build_leverage_assessments`, itself built
+    from live main-slate-filtered RotoGrinders ownership joined against ADR-0025's historical
+    calibration) via `identity.sources["rotogrinders"].native_id` -- the same join key
+    `projection/blend.py` already uses for that source. `ownership_reason` is populated exactly
+    when `ownership is None`.
     """
 
     season: int
@@ -258,6 +272,9 @@ class PlayerDetailRecord:
 
     game_environment: GameEnvironmentScore | None
     game_environment_reason: str | None
+
+    ownership: LeverageAssessment | None
+    ownership_reason: str | None
 
     notes: list[str] = field(default_factory=list)
 
@@ -577,6 +594,28 @@ def _salary(
     return projection.salary, None
 
 
+def _ownership_leverage(
+    identity: PlayerIdentity, leverage_by_native_id: dict[str, LeverageAssessment] | None
+) -> tuple[LeverageAssessment | None, str | None]:
+    """Joined via `identity.sources["rotogrinders"].native_id` -- the same RotoGrinders `PLAYERID`
+    join key `projection/blend.py`'s `_collect_source_values` already uses for `FPTS`, not a new
+    join scheme. Distinguishes "no rotogrinders source match at all" (this player was never seen
+    in a LineupHQ pull) from "matched, but the caller's `leverage_by_native_id` has no row for that
+    id" (non-core position, or the caller didn't run `build_leverage_assessments` this week) only
+    via the shared `_NO_OWNERSHIP_REASON` text -- both are "no usable ownership read," same as
+    `_salary`'s own two-miss-cases-one-reason precedent above.
+    """
+    rg_match = identity.sources.get("rotogrinders")
+    if rg_match is None or rg_match.method in (MatchMethod.UNRESOLVED, MatchMethod.AMBIGUOUS):
+        return None, _NO_OWNERSHIP_REASON
+    if rg_match.native_id is None:
+        return None, _NO_OWNERSHIP_REASON
+    assessment = (leverage_by_native_id or {}).get(rg_match.native_id)
+    if assessment is None:
+        return None, _NO_OWNERSHIP_REASON
+    return assessment, None
+
+
 # --------------------------------------------------------------------------------------------
 # Top-level composer
 # --------------------------------------------------------------------------------------------
@@ -599,6 +638,7 @@ def build_player_detail_record(
     game_environment_by_team: dict[str, GameEnvironmentScore] | None = None,
     projections_by_canonical_id: dict[str, PlayerProjection] | None = None,
     matchup_facets: MatchupFacetInputs | None = None,
+    leverage_by_native_id: dict[str, LeverageAssessment] | None = None,
 ) -> PlayerDetailRecord:
     """Join one player's ADR-0022 `PlayerDetailRecord` for one (season, week) out of already-
     computed, week-scoped lookup collections -- see module docstring for the exact join keys used
@@ -627,6 +667,12 @@ def build_player_detail_record(
     `build_matchup_context_pool` consumes for the actual multiplier computation), used here only
     to populate `matchup_this_week.own_unit_grade`/`opponent_unit_grade` -- a second, independent
     read of the same team-level aggregates, not a re-fetch and not the multiplier itself.
+
+    `leverage_by_native_id` (new, ADR-0026) is Stage 7's already-built chalk/leverage pool
+    (`ownership.leverage.build_leverage_assessments`'s output, keyed by RotoGrinders `native_id` --
+    `{a.native_id: a for a in assessments}`), joined here purely for the `ownership` field via
+    `identity.sources['rotogrinders']`. Optional, same "caller has nothing for this source" shape
+    as every other lookup above.
     """
     gsis_id = identity.nflverse_gsis_id
 
@@ -639,6 +685,7 @@ def build_player_detail_record(
     )
     game_environment, game_environment_reason = _game_environment(team, game_environment_by_team)
     salary, salary_reason = _salary(identity, projections_by_canonical_id)
+    ownership, ownership_reason = _ownership_leverage(identity, leverage_by_native_id)
 
     notes: list[str] = []
     if gsis_id is None:
@@ -668,5 +715,7 @@ def build_player_detail_record(
         matchup_this_week=matchup_this_week,
         game_environment=game_environment,
         game_environment_reason=game_environment_reason,
+        ownership=ownership,
+        ownership_reason=ownership_reason,
         notes=notes,
     )

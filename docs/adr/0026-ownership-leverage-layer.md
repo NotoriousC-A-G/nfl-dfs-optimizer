@@ -111,3 +111,19 @@ anywhere in either list now).
 - Not built this pass: dup-risk calibration (needs the still-uningested ResultsDB `lineups/` endpoint) and
   wiring this leverage output into the optimizer/dashboard itself -- this ADR produces the signal, not yet a
   consumer of it in the live weekly pipeline.
+
+**Update (2026-09-14):** the dashboard-consumer half is now built. `composition/player_detail.py`'s
+`PlayerDetailRecord` gained an `ownership`/`ownership_reason` pair, joined via the same
+`identity.sources["rotogrinders"].native_id` key `projection/blend.py` already uses (`build_player_detail_record`'s
+new `leverage_by_native_id` param). `dashboard/renderer.py`'s Player Detail table gained an "Ownership /
+Leverage" column with real Chalk/Leverage badges. Live-verified end to end via
+`scripts/live_integration_check_dashboard.py` (now wired to build real assessments from the same live
+main-slate-filtered RotoGrinders pull already used for projections, no extra network call): 320 real
+assessments built (35 chalk, 31 leverage) against a real live Sunday slate, 273/658 reconciled DK players
+joined a real ownership row (the remainder are real, expected misses: non-core positions, players whose game
+already locked and dropped off RG's live main-slate rows by the time of the pull, or identity-match gaps),
+and the rendered dashboard HTML contains real Chalk/Leverage badges, confirmed by grepping the actual output
+file rather than trusting the render call not to have silently dropped them. Still not built: wiring this
+signal into the *optimizer's* objective/constraints itself (deliberately left as informational, matching this
+session's established "differentiation should be a stated thesis a person can act on, not a mechanical
+override" principle) and dup-risk calibration.

@@ -316,6 +316,25 @@ def _injury_badge(flag: str) -> str:
     )
 
 
+def _chalk_badge() -> str:
+    return _badge(
+        "Chalk",
+        "badge-chalk",
+        "Top decile of this position's projected ownership on this slate (ADR-0026) -- real chalk "
+        "to build around or pointedly fade.",
+    )
+
+
+def _leverage_badge() -> str:
+    return _badge(
+        "Leverage",
+        "badge-leverage",
+        "Priced in the top half of this position's salaries this slate but projected well below "
+        "the historical field-ownership baseline for that price tier (ADR-0025/ADR-0026) -- among "
+        "the slate's most underowned relative to price.",
+    )
+
+
 def _in_lineup_badges(canonical_id: str, lineup_membership: dict[str, list[int]]) -> str:
     indices = lineup_membership.get(canonical_id)
     if not indices:
@@ -898,6 +917,31 @@ def _render_game_environment_cell(record: PlayerDetailRecord) -> str:
     return f'<div class="cell-main">{score} / 100</div>{badges_html}'
 
 
+def _render_ownership_cell(record: PlayerDetailRecord) -> str:
+    ownership = record.ownership
+    if ownership is None:
+        return _na(record.ownership_reason, fallback="no ownership/leverage data for this player")
+    badges = []
+    if ownership.is_chalk:
+        badges.append(_chalk_badge())
+    if ownership.is_leverage:
+        badges.append(_leverage_badge())
+    badges_html = f'<div class="badges">{"".join(badges)}</div>' if badges else ""
+    # projected_ownership/baseline_ownership are already on a 0-100 scale (rotogrinders.py's
+    # _parse_percent), unlike this module's own _fmt_pct helper (which expects a 0-1 fraction) --
+    # formatted directly here rather than misapplying that helper.
+    baseline_sub = ""
+    if ownership.baseline_ownership is not None and ownership.ownership_vs_baseline is not None:
+        baseline_sub = (
+            f'<div class="cell-sub">vs {ownership.baseline_ownership:.1f}% baseline '
+            f"({ownership.ownership_vs_baseline:+.1f}pt)</div>"
+        )
+    return (
+        f'<div class="cell-main">{ownership.projected_ownership:.1f}% proj</div>'
+        f"{baseline_sub}{badges_html}"
+    )
+
+
 def _position_sort_key(record: PlayerDetailRecord) -> tuple[int, str, str]:
     return (
         _POSITION_SORT_ORDER.get(record.position, 99),
@@ -1000,6 +1044,7 @@ def _render_player_detail_tab(
             f"<td>{_render_own_scheme_cell(record.own_scheme_splits)}</td>"
             f"<td>{_render_coverage_tendency_cell(record.matchup_this_week)}</td>"
             f"<td>{_render_game_environment_cell(record)}</td>"
+            f"<td>{_render_ownership_cell(record)}</td>"
             "</tr>"
         )
 
@@ -1008,6 +1053,7 @@ def _render_player_detail_tab(
         "<th>Player</th><th>Pos</th><th>Team</th><th>Opp</th><th>Salary</th>"
         "<th>Role Share</th><th>Snap Share</th><th>Red Zone</th>"
         "<th>Own Scheme Split</th><th>Opp Coverage Faced</th><th>Game Environment</th>"
+        "<th>Ownership / Leverage</th>"
         "</tr></thead><tbody>" + "".join(rows) + "</tbody></table></div>"
     )
 
@@ -1094,6 +1140,8 @@ td { padding: 7px 10px; border-bottom: 1px solid var(--border); vertical-align: 
 .badge-unvalidated {
   background: transparent; color: var(--fg2); border: 1px solid var(--fg3); font-weight: 600;
 }
+.badge-chalk { background: var(--amber); color: #1e1b0a; }
+.badge-leverage { background: var(--green); color: #fff; }
 .legend { margin-bottom: 12px; background: var(--bg2); border: 1px solid var(--border); border-radius: var(--radius); padding: 8px 14px; }
 .legend summary { cursor: pointer; font-weight: 600; color: var(--fg2); font-size: 0.82rem; }
 .legend-body { margin-top: 8px; font-size: 0.8rem; color: var(--fg2); line-height: 1.5; }

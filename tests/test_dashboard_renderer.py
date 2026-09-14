@@ -29,6 +29,7 @@ from nfl_dfs.ingestion.weather import WeatherReading
 from nfl_dfs.normalization.identity import MatchMethod, PlayerIdentity, SourceMatch
 from nfl_dfs.optimizer.lineup import Lineup
 from nfl_dfs.output.weekly_output import build_weekly_output
+from nfl_dfs.ownership.leverage import LeverageAssessment
 
 SEASON = 2026
 WEEK = 5
@@ -262,6 +263,23 @@ def _fully_populated_player_detail(
         matchup_this_week=matchup_this_week,
         game_environment=_ges(team, composite=82.3, weather_applies=True, injury_flag="moderate"),
         game_environment_reason=None,
+        ownership=LeverageAssessment(
+            native_id="rg-1",
+            name=name,
+            position="WR",
+            team=team,
+            salary=salary or 6500,
+            salary_decile=1,
+            projected_ownership=4.5,
+            ownership_percentile=0.3,
+            baseline_ownership=14.0,
+            ownership_vs_baseline=-9.5,
+            is_chalk=False,
+            is_leverage=True,
+            note="Priced in the top half of WR salaries this slate (decile 1) but projected at 4.5% "
+            "vs a 14.0% historical field-ownership baseline for that price tier (-9.5pt).",
+        ),
+        ownership_reason=None,
     )
 
 
@@ -320,6 +338,8 @@ def _rb_with_tier_and_uncontested_prior(canonical_id: str, name: str, team: str)
         matchup_this_week=matchup_this_week,
         game_environment=None,
         game_environment_reason="no GameEnvironmentScore supplied for this team this week.",
+        ownership=None,
+        ownership_reason="no LeverageAssessment found for this player.",
     )
 
 
@@ -373,6 +393,9 @@ def test_normal_case_renders_all_three_tabs_and_real_lineup_data():
     assert "45.0% man" in html
     assert "Weather: external, unvalidated" in html
     assert "Moderate injury uncertainty" in html
+    assert "4.5% proj" in html  # ownership.projected_ownership
+    assert "vs 14.0% baseline (-9.5pt)" in html
+    assert ">Leverage<" in html  # leverage badge, not the chalk badge
 
     # Search filter present for the browsable player table.
     assert 'id="player-search"' in html
@@ -420,6 +443,8 @@ def test_missing_fields_show_reason_strings_not_blank_or_none():
     assert "no opponent identified for this week (a bye week" in html
     # No GameEnvironmentScore supplied -> real reason string shown.
     assert "no GameEnvironmentScore supplied for this team this week." in html
+    # No LeverageAssessment supplied -> real reason string shown.
+    assert "no LeverageAssessment found for this player." in html
 
     # Never the bare literal "None" standing in for one of these missing values.
     assert "<td>None</td>" not in html

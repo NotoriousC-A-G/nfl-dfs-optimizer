@@ -11,6 +11,7 @@ from nfl_dfs.ingestion.pff import PffFacetGrades, PffGradeRow, TeamCoverageTende
 from nfl_dfs.ingestion.snap_share import PlayerSnapShare
 from nfl_dfs.ingestion.usage_share import ROLE_RB, ROLE_WR, PlayerRoleShare, RoleShareResult
 from nfl_dfs.normalization.identity import MatchMethod, PlayerIdentity, SourceMatch
+from nfl_dfs.ownership.leverage import LeverageAssessment
 from nfl_dfs.projection.blend import PlayerProjection
 
 SEASON = 2026
@@ -31,10 +32,14 @@ def _identity(
     gsis_id: str | None,
     pff_native_id: str | None = None,
     pff_method: MatchMethod = MatchMethod.CROSSWALK,
+    rotogrinders_native_id: str | None = None,
+    rotogrinders_method: MatchMethod = MatchMethod.CROSSWALK,
 ) -> PlayerIdentity:
     sources = {}
     if pff_native_id is not None:
         sources["pff"] = SourceMatch(native_id=pff_native_id, method=pff_method)
+    if rotogrinders_native_id is not None:
+        sources["rotogrinders"] = SourceMatch(native_id=rotogrinders_native_id, method=rotogrinders_method)
     return PlayerIdentity(
         canonical_id=canonical_id,
         display_name=name,
@@ -497,6 +502,91 @@ def test_missing_player_projection_gives_null_salary_with_a_real_reason_not_a_cr
     )
     assert record_c.salary is None
     assert "no DK salary found for this player" in record_c.salary_reason
+
+
+def _leverage_assessment(native_id: str, *, is_chalk: bool = False, is_leverage: bool = False) -> LeverageAssessment:
+    return LeverageAssessment(
+        native_id=native_id,
+        name="Some Player",
+        position="WR",
+        team="GB",
+        salary=7000,
+        salary_decile=1,
+        projected_ownership=5.0,
+        ownership_percentile=0.2,
+        baseline_ownership=15.0,
+        ownership_vs_baseline=-10.0,
+        is_chalk=is_chalk,
+        is_leverage=is_leverage,
+        note="",
+    )
+
+
+def test_ownership_joins_via_rotogrinders_native_id():
+    identity = _identity("00-1", "Some WR", "WR", "GB", gsis_id="00-1", rotogrinders_native_id="rg-1")
+    record = build_player_detail_record(
+        identity,
+        SEASON,
+        WEEK,
+        team="GB",
+        position="WR",
+        opponent_team_this_week="CHI",
+        leverage_by_native_id={"rg-1": _leverage_assessment("rg-1", is_leverage=True)},
+    )
+    assert record.ownership is not None
+    assert record.ownership.native_id == "rg-1"
+    assert record.ownership.is_leverage is True
+    assert record.ownership_reason is None
+
+
+def test_ownership_none_with_reason_when_no_rotogrinders_source_match():
+    identity = _identity("00-1", "Some WR", "WR", "GB", gsis_id="00-1")
+    record = build_player_detail_record(
+        identity,
+        SEASON,
+        WEEK,
+        team="GB",
+        position="WR",
+        opponent_team_this_week="CHI",
+        leverage_by_native_id={"rg-1": _leverage_assessment("rg-1")},
+    )
+    assert record.ownership is None
+    assert "no LeverageAssessment found" in record.ownership_reason
+
+
+def test_ownership_none_with_reason_when_lookup_has_no_matching_row():
+    # Matched on rotogrinders, but the caller's leverage pool has no row for this id (e.g. a
+    # non-core position, or the caller didn't run build_leverage_assessments this week).
+    identity = _identity("00-1", "Some K", "K", "GB", gsis_id="00-1", rotogrinders_native_id="rg-1")
+    record = build_player_detail_record(
+        identity,
+        SEASON,
+        WEEK,
+        team="GB",
+        position="K",
+        opponent_team_this_week="CHI",
+        leverage_by_native_id={"rg-2": _leverage_assessment("rg-2")},
+    )
+    assert record.ownership is None
+    assert "no LeverageAssessment found" in record.ownership_reason
+
+
+def test_ownership_none_with_reason_when_rotogrinders_match_is_unresolved():
+    identity = _identity(
+        "00-1", "Some WR", "WR", "GB", gsis_id="00-1",
+        rotogrinders_native_id="rg-1", rotogrinders_method=MatchMethod.UNRESOLVED,
+    )
+    record = build_player_detail_record(
+        identity,
+        SEASON,
+        WEEK,
+        team="GB",
+        position="WR",
+        opponent_team_this_week="CHI",
+        leverage_by_native_id={"rg-1": _leverage_assessment("rg-1")},
+    )
+    assert record.ownership is None
+    assert "no LeverageAssessment found" in record.ownership_reason
 
 
 def _grade_facet(rows: list[PffGradeRow]) -> PffFacetGrades:
