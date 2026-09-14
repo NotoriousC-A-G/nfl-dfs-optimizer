@@ -54,6 +54,7 @@ from nfl_dfs.ingestion.usage_share import (
     aggregate_passer_week,
     aggregate_player_week,
     aggregate_player_week_red_zone,
+    aggregate_team_week_volume_red_zone,
 )
 from nfl_dfs.normalization.team_aliases import normalize_team
 
@@ -217,20 +218,71 @@ def component_a_multiplier(signal: CeilingSignal, role: str) -> float | None:
     return max(1.0, math.exp(COMPONENT_A_SCALE[role] * signal.shrunk_z_score))
 
 
+def _zero_fill_red_zone_weekly(
+    pbp: pd.DataFrame, red_zone_weekly: pd.DataFrame, role: str, *, season_type: str | None
+) -> pd.DataFrame:
+    """Fantasy Football Expert's required fix before any Component B backtest (ADR-0028): a player
+    who recorded overall volume that week (a real, active candidate for the role) but zero
+    red-zone volume, on a team that DID have red-zone plays that week, is a real `share=0.0`
+    "red-zone shutout" observation -- not the same thing as a week the team never reached the red
+    zone at all, which correctly stays excluded either way. Without this,
+    `aggregate_player_week_red_zone`'s own "absent row = zero volume" convention silently drops
+    exactly the bust weeks a boom-rate statistic needs to see to be meaningful, inflating boom rate
+    for the boom/bust, opportunity-dependent red-zone role players this component exists to catch.
+    """
+    overall = aggregate_player_week(pbp, season_type=season_type)
+    overall = overall[overall["role"] == role][["season", "week", "team", "player_id", "player_name"]]
+
+    team_rz_volume = aggregate_team_week_volume_red_zone(pbp, season_type=season_type)
+    volume_col = "team_rush_attempts" if role == ROLE_RB else "team_targets"
+    team_rz_volume_lookup = {
+        (row.season, row.week, row.team): getattr(row, volume_col)
+        for row in team_rz_volume.itertuples(index=False)
+        if getattr(row, volume_col) > 0
+    }
+
+    existing_keys = set(red_zone_weekly[["season", "week", "player_id"]].itertuples(index=False, name=None))
+
+    zero_rows = []
+    for row in overall.itertuples(index=False):
+        team_volume = team_rz_volume_lookup.get((row.season, row.week, row.team))
+        if team_volume is None:  # team had no red-zone plays this role cares about that week
+            continue
+        if (row.season, row.week, row.player_id) in existing_keys:
+            continue
+        zero_rows.append(
+            {
+                "season": row.season, "week": row.week, "team": row.team,
+                "player_id": row.player_id, "player_name": row.player_name, "role": role,
+                "volume": 0, "team_volume": team_volume, "share": 0.0,
+            }
+        )
+    if not zero_rows:
+        return red_zone_weekly
+    return pd.concat([red_zone_weekly, pd.DataFrame(zero_rows)], ignore_index=True)
+
+
 def red_zone_ceiling_signals(
     pbp: pd.DataFrame, target_week: int, role: str, *, season_type: str | None = "REG"
 ) -> list[CeilingSignal]:
     """ADR-0028 Component B: red-zone-share boom-rate ceiling signal, RB or WR/pass-catcher pool.
-    **Known, disclosed limitation:** this pipeline's red-zone aggregation (same as role-share)
-    buckets every pass-catcher -- WR and TE alike -- into one `ROLE_WR`-labeled pool; there is no
-    position split, so a TE's signal is z-scored against the combined WR+TE population, not a
-    TE-specific one. Splitting this would need the same position join `adot_ceiling_signals` takes
-    from its caller -- a real, separate follow-up, not solved here.
+    Zero-fills real "red-zone shutout" weeks via `_zero_fill_red_zone_weekly` (Fantasy Football
+    Expert's required design fix) before computing boom rate.
+
+    **Known, disclosed limitation, not fixed by the zero-fill above:** this pipeline's red-zone
+    aggregation (same as role-share) buckets every pass-catcher -- WR and TE alike -- into one
+    `ROLE_WR`-labeled pool; there is no position split, so a TE's signal is z-scored against the
+    combined WR+TE population, not a TE-specific one. Splitting this would need the same position
+    join `adot_ceiling_signals` takes from its caller -- a real, separate follow-up (the Fantasy
+    Football Expert flagged this as a hard blocker before any TE-specific live multiplier ships,
+    not before the RB/WR design itself), not solved here.
     """
     if role not in (ROLE_RB, ROLE_WR):
         raise ValueError(f"red_zone_ceiling_signals only supports {ROLE_RB!r}/{ROLE_WR!r}, got {role!r}")
     weekly = aggregate_player_week_red_zone(pbp, season_type=season_type)
-    weekly = weekly[(weekly["week"] < target_week) & (weekly["role"] == role)]
+    weekly = weekly[weekly["role"] == role]
+    weekly = _zero_fill_red_zone_weekly(pbp, weekly, role, season_type=season_type)
+    weekly = weekly[weekly["week"] < target_week]
     if role == ROLE_RB:
         weekly = _exclude_trailing_qbs(weekly, pbp, target_week, season_type=season_type)
     boom = _boom_rate_per_player(weekly)

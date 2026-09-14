@@ -217,3 +217,35 @@ coverage before any combined cap is set. The combined `capped_log_combine` cap a
 non-blocking caveat (both experts stress-tested a 2x SE inflation and both CIs still cleared zero,
 but true `player_id`-clustered SEs should be computed before this becomes a Performance Analytics
 drift-monitoring baseline).
+
+## Update (2026-09-14): Component B design fix, backtest, and a real, surprising null/negative result
+
+Continuing to Component B (red-zone-share boom-rate) per Chris's request. The Fantasy Football
+Expert did the required independent design review (Component B had only been extended from
+Component A "by direct structural analogy," never independently reviewed) and found a real bug
+before any backtest ran: `aggregate_player_week_red_zone` only produces a row for a (player, week)
+when that player actually recorded a red-zone touch -- a real "red-zone shutout" week (active
+player, team reached the red zone, player got no touch there) is indistinguishable from "team never
+reached the red zone that week," silently dropping exactly the bust weeks a boom-rate statistic
+needs to be meaningful. Fixed: `red_zone_ceiling_signals`/`_zero_fill_red_zone_weekly` now zero-fill
+real shutout weeks while correctly still excluding true no-red-zone-trip weeks, verified with a
+dedicated regression test and live real-2024-data spot check.
+
+With that fix in place, the same backtest methodology that calibrated Component A was run for
+Component B (`scripts/ceiling_red_zone_backtest.py`, 5 seasons, 19,980 real observations), plus the
+Model Analytics Expert's required Component A/B correlation check. **The result contradicts both
+experts' stated priors:** A/B correlation came back essentially zero for both roles (RB r=0.042, WR
+r=-0.128) rather than the "moderate positive, decoupling in identifiable archetypes" both expected.
+Component B's own relationship with real outcomes: RB shows no statistically real signal (95% CI
+includes zero, [-0.0958, 0.0101]); WR shows a real, statistically significant **negative**
+relationship (CI=[-0.1380, -0.0824], fairly monotonic across deciles, R²=0.437 at the decile level)
+-- a red-zone-share spike predicts *worse* subsequent relative performance for WR, the opposite
+direction from Component A.
+
+Sent to both experts for interpretation (in progress) rather than resolved unilaterally: is this a
+remaining construction artifact (small-denominator red-zone-share noise, the zero-fill's effect on
+sample composition) or a real football finding (e.g., red-zone share may be too low-frequency an
+event to support a boom-rate framing the way overall role share does, or WR red-zone spikes may
+reflect a one-off matchup exploit a defense adjusts to rather than a durable role signal)? No
+`scale_B` proposed or implemented pending that interpretation -- this update documents the honest,
+surprising result as found, not a conclusion.

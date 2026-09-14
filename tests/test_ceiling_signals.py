@@ -182,6 +182,37 @@ def test_red_zone_ceiling_signals_only_counts_plays_inside_the_red_zone():
     assert by_id["RBE"].raw_value == pytest.approx(0.0)
 
 
+def test_red_zone_ceiling_signals_zero_fills_real_shutout_weeks_not_team_no_redzone_weeks():
+    # Fantasy Football Expert's required fix (ADR-0028): a player with overall volume but zero
+    # red-zone touches on a week their TEAM did reach the red zone is a real 0.0-share
+    # observation and must count toward sample_size -- but a week the team never reached the red
+    # zone at all must stay excluded, not fabricated as a false shutout.
+    rows = (
+        # Week 1: RBF gets both of the team's 2 RZ carries (share=1.0), plus some non-RZ volume.
+        _rush(1, "GB", "RBF", "Runner F", 2, 1, yardline_100=10)
+        + _rush(1, "GB", "RBF", "Runner F", 3, 3, yardline_100=45)
+        # Week 2: RBF has overall volume (active) but zero RZ carries -- RBG gets the team's only
+        # RZ carries this week, so the team DID reach the red zone. This must zero-fill RBF.
+        + _rush(2, "GB", "RBF", "Runner F", 3, 10, yardline_100=45)
+        + _rush(2, "GB", "RBG", "Runner G", 2, 20, yardline_100=10)
+        # Week 3: RBF gets both of the team's 2 RZ carries again (share=1.0).
+        + _rush(3, "GB", "RBF", "Runner F", 2, 30, yardline_100=10)
+        + _rush(3, "GB", "RBF", "Runner F", 3, 32, yardline_100=45)
+        # Week 4: nobody on the team has a red-zone carry at all -- the team never reached the red
+        # zone. RBF still has overall (non-RZ) volume, but this week must NOT be zero-filled.
+        + _rush(4, "GB", "RBF", "Runner F", 3, 40, yardline_100=45)
+        + _rush(4, "GB", "RBG", "Runner G", 3, 50, yardline_100=45)
+    )
+    signals = red_zone_ceiling_signals(pd.DataFrame(rows), target_week=5, role=ROLE_RB)
+    rbf = next(s for s in signals if s.player_id == "RBF")
+
+    # Without the fix, RBF would only have 2 real weeks (1 and 3) -- below MIN_TRAILING_WEEKS=3,
+    # gated to raw_value=None. With the fix, week 2's real shutout is included (3 real weeks),
+    # week 4 stays correctly excluded (the team had zero red-zone plays that week).
+    assert rbf.sample_size == 3
+    assert rbf.raw_value is not None
+
+
 # --------------------------------------------------------------------------------------------
 # adot_ceiling_signals
 # --------------------------------------------------------------------------------------------
