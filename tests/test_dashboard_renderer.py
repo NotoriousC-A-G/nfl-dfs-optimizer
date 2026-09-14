@@ -16,9 +16,11 @@ from nfl_dfs.composition.player_detail import (
     OwnSchemeSplits,
     PlayerDetailRecord,
     PlayerDetailUsage,
+    PlayerInjuryDetail,
     RedZoneUsage,
     RoleShareUsage,
     SnapShareUsage,
+    StackContext,
 )
 from nfl_dfs.dashboard.renderer import SlateGameRow, render_dashboard_html, write_dashboard_html
 from nfl_dfs.game_environment.score import ComponentScore, GameEnvironmentScore
@@ -280,6 +282,27 @@ def _fully_populated_player_detail(
             "vs a 14.0% historical field-ownership baseline for that price tier (-9.5pt).",
         ),
         ownership_reason=None,
+        projection=18.7,
+        projection_reason=None,
+        stack_context=StackContext(
+            home_team=team,
+            away_team="MIN",
+            home_spread=-3.5,
+            single_team_viability=62.0,
+            game_stack_viability=55.0,
+            is_primary_stack_candidate=True,
+            primary_stack_rank=1,
+            is_bring_back_candidate=False,
+            bring_back_status="populated",
+            pivot_to=f"{team} implied 27.5, {name} leads targets in a plus game environment.",
+        ),
+        stack_context_reason=None,
+        injury=PlayerInjuryDetail(status="Q", body_part="Ankle", impact_rating=3),
+        injury_reason=None,
+        slate_window="early",
+        slate_window_reason=None,
+        implied_total=27.5,
+        implied_total_reason=None,
     )
 
 
@@ -340,6 +363,16 @@ def _rb_with_tier_and_uncontested_prior(canonical_id: str, name: str, team: str)
         game_environment_reason="no GameEnvironmentScore supplied for this team this week.",
         ownership=None,
         ownership_reason="no LeverageAssessment found for this player.",
+        projection=None,
+        projection_reason="no blended projection found for this player.",
+        stack_context=None,
+        stack_context_reason="no StackProfile found for this player's game.",
+        injury=None,
+        injury_reason="not on this week's injury report -- presumed healthy.",
+        slate_window=None,
+        slate_window_reason="no kickoff time known for this player's game.",
+        implied_total=None,
+        implied_total_reason="no implied point total for this player's team.",
     )
 
 

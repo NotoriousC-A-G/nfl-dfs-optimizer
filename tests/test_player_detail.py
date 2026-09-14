@@ -5,9 +5,12 @@ from nfl_dfs.composition.player_detail import (
     SCHEME_SPLIT_POSITIONS,
     build_gsis_to_pff_id_map,
     build_player_detail_record,
+    slate_window_label,
 )
+from nfl_dfs.correlation.stack_profile import StackProfile
 from nfl_dfs.game_environment.score import ComponentScore, GameEnvironmentScore
 from nfl_dfs.ingestion.pff import PffFacetGrades, PffGradeRow, TeamCoverageTendency
+from nfl_dfs.ingestion.rotogrinders_injuries import InjuryReportEntry
 from nfl_dfs.ingestion.snap_share import PlayerSnapShare
 from nfl_dfs.ingestion.usage_share import ROLE_RB, ROLE_WR, PlayerRoleShare, RoleShareResult
 from nfl_dfs.normalization.identity import MatchMethod, PlayerIdentity, SourceMatch
@@ -117,14 +120,16 @@ def _ges(team: str, *, is_available: bool = True, composite: float | None = 62.5
     )
 
 
-def _projection(canonical_id: str, *, salary: int | None, position: str = "WR", team: str = "DET") -> PlayerProjection:
+def _projection(
+    canonical_id: str, *, salary: int | None, position: str = "WR", team: str = "DET", blended_projection: float | None = None
+) -> PlayerProjection:
     return PlayerProjection(
         canonical_id=canonical_id,
         display_name="ignored -- salary join is by canonical_id, not name",
         position=position,
         team=team,
         salary=salary,
-        blended_projection=None,
+        blended_projection=blended_projection,
         source_count=0,
     )
 
@@ -700,3 +705,199 @@ def test_scheme_split_positions_excludes_qb_and_dst():
     assert "QB" not in SCHEME_SPLIT_POSITIONS
     assert "DST" not in SCHEME_SPLIT_POSITIONS
     assert {"WR", "TE", "RB"} == SCHEME_SPLIT_POSITIONS
+
+
+# --------------------------------------------------------------------------------------------
+# ADR-0027: projection, value, StackContext, injury, slate_window, implied_total
+# --------------------------------------------------------------------------------------------
+
+
+def test_projection_joins_via_same_canonical_id_as_salary():
+    identity = _identity("00-1", "Some WR", "WR", "GB", gsis_id="00-1")
+    record = build_player_detail_record(
+        identity,
+        SEASON,
+        WEEK,
+        team="GB",
+        position="WR",
+        opponent_team_this_week="CHI",
+        projections_by_canonical_id={"00-1": _projection("00-1", salary=6500, blended_projection=14.2)},
+    )
+    assert record.projection == pytest.approx(14.2)
+    assert record.projection_reason is None
+    assert record.salary == 6500
+    assert record.value == pytest.approx(14.2 / 6.5)
+
+
+def test_projection_none_with_reason_when_no_match():
+    identity = _identity("00-1", "Some WR", "WR", "GB", gsis_id="00-1")
+    record = build_player_detail_record(identity, SEASON, WEEK, team="GB", position="WR", opponent_team_this_week="CHI")
+    assert record.projection is None
+    assert "no blended projection found" in record.projection_reason
+    assert record.value is None
+
+
+def test_value_property_none_when_salary_is_zero_or_missing():
+    identity = _identity("00-1", "Some WR", "WR", "GB", gsis_id="00-1")
+    record = build_player_detail_record(
+        identity,
+        SEASON,
+        WEEK,
+        team="GB",
+        position="WR",
+        opponent_team_this_week="CHI",
+        projections_by_canonical_id={"00-1": _projection("00-1", salary=None, blended_projection=14.2)},
+    )
+    assert record.salary is None
+    assert record.value is None
+
+
+def _stack_profile(
+    home_team: str,
+    away_team: str,
+    *,
+    primary_stack_candidates: list[PlayerRoleShare] | None = None,
+    bring_back_candidates: list[PlayerRoleShare] | None = None,
+    bring_back_status: str = "populated",
+) -> StackProfile:
+    return StackProfile(
+        season=SEASON,
+        week=WEEK,
+        home_team=home_team,
+        away_team=away_team,
+        spread=-3.5,
+        single_team_viability_home=62.0,
+        single_team_viability_away=48.0,
+        game_stack_viability=55.0,
+        bring_back_status=bring_back_status,
+        primary_stack_candidates=primary_stack_candidates,
+        bring_back_candidates=bring_back_candidates,
+        pivot_to="GB implied 27.5, leads targets.",
+    )
+
+
+def test_stack_context_home_team_primary_candidate_gets_rank():
+    identity = _identity("00-1", "Home WR1", "WR", "GB", gsis_id="gsis-home-1")
+    candidate = _role_share("gsis-home-1", "Home WR1", ROLE_WR, "GB", blended=0.30, tier=None)
+    profile = _stack_profile("GB", "CHI", primary_stack_candidates=[candidate])
+    record = build_player_detail_record(
+        identity, SEASON, WEEK, team="GB", position="WR", opponent_team_this_week="CHI", stack_profiles=[profile]
+    )
+    assert record.stack_context is not None
+    assert record.stack_context.home_team == "GB"
+    assert record.stack_context.home_spread == pytest.approx(-3.5)
+    assert record.stack_context.single_team_viability == pytest.approx(62.0)
+    assert record.stack_context.is_primary_stack_candidate is True
+    assert record.stack_context.primary_stack_rank == 1
+    assert record.stack_context.is_bring_back_candidate is False
+    assert record.stack_context_reason is None
+
+
+def test_stack_context_away_team_reads_bring_back_candidates_and_away_viability():
+    identity = _identity("00-2", "Away WR1", "WR", "CHI", gsis_id="gsis-away-1")
+    candidate = _role_share("gsis-away-1", "Away WR1", ROLE_WR, "CHI", blended=0.28, tier=None)
+    profile = _stack_profile("GB", "CHI", bring_back_candidates=[candidate])
+    record = build_player_detail_record(
+        identity, SEASON, WEEK, team="CHI", position="WR", opponent_team_this_week="GB", stack_profiles=[profile]
+    )
+    assert record.stack_context is not None
+    assert record.stack_context.single_team_viability == pytest.approx(48.0)
+    assert record.stack_context.is_bring_back_candidate is True
+    assert record.stack_context.is_primary_stack_candidate is False
+    assert record.stack_context.primary_stack_rank is None
+
+
+def test_stack_context_none_with_reason_when_no_matching_profile():
+    identity = _identity("00-1", "Some WR", "WR", "GB", gsis_id="00-1")
+    profile = _stack_profile("NYJ", "NE")  # different game, doesn't include GB
+    record = build_player_detail_record(
+        identity, SEASON, WEEK, team="GB", position="WR", opponent_team_this_week="CHI", stack_profiles=[profile]
+    )
+    assert record.stack_context is None
+    assert "no StackProfile found" in record.stack_context_reason
+
+
+def test_injury_distinguishes_no_data_from_healthy_from_a_real_entry():
+    identity = _identity("00-1", "Some WR", "WR", "GB", gsis_id="00-1")
+
+    # No injury data supplied at all.
+    record_a = build_player_detail_record(identity, SEASON, WEEK, team="GB", position="WR", opponent_team_this_week="CHI")
+    assert record_a.injury is None
+    assert "no injury report data supplied" in record_a.injury_reason
+
+    # Injury data supplied, this player not on it -- real, positive "healthy" information.
+    record_b = build_player_detail_record(
+        identity, SEASON, WEEK, team="GB", position="WR", opponent_team_this_week="CHI", injury_by_canonical_id={}
+    )
+    assert record_b.injury is None
+    assert "presumed healthy" in record_b.injury_reason
+
+    # A real injury report row.
+    entry = InjuryReportEntry(
+        rotogrinders_player_id="999", name="Some WR", team="GBP", position="WR", status="Q", body_part="Ankle", impact_rating=3
+    )
+    record_c = build_player_detail_record(
+        identity,
+        SEASON,
+        WEEK,
+        team="GB",
+        position="WR",
+        opponent_team_this_week="CHI",
+        injury_by_canonical_id={"00-1": entry},
+    )
+    assert record_c.injury is not None
+    assert record_c.injury.status == "Q"
+    assert record_c.injury.body_part == "Ankle"
+    assert record_c.injury.impact_rating == 3
+    assert record_c.injury_reason is None
+
+
+def test_slate_window_and_implied_total_join_by_team():
+    identity = _identity("00-1", "Some WR", "WR", "GB", gsis_id="00-1")
+    record = build_player_detail_record(
+        identity,
+        SEASON,
+        WEEK,
+        team="GB",
+        position="WR",
+        opponent_team_this_week="CHI",
+        kickoff_utc_by_team={"GB": "2026-09-13T17:00:00Z"},  # 1:00pm ET Sunday
+        implied_total_by_team={"GB": 27.5},
+    )
+    assert record.slate_window == "early"
+    assert record.slate_window_reason is None
+    assert record.implied_total == pytest.approx(27.5)
+    assert record.implied_total_reason is None
+
+
+def test_slate_window_and_implied_total_none_with_reason_when_team_missing():
+    identity = _identity("00-1", "Some WR", "WR", "GB", gsis_id="00-1")
+    record = build_player_detail_record(
+        identity,
+        SEASON,
+        WEEK,
+        team="GB",
+        position="WR",
+        opponent_team_this_week="CHI",
+        kickoff_utc_by_team={"CHI": "2026-09-13T17:00:00Z"},
+        implied_total_by_team={"CHI": 24.0},
+    )
+    assert record.slate_window is None
+    assert "no kickoff time known" in record.slate_window_reason
+    assert record.implied_total is None
+    assert "no implied point total" in record.implied_total_reason
+
+
+@pytest.mark.parametrize(
+    "kickoff_utc,expected",
+    [
+        ("2026-09-13T17:00:00Z", "early"),  # Sunday 1:00pm ET
+        ("2026-09-13T20:25:00Z", "late"),  # Sunday 4:25pm ET
+        ("2026-09-14T00:20:00Z", "snf"),  # Sunday 8:20pm ET (00:20 UTC Monday)
+        ("2026-09-15T00:15:00Z", "mnf"),  # Monday 8:15pm ET (00:15 UTC Tuesday)
+        ("2026-09-11T00:15:00Z", "tnf"),  # Thursday 8:15pm ET (00:15 UTC Friday)
+        ("2026-09-19T17:00:00Z", "other"),  # Saturday
+    ],
+)
+def test_slate_window_label_buckets_real_kickoff_times(kickoff_utc, expected):
+    assert slate_window_label(kickoff_utc) == expected

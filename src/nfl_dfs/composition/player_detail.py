@@ -91,12 +91,16 @@ real, already-available Round A data, populated independently of the above.
 
 from __future__ import annotations
 
+import zoneinfo
 from dataclasses import dataclass, field
+from datetime import datetime
 
 import pandas as pd
 
+from nfl_dfs.correlation.stack_profile import StackProfile
 from nfl_dfs.game_environment.score import GameEnvironmentScore
 from nfl_dfs.ingestion.pff import PffFacetGrades, ResolvedGrade, TeamCoverageTendency, resolve_grade
+from nfl_dfs.ingestion.rotogrinders_injuries import InjuryReportEntry
 from nfl_dfs.ingestion.snap_share import PlayerSnapShare
 from nfl_dfs.ingestion.usage_share import ROLE_RB, ROLE_WR, PlayerRoleShare, RoleShareResult
 from nfl_dfs.matchup.context import MatchupFacetInputs, resolve_own_opponent_unit_grades
@@ -121,6 +125,31 @@ _NO_SALARY_REASON = (
     "no DK salary found for this player -- no PlayerProjection was supplied/matched for this "
     "canonical_id, or the matched PlayerProjection's own salary field is unresolved (no "
     "identity.sources['draftkings'] match, per projection/blend.py's own _salary_for)."
+)
+
+_NO_PROJECTION_REASON = (
+    "no blended projection found for this player -- no PlayerProjection was supplied/matched for "
+    "this canonical_id, or the matched PlayerProjection's own blended_projection field is None (no "
+    "usable vendor projection source resolved for this player, projection/blend.py)."
+)
+
+_NO_STACK_PROFILE_REASON = (
+    "no StackProfile found for this player's game -- either stack_profiles wasn't supplied to this "
+    "composer call, or no supplied StackProfile has this player's team as its home_team/away_team "
+    "(e.g. this game's spread wasn't available this pull, correlation/stack_profile.py)."
+)
+
+_NO_INJURY_DATA_REASON = "no injury report data supplied to this composer call."
+_HEALTHY_REASON = "not on this week's injury report -- presumed healthy."
+
+_NO_SLATE_WINDOW_REASON = (
+    "no kickoff time known for this player's game -- kickoff_utc_by_team wasn't supplied, or this "
+    "player's team has no entry in it."
+)
+
+_NO_IMPLIED_TOTAL_REASON = (
+    "no implied point total for this player's team -- implied_total_by_team wasn't supplied, or "
+    "this team has no live odds line this pull (ingestion/odds_api.py)."
 )
 
 _NO_OWNERSHIP_REASON = (
@@ -237,6 +266,71 @@ class MatchupThisWeek:
 
 
 @dataclass(frozen=True)
+class PlayerInjuryDetail:
+    """One player's own injury-report row (RotoGrinders Situation Room,
+    `ingestion/rotogrinders_injuries.py`'s `InjuryReportEntry`) -- deliberately separate from
+    `GameEnvironmentScore.injury_uncertainty_flag`, which is rolled up off the *worst unresolved
+    player on the team* and is not this specific player's own status (ADR-0027)."""
+
+    status: str
+    body_part: str
+    impact_rating: int
+
+
+@dataclass(frozen=True)
+class StackContext:
+    """This player's slice of the `StackProfile` (`correlation/stack_profile.py`) built for their
+    own game this week (ADR-0027) -- the stacking thesis itself, not re-derived, just read a second
+    time at player grain the way `matchup_this_week` already reads `MatchupContext` a second time.
+
+    `home_spread` is `StackProfile.spread` untouched (the home team's own signed spread, per that
+    field's own docstring) -- never sign-flipped for the away team's row, to avoid inventing a new
+    convention; a renderer shows it labeled by `home_team` so it stays unambiguous either way.
+
+    `primary_stack_candidates`/`bring_back_candidates` are always read off the anchor `home_team`'s
+    and `away_team`'s roster respectively (`StackProfile`'s own "anchor-team" convention) --
+    `is_primary_stack_candidate`/`primary_stack_rank` are only ever set for a `home_team` player,
+    `is_bring_back_candidate` only ever for an `away_team` player, matching that convention exactly
+    rather than re-deriving a symmetric one this module doesn't own.
+    """
+
+    home_team: str
+    away_team: str
+    home_spread: float
+    single_team_viability: float | None
+    game_stack_viability: float | None
+    is_primary_stack_candidate: bool
+    primary_stack_rank: int | None
+    is_bring_back_candidate: bool
+    bring_back_status: str
+    pivot_to: str | None
+
+
+def slate_window_label(kickoff_utc: str) -> str:
+    """Buckets a game's kickoff (ISO8601 UTC string) into DK's real slate-window shape -- which
+    window a rostered player in that game locks in, needed for late-swap construction (PRD
+    Section 3, ADR-0027). Real weekday+hour-bucketed labels in America/New_York, DK's own scheduling
+    timezone, not a guess: `"tnf"` (Thursday), `"early"` (Sunday before 3pm ET -- the 1:00pm window),
+    `"late"` (Sunday 3-6pm ET -- the 4:05/4:25pm window), `"snf"` (Sunday 6pm ET or later), `"mnf"`
+    (Monday), `"other"` (any other real kickoff slot, e.g. a Saturday or international game).
+    """
+    dt_utc = datetime.fromisoformat(kickoff_utc.replace("Z", "+00:00"))
+    dt_et = dt_utc.astimezone(zoneinfo.ZoneInfo("America/New_York"))
+    weekday = dt_et.weekday()  # Monday=0 ... Sunday=6
+    if weekday == 3:
+        return "tnf"
+    if weekday == 0:
+        return "mnf"
+    if weekday == 6:
+        if dt_et.hour < 15:
+            return "early"
+        if dt_et.hour < 18:
+            return "late"
+        return "snf"
+    return "other"
+
+
+@dataclass(frozen=True)
 class PlayerDetailRecord:
     """ADR-0022's player-detail read-model: grain is (season, week, canonical_player_id),
     "as of week W" built from completed weeks 1..W-1 only, matching `RoleShareResult`/
@@ -255,6 +349,21 @@ class PlayerDetailRecord:
     calibration) via `identity.sources["rotogrinders"].native_id` -- the same join key
     `projection/blend.py` already uses for that source. `ownership_reason` is populated exactly
     when `ownership is None`.
+
+    `projection` (ADR-0027) is DK-site blended points, from the same `PlayerProjection` `salary`
+    already reads (`PlayerProjection.blended_projection`) -- the single most-requested missing
+    field per the Fantasy Football Expert's dashboard review. `value` is a derived `@property`
+    (points per $1,000 salary), not a stored field, since it's fully determined by `salary` and
+    `projection` and has nothing of its own to explain when one of them is `None`.
+
+    `stack_context` (ADR-0027) is this player's slice of an already-built `StackProfile`
+    (`correlation/stack_profile.py`) for their own game -- see `StackContext`'s own docstring for
+    the anchor-team join. `injury` is this player's own row from an already-built injury lookup
+    (`normalization/injury_lookup.py`'s `team_injuries`, keyed here by `canonical_id`) --
+    deliberately distinct from `GameEnvironmentScore.injury_uncertainty_flag`, which reflects the
+    team's worst unresolved case, not this player. `slate_window`/`implied_total` are both simple,
+    directly-sourced values (this game's kickoff bucket and this team's live implied point total)
+    with their own reasons, same shape as `salary`.
     """
 
     season: int
@@ -276,7 +385,29 @@ class PlayerDetailRecord:
     ownership: LeverageAssessment | None
     ownership_reason: str | None
 
+    projection: float | None
+    projection_reason: str | None
+
+    stack_context: StackContext | None
+    stack_context_reason: str | None
+
+    injury: PlayerInjuryDetail | None
+    injury_reason: str | None
+
+    slate_window: str | None
+    slate_window_reason: str | None
+
+    implied_total: float | None
+    implied_total_reason: str | None
+
     notes: list[str] = field(default_factory=list)
+
+    @property
+    def value(self) -> float | None:
+        """Points per $1,000 salary -- `None` whenever either input is, no reason of its own."""
+        if self.projection is None or not self.salary:
+            return None
+        return self.projection / (self.salary / 1000.0)
 
 
 # --------------------------------------------------------------------------------------------
@@ -616,6 +747,93 @@ def _ownership_leverage(
     return assessment, None
 
 
+def _projection(
+    identity: PlayerIdentity, projections_by_canonical_id: dict[str, PlayerProjection] | None
+) -> tuple[float | None, str | None]:
+    """Same join and same two-miss-cases-one-reason shape as `_salary` above -- deliberately not a
+    new lookup, the same `PlayerProjection` row `_salary` already reads, just its
+    `blended_projection` field instead of `salary`.
+    """
+    projection = (projections_by_canonical_id or {}).get(identity.canonical_id)
+    if projection is None or projection.blended_projection is None:
+        return None, _NO_PROJECTION_REASON
+    return projection.blended_projection, None
+
+
+def _stack_context(
+    team: str, gsis_id: str | None, stack_profiles: list[StackProfile] | None
+) -> tuple[StackContext | None, str | None]:
+    """Finds the one `StackProfile` (of a caller-supplied list, one per game) whose `home_team`/
+    `away_team` matches this player's team, then reads the anchor-team-scoped candidate fields --
+    see `StackContext`'s own docstring for why `is_primary_stack_candidate` only ever fires for a
+    home-team player and `is_bring_back_candidate` only ever for an away-team player.
+    """
+    if not stack_profiles:
+        return None, _NO_STACK_PROFILE_REASON
+    profile = next((sp for sp in stack_profiles if sp.home_team == team or sp.away_team == team), None)
+    if profile is None:
+        return None, _NO_STACK_PROFILE_REASON
+
+    is_home = profile.home_team == team
+    is_primary = False
+    primary_rank = None
+    is_bring_back = False
+    if is_home and profile.primary_stack_candidates and gsis_id is not None:
+        for rank, candidate in enumerate(profile.primary_stack_candidates, start=1):
+            if candidate.player_id == gsis_id:
+                is_primary = True
+                primary_rank = rank
+                break
+    if not is_home and profile.bring_back_candidates and gsis_id is not None:
+        is_bring_back = any(candidate.player_id == gsis_id for candidate in profile.bring_back_candidates)
+
+    return (
+        StackContext(
+            home_team=profile.home_team,
+            away_team=profile.away_team,
+            home_spread=profile.spread,
+            single_team_viability=profile.single_team_viability_home if is_home else profile.single_team_viability_away,
+            game_stack_viability=profile.game_stack_viability,
+            is_primary_stack_candidate=is_primary,
+            primary_stack_rank=primary_rank,
+            is_bring_back_candidate=is_bring_back,
+            bring_back_status=profile.bring_back_status,
+            pivot_to=profile.pivot_to,
+        ),
+        None,
+    )
+
+
+def _injury(
+    identity: PlayerIdentity, injury_by_canonical_id: dict[str, InjuryReportEntry] | None
+) -> tuple[PlayerInjuryDetail | None, str | None]:
+    """Unlike every other section above, a `None` result here has two real, DIFFERENT meanings that
+    must not collapse into one shared reason string (contrast `_salary`'s deliberate collapse): "no
+    injury data was supplied at all" (a genuine gap) vs. "this player isn't on this week's injury
+    report" (real, positive information -- presumed healthy, not missing data).
+    """
+    if injury_by_canonical_id is None:
+        return None, _NO_INJURY_DATA_REASON
+    entry = injury_by_canonical_id.get(identity.canonical_id)
+    if entry is None:
+        return None, _HEALTHY_REASON
+    return PlayerInjuryDetail(status=entry.status, body_part=entry.body_part, impact_rating=entry.impact_rating), None
+
+
+def _slate_window(team: str, kickoff_utc_by_team: dict[str, str] | None) -> tuple[str | None, str | None]:
+    kickoff_utc = (kickoff_utc_by_team or {}).get(team)
+    if kickoff_utc is None:
+        return None, _NO_SLATE_WINDOW_REASON
+    return slate_window_label(kickoff_utc), None
+
+
+def _implied_total(team: str, implied_total_by_team: dict[str, float] | None) -> tuple[float | None, str | None]:
+    implied_total = (implied_total_by_team or {}).get(team)
+    if implied_total is None:
+        return None, _NO_IMPLIED_TOTAL_REASON
+    return implied_total, None
+
+
 # --------------------------------------------------------------------------------------------
 # Top-level composer
 # --------------------------------------------------------------------------------------------
@@ -639,6 +857,10 @@ def build_player_detail_record(
     projections_by_canonical_id: dict[str, PlayerProjection] | None = None,
     matchup_facets: MatchupFacetInputs | None = None,
     leverage_by_native_id: dict[str, LeverageAssessment] | None = None,
+    stack_profiles: list[StackProfile] | None = None,
+    injury_by_canonical_id: dict[str, InjuryReportEntry] | None = None,
+    kickoff_utc_by_team: dict[str, str] | None = None,
+    implied_total_by_team: dict[str, float] | None = None,
 ) -> PlayerDetailRecord:
     """Join one player's ADR-0022 `PlayerDetailRecord` for one (season, week) out of already-
     computed, week-scoped lookup collections -- see module docstring for the exact join keys used
@@ -673,6 +895,13 @@ def build_player_detail_record(
     `{a.native_id: a for a in assessments}`), joined here purely for the `ownership` field via
     `identity.sources['rotogrinders']`. Optional, same "caller has nothing for this source" shape
     as every other lookup above.
+
+    New this round (ADR-0027), all optional, same "caller has nothing for this source" shape:
+    `stack_profiles` (Stage 6's already-built `StackProfile` list, one per game) for `stack_context`;
+    `injury_by_canonical_id` (`normalization.injury_lookup.team_injuries`'s per-team output,
+    flattened by the caller into one `canonical_id`-keyed dict across every team) for `injury`;
+    `kickoff_utc_by_team`/`implied_total_by_team` (plain dicts the caller already has on hand from
+    the DK slate/`odds_api.py` pulls respectively) for `slate_window`/`implied_total`.
     """
     gsis_id = identity.nflverse_gsis_id
 
@@ -686,6 +915,11 @@ def build_player_detail_record(
     game_environment, game_environment_reason = _game_environment(team, game_environment_by_team)
     salary, salary_reason = _salary(identity, projections_by_canonical_id)
     ownership, ownership_reason = _ownership_leverage(identity, leverage_by_native_id)
+    projection, projection_reason = _projection(identity, projections_by_canonical_id)
+    stack_context, stack_context_reason = _stack_context(team, gsis_id, stack_profiles)
+    injury, injury_reason = _injury(identity, injury_by_canonical_id)
+    slate_window, slate_window_reason = _slate_window(team, kickoff_utc_by_team)
+    implied_total, implied_total_reason = _implied_total(team, implied_total_by_team)
 
     notes: list[str] = []
     if gsis_id is None:
@@ -717,5 +951,15 @@ def build_player_detail_record(
         game_environment_reason=game_environment_reason,
         ownership=ownership,
         ownership_reason=ownership_reason,
+        projection=projection,
+        projection_reason=projection_reason,
+        stack_context=stack_context,
+        stack_context_reason=stack_context_reason,
+        injury=injury,
+        injury_reason=injury_reason,
+        slate_window=slate_window,
+        slate_window_reason=slate_window_reason,
+        implied_total=implied_total,
+        implied_total_reason=implied_total_reason,
         notes=notes,
     )
