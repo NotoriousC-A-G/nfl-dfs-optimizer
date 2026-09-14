@@ -18,12 +18,17 @@ from typing import Sequence
 
 import pandas as pd
 
+from nfl_dfs.normalization.position_aliases import normalize_position
 from nfl_dfs.storage.resultsdb_store import read_curated_player_exposures
 
 # The only positions with a non-trivial, DK-rosterable row count in the real data (ADR-0025 section 2) --
 # FB/LS/K/LB/CB/DL/DE/MLB are single-digit-to-low-hundreds artifacts of the payload's raw position tagging,
-# not a real drafted pool, and are excluded from fitting.
-CORE_POSITIONS: tuple[str, ...] = ("QB", "RB", "WR", "TE", "D")
+# not a real drafted pool, and are excluded from fitting. Uses this codebase's canonical vocabulary
+# (`normalization/position_aliases.py`'s `CANONICAL_POSITIONS`) -- ResultsDB's own raw payload tags the
+# defense position `"D"`, normalized to canonical `"DST"` below before filtering, so this module's output
+# joins cleanly against every other source's position codes (e.g. `ownership/leverage.py`'s live RotoGrinders
+# rows, which already use `"DST"` natively).
+CORE_POSITIONS: tuple[str, ...] = ("QB", "RB", "WR", "TE", "DST")
 
 N_DECILES = 10
 
@@ -119,6 +124,8 @@ def fit_season_calibration(season: int, *, base_dir: Path | None = None) -> Seas
     if df.empty:
         raise ValueError(f"no curated ResultsDB player_exposures data found for season {season}")
 
+    df = df.copy()
+    df["position"] = df["position"].apply(lambda raw: normalize_position("resultsdb", raw))
     df = df[df["position"].isin(CORE_POSITIONS)].copy()
     df["salary_decile"] = _assign_salary_deciles(df)
 

@@ -62,6 +62,10 @@ _ALIASES: dict[str, dict[str, str]] = {
         "DEF": "DST",
         "D": "DST",
     },
+    "resultsdb": {
+        "DEF": "DST",
+        "D": "DST",
+    },
     "footballguys": {
         "TD": "DST",
         "DEF": "DST",

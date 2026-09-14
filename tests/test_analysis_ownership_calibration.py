@@ -103,6 +103,17 @@ def test_fit_season_calibration_flags_2020_as_regime(tmp_path):
     assert "COVID" in calib.regime_note
 
 
+def test_fit_season_calibration_normalizes_raw_resultsdb_defense_code_to_canonical_dst(tmp_path):
+    # ResultsDB's raw payload tags the defense position "D" (not the canonical "DST" every other source in
+    # this codebase uses, normalization/position_aliases.py) -- must be normalized before fitting so this
+    # module's output joins cleanly against ownership/leverage.py's live RotoGrinders rows.
+    _write_season(tmp_path, 2023, position="D")
+    calib = fit_season_calibration(2023, base_dir=tmp_path)
+    assert "D" not in calib.curves
+    assert "DST" in calib.curves
+    assert calib.curves["DST"].n_rows == 20
+
+
 def test_fit_season_calibration_excludes_non_core_positions(tmp_path):
     _write_season(tmp_path, 2023, position="WR")
     _write_season(tmp_path, 2023, position="K", n_contests=1)
@@ -225,4 +236,4 @@ def test_run_full_calibration_end_to_end(tmp_path):
     assert "WR" in bundle.stability
     assert bundle.stability["WR"].is_stable is True
     assert bundle.production["WR"].blended is True
-    assert set(CORE_POSITIONS) == {"QB", "RB", "WR", "TE", "D"}
+    assert set(CORE_POSITIONS) == {"QB", "RB", "WR", "TE", "DST"}
