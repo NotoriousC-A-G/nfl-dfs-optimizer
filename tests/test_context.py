@@ -53,7 +53,7 @@ def test_wr_multiplier_magnitude_unchanged_by_alignment_confidence():
         players, _FACETS, defender_alignment_snaps, receiver_alignment_share
     )
 
-    assert without_alignment["wr1"].coverage_confidence is None
+    assert without_alignment["wr1"].coverage_confidence == CoverageConfidence.TEAM_WIDE_FALLBACK
     assert with_alignment["wr1"].coverage_confidence == CoverageConfidence.CONFIDENT
     assert without_alignment["wr1"].multiplier == with_alignment["wr1"].multiplier
 
