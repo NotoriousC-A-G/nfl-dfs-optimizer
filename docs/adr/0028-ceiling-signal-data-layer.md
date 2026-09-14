@@ -279,7 +279,48 @@ Expert's football-mechanism read instead. WR's A/B correlation stayed near zero 
 (-0.0175), unlike RB's now-real 0.248 -- these really do look like two different kinds of signal
 for the two roles.
 
-Final calibration verdict on the improved RB result is in progress with both experts (a real but
-technically-still-zero-touching CI is a genuine judgment call, the same shape of question Component
-A's WR-plateau watch item raised) -- this update will be revised again once that lands, rather than
-called final here.
+### Final verdict: Component B ships no live multiplier, for either role, in this round
+
+The Fantasy Football Expert signed off on RB proceeding toward calibration (their read: 0.248 is
+"close to exactly" their predicted magnitude for real-but-not-total role/red-zone-trust overlap,
+and the WR finding surviving the volume-tier check "firms up, doesn't just fail to kill" the
+role-insecurity mechanism -- the negative slope holding evenly across volume tiers is what the
+football story predicts and the small-sample-noise story specifically does not). Their one
+condition: any eventual `scale_RB` must explicitly discount the confirmed A/B shared variance
+(r=0.248, the bell-cow-takeover archetype moves both signals together) rather than treating the two
+components as independent -- and treat a barely-clearing CI with real conservatism, the same
+discipline Component A's comfortably-significant result didn't need.
+
+The Model Analytics Expert withheld sign-off pending one specific, decisive check: cluster-robust
+standard errors (Cameron-Miller sandwich estimator, `player_id` clusters, Stata's small-sample
+correction) on the RB regression -- required because the non-clustered SE assumes independence
+across a player's own repeated weekly observations, and RB's non-clustered CI ([-0.0024, 0.1062])
+was already too close to the line for decile-level/A-B-correlation corroboration to substitute for
+that specific robustness check (per their own stated reasoning: `t = 0.0519/0.0277 = 1.87`, short
+of the ±1.96 threshold).
+
+**That check is now done.** `scripts/ceiling_red_zone_backtest.py`'s `_linear_fit_clustered_se`
+(a from-scratch sandwich-estimator implementation, no statsmodels dependency) on the full
+5-season, n=5,439, G=344-player-cluster sample: **slope=0.0519, clustered SE=0.0274, 95%
+CI=[-0.0018, 0.1057] -- still includes zero**, by an even tighter margin than the non-clustered
+version. Clustering barely moved the SE here (0.0277→0.0274), meaning within-player correlation
+across weeks wasn't the dominant source of uncertainty this bordered on -- the result is genuinely,
+not artifactually, borderline.
+
+**Final decision, per the Model Analytics Expert's own pre-stated rule ("if the clustered CI
+includes zero, RB joins WR as no-live-multiplier this round"): Component B ships nothing for
+either role.** RB is a real, corroborated, but statistically insufficient signal -- not
+implemented, not because the football story is wrong (the Fantasy Football Expert's football read
+and the A/B correlation both suggest it's real), but because it doesn't clear this project's own
+bar for a live constant even under the more rigorous check. WR is a real, non-artifact finding
+(survived the volume-tier check cleanly) that is architecturally impossible to express in
+`CeilingMultiplier`'s one-sided, floored-at-1.0 form -- both experts explicitly want it carried
+forward as a named candidate for a future role-security/downside-risk construct, not left as a
+dead end.
+
+**What this round leaves behind, concretely:** two real bugs found and fixed in shared ceiling
+infrastructure (the red-zone zero-fill, and the zero-median boom-rate pinning -- the latter also
+benefits any future component built on `_boom_rate_per_player`), a full backtest+interpretation
+methodology now proven out twice (Component A shipped, Component B honestly didn't), and a named,
+scoped future construct (WR red-zone role-security) with real preliminary evidence already
+gathered rather than starting from nothing.

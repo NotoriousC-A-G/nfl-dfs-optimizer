@@ -213,5 +213,39 @@ def _linear_fit_with_se(x, y) -> tuple[float, float, float, tuple[float, float]]
     return float(slope), r2, se, ci
 
 
+def _linear_fit_clustered_se(x, y, clusters) -> tuple[float, float, tuple[float, float], int]:
+    """OLS slope + cluster-robust standard error (Cameron-Miller sandwich estimator, Stata's
+    default small-sample correction `(G/(G-1)) * ((N-1)/(N-K))`) -- the check the Model Analytics
+    Expert required before treating a borderline (non-clustered) CI as final: this dataset has
+    repeated weekly observations per player, and naive OLS SEs assume independence across those
+    repeats, which understates the true SE whenever a player's own weeks are correlated (they are
+    -- a player's underlying talent/role/matchup quality doesn't reset every week). No
+    statsmodels/scipy dependency, matching this project's existing venv constraint.
+    """
+    n = len(x)
+    design = np.column_stack([np.ones(n), x])
+    xtx_inv = np.linalg.inv(design.T @ design)
+    beta = xtx_inv @ design.T @ y
+    resid = y - design @ beta
+
+    unique_clusters = np.unique(clusters)
+    n_clusters = len(unique_clusters)
+    meat = np.zeros((2, 2))
+    for cluster_id in unique_clusters:
+        mask = clusters == cluster_id
+        design_g = design[mask]
+        resid_g = resid[mask]
+        score_g = design_g.T @ resid_g
+        meat += np.outer(score_g, score_g)
+
+    k = 2  # intercept + slope
+    correction = (n_clusters / (n_clusters - 1)) * ((n - 1) / (n - k))
+    vcov = correction * xtx_inv @ meat @ xtx_inv
+    slope_se = float(np.sqrt(vcov[1, 1]))
+    slope = float(beta[1])
+    ci = (slope - 1.96 * slope_se, slope + 1.96 * slope_se)
+    return slope, slope_se, ci, n_clusters
+
+
 if __name__ == "__main__":
     main()

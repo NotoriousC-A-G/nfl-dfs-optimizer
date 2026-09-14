@@ -52,6 +52,7 @@ from scripts.ceiling_role_share_backtest import (
     N_DECILES,
     SEASONS,
     _linear_fit,
+    _linear_fit_clustered_se,
     _linear_fit_with_se,
     dk_points_row,
 )
@@ -165,6 +166,22 @@ def main() -> None:
             f"slope={log_slope:.4f}  SE={log_se:.4f}  95% CI=[{log_ci[0]:.4f}, {log_ci[1]:.4f}]  R2={log_r2:.3f}"
         )
         print(f"  --> exp(slope) = {np.exp(log_slope):.4f}")
+
+        # Model Analytics Expert's required final check (RB only -- the borderline result): the
+        # non-clustered SE above assumes independence across a player's own repeated weekly
+        # observations, which understates the true SE whenever those repeats are correlated (they
+        # are -- a player's underlying talent/role/matchup quality doesn't reset every week).
+        # Cluster-robust SEs (Cameron-Miller sandwich, player_id clusters) are the decisive check
+        # for a result this close to the non-clustered significance line.
+        if role == ROLE_RB:
+            clustered_slope, clustered_se, clustered_ci, n_clusters = _linear_fit_clustered_se(
+                player_z, log_perf, positive["player_id"].to_numpy()
+            )
+            print(
+                f"  Cluster-robust fit (player_id clusters, G={n_clusters}) -- "
+                f"slope={clustered_slope:.4f}  SE={clustered_se:.4f}  95% CI=[{clustered_ci[0]:.4f}, {clustered_ci[1]:.4f}]"
+            )
+            print(f"  --> clears zero: {clustered_ci[0] > 0 or clustered_ci[1] < 0}")
 
         # Model Analytics Expert's required check #2 (WR only, where the negative finding was):
         # split by a tercile of trailing team red-zone play volume -- tests whether the negative
