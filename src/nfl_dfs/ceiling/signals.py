@@ -1,18 +1,20 @@
 """Ceiling signal data layer (PRD Section 6's newest construct, ADR-0028).
 
 **Component A now has a real, backtested, both-experts-signed-off live multiplier
-(`component_a_multiplier`) -- Components B and C do not.** The original round built only the data
-layer: neither the Model Analytics Expert (draft) nor the Fantasy Football Expert (review) would
-propose the scale/cap constants needed to turn a z-scored signal into an actual multiplier without
-a real outcome backtest (analogous to ADR-0012's own return-TD-rate correction). That backtest has
-since been run live for Component A only (`scripts/ceiling_role_share_backtest.py`, 5 real seasons,
-20,376 real player-weeks, a player-level log-space regression of actual-DK-points-relative-to-own-
-trailing-median against `shrunk_z_score`) and both experts gave explicit, numbered sign-off on the
-result -- see the "Update" section of `docs/adr/0028-ceiling-signal-data-layer.md`. Components B and
-C remain exactly as before: real, inspectable signals with no live multiplier, still blocked on
-their own backtests.
+(`component_a_multiplier`) -- Components B, C, and D do not.** The original round built only the
+data layer: neither the Model Analytics Expert (draft) nor the Fantasy Football Expert (review)
+would propose the scale/cap constants needed to turn a z-scored signal into an actual multiplier
+without a real outcome backtest (analogous to ADR-0012's own return-TD-rate correction). That
+backtest has since been run live for Component A only (`scripts/ceiling_role_share_backtest.py`, 5
+real seasons, 20,376 real player-weeks, a player-level log-space regression of actual-DK-points-
+relative-to-own-trailing-median against `shrunk_z_score`) and both experts gave explicit, numbered
+sign-off on the result -- see the "Update" section of `docs/adr/0028-ceiling-signal-data-layer.md`.
+Components B, C, and D each got their own backtest too, and all three ship nothing live: real,
+inspectable signals with no live multiplier, closed out as either a real-but-insufficient/
+architecturally-inexpressible finding (B) or a clean, thoroughly-verified null (C, D) -- see that
+same ADR's Update sections for each.
 
-Three signal-producing functions, one per ADR-0028 component:
+Four signal-producing functions, one per ADR-0028 component:
 
 - `role_share_ceiling_signals` -- Component A, RB/WR role-share "boom rate" (fraction of trailing
   weeks a player's share spiked above their own trailing median). Built as a boom-rate, not raw
@@ -33,6 +35,12 @@ Three signal-producing functions, one per ADR-0028 component:
   split needs PFF's `slot_coverage` alignment data (ADR-0001), confirmed NOT ingested anywhere in
   this pipeline (`matchup/coverage.py`'s own documented gap), not something this pass invents a
   workaround for.
+- `qb_rushing_ceiling_signals` -- Component D (ADR-0030), trailing DESIGNED-RUN COUNT boom-rate for
+  identified trailing passers (scrambles explicitly excluded from the predictor -- see this
+  function's own section docstring below for the full design rationale). Backtested and closed as
+  a clean null (both the designed-run boom-rate primary test and a scramble-rate secondary test) --
+  see `docs/adr/0028-ceiling-signal-data-layer.md`'s Component D Update section. Kept in this module
+  for traceability/reproducibility, same posture as B/C.
 
 Every constant below (`BOOM_THRESHOLD`, `MIN_TRAILING_WEEKS`, `CEILING_SHRINKAGE_K`,
 `ADOT_MIN_TARGETS`) is an explicit, unvalidated starting placeholder -- named as such in both
@@ -67,12 +75,19 @@ CEILING_SHRINKAGE_K = 6.0  # borrowed from pace/PROE per ADR-0011's "reuse befor
 ADOT_MIN_TARGETS = 8  # deliberately well under usage_share.py's WR_GATE_MIN_VOLUME=20 (a
 # "lead receiver" gate built for a different purpose) -- paired with shrinkage, not a hard cutoff.
 
+# ADR-0028/0030 Component D (QB rushing) -- backtested and CLOSED as a clean null (both experts
+# signed off, see docs/adr/0028-ceiling-signal-data-layer.md's Component D Update section); no live
+# multiplier. Kept for traceability -- reuses ADOT_MIN_TARGETS's value directly per the Model
+# Analytics Expert's explicit instruction ("the closest existing precedent for how much repeated
+# opportunity before a per-opportunity rate is trustworthy at all"), not a re-derived constant.
+QB_DESIGNED_RUN_MIN_TRAILING_VOLUME = 8
+
 # Component A's real, backtested, both-experts-signed-off scale constants (ADR-0028 Update) --
 # fitted via a player-level log-space regression on 5 real seasons / 20,376 real player-weeks,
 # NOT an eyeballed or decile-level number. See docs/adr/0028-ceiling-signal-data-layer.md's
 # "Update" section for the full calibration record (95% CIs, the Model Analytics Expert's and
-# Fantasy Football Expert's explicit sign-off reasoning). Component B/C have no equivalent
-# constant yet -- do not extrapolate these values to those components.
+# Fantasy Football Expert's explicit sign-off reasoning). Components B/C/D all closed with no
+# equivalent live constant -- do not extrapolate Component A's values to those components.
 COMPONENT_A_SCALE: dict[str, float] = {ROLE_RB: 0.1177, ROLE_WR: 0.0798}
 
 
@@ -377,3 +392,93 @@ def adot_ceiling_signals(
         pool = trailing[trailing["position"] == position][["player_id", "player_name", "team", "sample_size", "raw_value"]]
         results[position] = _z_score_and_shrink(pool)
     return results
+
+
+# --------------------------------------------------------------------------------------------
+# ADR-0028/0030 Component D (QB rushing) -- BACKTESTED AND CLOSED AS A CLEAN NULL, no live
+# multiplier. Kept in this module for traceability/reproducibility, same posture as B/C. Full
+# backtest result + both experts' interpretation: docs/adr/0028-ceiling-signal-data-layer.md's
+# "Update (2026-09-14): Component D (QB rushing)" section.
+#
+# Design jointly reviewed and conditionally signed off by both experts (docs/adr/0030-qb-rushing-
+# opportunity-profile.md's "Update" section) before this was written, per this project's standing
+# design-before-backtest discipline:
+#
+# - raw_value = boom-rate on trailing DESIGNED-RUN COUNT only (`qb_scramble == 0`), never
+#   scrambles or rushing points -- Model Analytics Expert's explicit call: designed runs are the
+#   scheme-driven, plausibly-persistent part of a QB's rushing role (the same "opportunity, not
+#   outcome" logic Component A already applies to role share), while scramble count over a short
+#   trailing window is dominated by pass-rush/pressure noise, too unrepeatable to safely gate an
+#   ungated-upside multiplier on. Rushing POINTS were rejected outright as a raw_value candidate
+#   for smuggling the outcome's own noisiest component back in as the predictor.
+# - Fantasy Football Expert's conditional sign-off requires two things the BACKTEST script (not
+#   this signal function) must run before any live-ship decision: (1) scramble RATE as an
+#   equally-rigorous secondary test (scrambles are a real, persistent driver of QB rushing
+#   ceiling for the Lamar Jackson/Hurts archetype -- excluding them from the gate is not the same
+#   as concluding they contribute nothing), (2) a goal-line-share diagnostic split on this same
+#   designed-run population (does the signal hold for open-field rushers, or is it diluted by
+#   short-yardage sneak specialists whose designed runs are a level/floor stat, not a boom stat --
+#   the exact level-vs-variance distinction ADR-0028 already drew for Component B).
+# - Population gate: QB_DESIGNED_RUN_MIN_TRAILING_VOLUME=8 total trailing designed runs, applied
+#   as a raw_value-nulling gate (never a dropped row) -- which, per `_z_score_and_shrink`'s own
+#   "population stats computed only from non-null raw_value rows" behavior, ALSO removes a
+#   structurally-near-zero pocket passer from the cross-sectional z-scoring reference population,
+#   exactly the Model Analytics Expert's explicit second requirement (a reference distribution
+#   dominated by pure pocket passers who essentially never design-run would distort every real
+#   rusher's z-score).
+# --------------------------------------------------------------------------------------------
+
+
+def _aggregate_qb_designed_runs_weekly(pbp: pd.DataFrame, *, season_type: str | None = "REG") -> pd.DataFrame:
+    """One row per (season, week, team, player_id) for every week a real passer had recorded pass
+    attempts that week (`aggregate_passer_week`'s `pass_attempts >= 1`, i.e. this QB actually
+    played that week) -- `designed_runs` (`play_type == "run"` with `qb_scramble == 0`) zero-filled
+    for a real week where this QB had zero designed runs, same "a played week is a real
+    observation, never a fabricated shutout OR a silently-dropped one" discipline
+    `_zero_fill_red_zone_weekly` established for the team-reached-the-red-zone precondition --
+    simpler here since a QB who played always had the standing opportunity to be called a designed
+    run (no team-level precondition to check, unlike red zone).
+    """
+    df = pbp if season_type is None else pbp[pbp["season_type"] == season_type]
+
+    passer_names = (
+        df[df["passer_player_id"].notna()]
+        .groupby("passer_player_id", observed=True)["passer_player_name"]
+        .first()
+    )
+    passer_week = aggregate_passer_week(df, season_type=season_type)
+    played = passer_week[passer_week["pass_attempts"] >= 1][["season", "week", "team", "player_id"]].copy()
+    played["player_name"] = played["player_id"].map(passer_names)
+
+    rushes = df[(df["play_type"] == "run") & df["rusher_player_id"].notna() & (df["qb_scramble"] == 0)]
+    designed = (
+        rushes.groupby(["season", "week", "posteam", "rusher_player_id"], observed=True)
+        .size()
+        .rename("designed_runs")
+        .reset_index()
+        .rename(columns={"posteam": "team", "rusher_player_id": "player_id"})
+    )
+    designed["team"] = designed["team"].map(lambda t: normalize_team("nflverse_schedule", t))
+
+    merged = played.merge(designed, on=["season", "week", "team", "player_id"], how="left")
+    merged["designed_runs"] = merged["designed_runs"].fillna(0).astype(int)
+    return merged
+
+
+def qb_rushing_ceiling_signals(pbp: pd.DataFrame, target_week: int, *, season_type: str | None = "REG") -> list[CeilingSignal]:
+    """ADR-0028/0030 Component D: boom-rate on trailing designed-run count (see module section
+    docstring above for the full design rationale/sign-off). **BACKTESTED AND CLOSED AS A CLEAN
+    NULL -- no `component_a_multiplier`-style live multiplier exists or will be added for this.**
+    Kept for traceability/reproducibility (`scripts/ceiling_qb_rushing_backtest.py` still consumes
+    it) -- see `docs/adr/0028-ceiling-signal-data-layer.md`'s Component D Update section for the
+    full backtest record and both experts' sign-off on closing it out.
+    """
+    weekly = _aggregate_qb_designed_runs_weekly(pbp, season_type=season_type)
+    weekly = weekly[weekly["week"] < target_week]
+    boom = _boom_rate_per_player(weekly, value_col="designed_runs")
+
+    trailing_volume = weekly.groupby("player_id", observed=True)["designed_runs"].sum()
+    boom["_trailing_volume"] = boom["player_id"].map(trailing_volume).fillna(0)
+    boom.loc[boom["_trailing_volume"] < QB_DESIGNED_RUN_MIN_TRAILING_VOLUME, "raw_value"] = None
+    boom = boom.drop(columns=["_trailing_volume"])
+    return _z_score_and_shrink(boom)

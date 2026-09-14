@@ -375,3 +375,107 @@ bugs fixed in shared infrastructure along the way, benefiting any future compone
 investigation -- draft, football correction, backtest, bug-hunting, re-interpretation, final
 statistical sign-off -- is the process this project's review discipline was built for, run in full,
 twice over, on components that ultimately didn't ship as much as the one that did.
+
+## Update (2026-09-14): Component D (QB rushing) -- designed, backtested, closed as a clean null
+
+QB rushing was named and explicitly deferred at this ADR's original round (Decision 1 above: "QB
+rushing explicitly recommended out of scope") and a shortcut "degraded QB fallback" was separately
+rejected as architecturally unsafe (an unshrunk/ungated leg can only ever inflate a QB's ceiling
+with no self-correcting mechanism -- unlike A/B/C, whose one-sided floor makes a null or negative
+result self-limiting). After Chris chose to pursue QB rushing as a new construct and directed a
+"descriptive layer first, then backtest" staging (matching Component A's own data-layer-then-
+calibration order), the descriptive layer shipped first as `ingestion/qb_rushing_profile.py`
+(ADR-0030, not gated by this backtest). This update covers the backtest that followed.
+
+**Design review (both experts, before any backtest code was written)** -- the Model Analytics
+Expert required a materially stricter process than A/B/C got, specifically because of this
+component's asymmetric-downside risk: `raw_value` = boom-rate on trailing DESIGNED-RUN COUNT only
+(`qb_scramble == 0`) -- rushing points were rejected outright as a candidate `raw_value` for
+smuggling the outcome's own noisiest component back in as the predictor; total attempts
+(designed+scramble) was scoped as a secondary diagnostic only. `QB_DESIGNED_RUN_MIN_TRAILING_VOLUME
+=8` (`ADOT_MIN_TARGETS`'s value, reused directly) gates a player's own `raw_value` to `None` AND
+removes them from the cross-sectional z-scoring reference population (not just their own output) --
+a new requirement, since a population dominated by structurally-near-zero pocket passers would
+distort the reference distribution for real rushers in a way none of A/B/C's populations risked.
+Cluster-robust (player_id) SEs were required from the FIRST run, not as a reactive follow-up to a
+borderline result the way Component B needed. A NEW requirement not used by any prior component: an
+out-of-sample holdout (fit on 2020-2022, independently check sign/magnitude on 2023-2025) --
+explicitly because a false-positive positive slope here has no self-correcting backstop the way a
+null or negative A/B/C result did. The Fantasy Football Expert gave conditional sign-off requiring
+two real, equally-rigorous additions (not footnotes): scramble RATE as a second confirmatory-grade
+test (arguing scramble yardage is plausibly the dominant real ceiling mechanism for the Lamar
+Jackson/Hurts/Fields archetype, not noise to be excluded by assumption), and a goal-line-share
+diagnostic split on the designed-run population (the same level-vs-variance distinction this ADR
+already drew for Component B's red-zone finding -- does a short-yardage-sneak-specialist role get
+conflated with a genuine open-field/broken-pocket rushing ceiling).
+
+**Backtest** (`scripts/ceiling_qb_rushing_backtest.py`, `qb_rushing_ceiling_signals` in
+`ceiling/signals.py`, same 6-season pull, player-level log-space regression, and DK scoring as
+A/B/C) ran every one of the above checks up front, per the Model Analytics Expert's explicit
+instruction not to wait for a close call. One real bug was found and fixed during smoke-testing
+before the live run: a mid-season QB trade gives `aggregate_trailing_qb_rushing_profile` two rows
+for the same `player_id` (one per team), which broke a scalar comparison downstream until the
+diagnostic join was changed to sum across teams first -- caught before the full run, not after.
+
+**Result -- a clean null, more decisively demonstrated than Component C's:**
+
+- **Primary test (designed-run boom-rate)**: TRAIN (2020-2022, n=500) cluster-robust 95%
+  CI=[-0.2282, 0.1178], slope=-0.0552 (negative). HOLDOUT (2023-2024, n=331) cluster-robust 95%
+  CI=[-0.0278, 0.2350], slope=+0.1036 (positive, closer to significance but still crosses zero).
+  **The sign flips between train and holdout** -- both experts independently called this the single
+  most decisive piece of evidence in the whole result, stronger than any in-sample diagnostic A/B/C
+  ever produced, because it's exactly the failure mode the holdout requirement was built to catch.
+  Full-sample decile fit: slope=-0.0069, R²=0.003 -- weaker than even Component C's weakest fit.
+- **Goal-line-share tercile split**: low/mid/high tiers all flat (R²=0.000-0.001), no monotonic
+  pattern, high-share tier's point estimate smaller in magnitude than low-share's -- rules out a
+  hidden subpopulation effect the way Component B's WR tier split confirmed a real one existed.
+- **Quantization check**: 71.0% of the 186 qualifying player-season windows have a trailing median
+  designed-run count <=2, meaning `BOOM_THRESHOLD=1.35` is tripped by the difference between 2 and
+  3 designed runs for most of the qualifying population -- both experts flagged this as a real,
+  independent problem with applying a boom-rate template to this specific axis, regardless of
+  whatever the regression showed.
+- **QB-identity-continuity check**: confirmed clean by construction and by direct spot-check (max 3
+  distinct qualifying player_ids on one team-season, 2024 Cleveland, matching that team's real QB
+  carousel) -- no team-slot leakage between a benched starter and a replacement.
+- **Game-script watch item**: Pearson r(residual, trailing avg \|score_differential\|)=0.0547 --
+  negligible, not a meaningful confound.
+- **Secondary test (scramble rate, a LEVEL signal)**: TRAIN (n=1191) looked real un-clustered (95%
+  CI=[0.0857, 0.2642]) but NOT once clustered (95% CI=[-0.0439, 0.3939]) -- the same
+  naive-SE-overstates-significance pattern Component B's original RB result showed. HOLDOUT (n=799)
+  **flips sign entirely** (slope=-0.0727, cluster-robust CI=[-0.2275, 0.0821]). Both experts read
+  this as weaker evidence for a real effect than Component B's RB result ever had, not comparable
+  evidence -- B's point estimate never reversed direction across any diagnostic; this one did.
+
+**Both experts signed off on closing this out as a real null, no live multiplier for either leg.**
+The Model Analytics Expert's read: this is more decisive than Component C's null specifically
+because the sign-instability evidence is direct and dispositive on its own, not one contributing
+factor among several ambiguous ones -- and flagged that this is the first component in the whole
+investigation checked against genuine out-of-sample replication, catching something no in-sample
+diagnostic (decile R², cluster-robust SEs, tercile splits) would have caught alone; recommended
+making a train/holdout split a standard part of this project's backtest methodology going forward,
+and treating cluster-robust SEs as mandatory-by-default given this is the second component (after
+Component B's RB leg) where naive SEs made a usage-regression result look real. The Fantasy
+Football Expert's read: conceded their own prior framing (scramble YARDAGE as the dominant real
+ceiling mechanism) wasn't what got tested here (scramble RATE was) -- the un-clustered/clustered
+gap plus the holdout sign-flip together look like real box-score variance driven by a handful of
+correlated player-weeks, not a stable per-player trait, closer to the Model Analytics Expert's
+original athletic-variance warning than to their own prior read. Named a genuinely different,
+better-specified future candidate (parallel to Component C's aDOT-null → explosive-target-rate
+naming): **explosive-rush rate** -- a boom-shaped statistic on yards-per-rush-attempt, computed
+over POOLED designed+scramble attempts (not gated to designed runs alone, which nearly halves the
+trailing sample for exactly the mobile-QB archetype this component exists to serve -- e.g. Hurts:
+58 designed / 41 scramble) -- a different hypothesis (explosiveness conditional on rushing, not
+rushing-attempt volume) from anything tested this round, needing its own independent design review
+before any future backtest.
+
+Both experts also confirmed this null does not touch ADR-0030's already-shipped descriptive QB
+rushing dashboard data -- "doesn't predict ceiling in aggregate" and "useful context for a human
+comparing two specific QBs" remain separate questions, the same distinction already settled for
+Component C/aDOT (ADR-0029). See ADR-0030's own Update section for that framing applied here.
+
+**Final state of `CeilingMultiplier`, four components resolved:** Component A shipped. Components
+B, C, and D all ship nothing live -- B for statistical insufficiency (RB) and architectural
+inexpressibility (WR's real negative effect), C and D for clean, thoroughly-verified nulls. Three
+named future candidates now on record for a possible future round: WR red-zone role-security
+(Component B), explosive-target rate (Component C), explosive-rush rate (Component D) -- each a
+genuinely different hypothesis from what was tested, not a retry of the same one.

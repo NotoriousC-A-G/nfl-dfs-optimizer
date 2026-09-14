@@ -8,9 +8,11 @@ from nfl_dfs.ceiling.signals import (
     CEILING_SHRINKAGE_K,
     COMPONENT_A_SCALE,
     MIN_TRAILING_WEEKS,
+    QB_DESIGNED_RUN_MIN_TRAILING_VOLUME,
     CeilingSignal,
     adot_ceiling_signals,
     component_a_multiplier,
+    qb_rushing_ceiling_signals,
     red_zone_ceiling_signals,
     role_share_ceiling_signals,
     trailing_red_zone_share_by_week,
@@ -38,6 +40,7 @@ def _pbp_row(**kwargs) -> dict:
         "passer_player_name": None,
         "air_yards": None,
         "yardline_100": 50,
+        "qb_scramble": 0,
         "play_id": 1,
     }
     row.update(kwargs)
@@ -331,6 +334,115 @@ def test_adot_ceiling_signals_excludes_future_weeks():
     )
     result = adot_ceiling_signals(pd.DataFrame(rows), target_week=2, position_by_player_id={"WR4": "WR"})
     assert result["WR"][0].raw_value == pytest.approx(10.0)  # week 2 excluded, only week 1 counts
+
+
+# --------------------------------------------------------------------------------------------
+# qb_rushing_ceiling_signals (ADR-0028/0030 Component D -- research/backtest phase only)
+# --------------------------------------------------------------------------------------------
+
+
+def _qb_pass_attempts(week: int, team: str, player_id: str, name: str, n: int, play_id_start: int) -> list[dict]:
+    return _pass_attempts(week, team, player_id, name, n, play_id_start)
+
+
+def _designed_run(week: int, team: str, player_id: str, name: str, play_id: int) -> dict:
+    return _pbp_row(
+        week=week, posteam=team, play_type="run", rusher_player_id=player_id, rusher_player_name=name,
+        play_id=play_id, qb_scramble=0,
+    )
+
+
+def _scramble_run(week: int, team: str, player_id: str, name: str, play_id: int) -> dict:
+    return _pbp_row(
+        week=week, posteam=team, play_type="run", rusher_player_id=player_id, rusher_player_name=name,
+        play_id=play_id, qb_scramble=1,
+    )
+
+
+def test_qb_rushing_ceiling_signals_counts_designed_runs_only_not_scrambles():
+    # QB1: designed-run counts by week [3, 1, 3, 1] (sum=8, clears the volume floor exactly) --
+    # trailing median=2.0, BOOM_THRESHOLD=1.35 -> threshold=2.7, so weeks 1 and 3 (3 > 2.7) boom.
+    # Scrambles are interspersed on the same weeks and must NOT count toward designed_runs at all.
+    rows = []
+    play_id = 1
+    for week, designed_n, scramble_n in [(1, 3, 2), (2, 1, 0), (3, 3, 1), (4, 1, 0)]:
+        rows += _qb_pass_attempts(week, "GB", "QB1", "Field General", 10, play_id)
+        play_id += 10
+        for _ in range(designed_n):
+            rows.append(_designed_run(week, "GB", "QB1", "Field General", play_id))
+            play_id += 1
+        for _ in range(scramble_n):
+            rows.append(_scramble_run(week, "GB", "QB1", "Field General", play_id))
+            play_id += 1
+
+    signals = qb_rushing_ceiling_signals(pd.DataFrame(rows), target_week=5)
+    qb1 = next(s for s in signals if s.player_id == "QB1")
+    assert qb1.sample_size == 4
+    assert qb1.raw_value == pytest.approx(0.5)  # 2 boom weeks / 4
+
+
+def test_qb_rushing_ceiling_signals_zero_fills_real_played_weeks_with_no_designed_runs():
+    # QB2 played (had real pass attempts) in weeks 1-3, but only had designed runs in weeks 1-2 --
+    # week 3's real zero-designed-run week must still count as a real observation (sample_size=3),
+    # not be silently dropped down to sample_size=2.
+    rows = []
+    play_id = 1
+    for week in (1, 2, 3):
+        rows += _qb_pass_attempts(week, "GB", "QB2", "Zero Week QB", 10, play_id)
+        play_id += 10
+    rows.append(_designed_run(1, "GB", "QB2", "Zero Week QB", play_id)); play_id += 1
+    rows.append(_designed_run(1, "GB", "QB2", "Zero Week QB", play_id)); play_id += 1
+    rows.append(_designed_run(2, "GB", "QB2", "Zero Week QB", play_id)); play_id += 1
+    rows.append(_designed_run(2, "GB", "QB2", "Zero Week QB", play_id)); play_id += 1
+    # Week 3: no designed_run rows at all -- a real, played, zero-designed-run week.
+
+    signals = qb_rushing_ceiling_signals(pd.DataFrame(rows), target_week=4)
+    qb2 = next(s for s in signals if s.player_id == "QB2")
+    assert qb2.sample_size == 3
+
+
+def test_qb_rushing_ceiling_signals_gates_below_min_trailing_volume():
+    # QB3 has MIN_TRAILING_WEEKS=3 worth of played weeks (4, in fact) but only 1 designed run per
+    # week (4 total, well under QB_DESIGNED_RUN_MIN_TRAILING_VOLUME=8) -- gated to raw_value=None
+    # even though the weeks-floor alone would have passed.
+    rows = []
+    play_id = 1
+    for week in (1, 2, 3, 4):
+        rows += _qb_pass_attempts(week, "GB", "QB3", "Low Volume QB", 10, play_id)
+        play_id += 10
+        rows.append(_designed_run(week, "GB", "QB3", "Low Volume QB", play_id))
+        play_id += 1
+
+    signals = qb_rushing_ceiling_signals(pd.DataFrame(rows), target_week=5)
+    qb3 = next(s for s in signals if s.player_id == "QB3")
+    assert qb3.sample_size == 4  # weeks-floor alone would have passed
+    assert qb3.raw_value is None  # but the volume floor (QB_DESIGNED_RUN_MIN_TRAILING_VOLUME) gates it
+    assert qb3.z_score is None
+    assert QB_DESIGNED_RUN_MIN_TRAILING_VOLUME == 8
+
+
+def test_qb_rushing_ceiling_signals_excludes_future_weeks():
+    rows = []
+    play_id = 1
+    for week in (1, 2, 3):
+        rows += _qb_pass_attempts(week, "GB", "QB4", "Trailing Only QB", 10, play_id)
+        play_id += 10
+        rows.append(_designed_run(week, "GB", "QB4", "Trailing Only QB", play_id))
+        play_id += 1
+        rows.append(_designed_run(week, "GB", "QB4", "Trailing Only QB", play_id))
+        play_id += 1
+        rows.append(_designed_run(week, "GB", "QB4", "Trailing Only QB", play_id))
+        play_id += 1
+    # Week 5 itself (the target week) gets a huge designed-run spike that must not leak in.
+    rows += _qb_pass_attempts(5, "GB", "QB4", "Trailing Only QB", 10, play_id)
+    play_id += 10
+    for _ in range(20):
+        rows.append(_designed_run(5, "GB", "QB4", "Trailing Only QB", play_id))
+        play_id += 1
+
+    signals = qb_rushing_ceiling_signals(pd.DataFrame(rows), target_week=5)
+    qb4 = next(s for s in signals if s.player_id == "QB4")
+    assert qb4.sample_size == 3  # unchanged by the week-5 spike
 
 
 # --------------------------------------------------------------------------------------------

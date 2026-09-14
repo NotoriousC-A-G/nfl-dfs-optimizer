@@ -82,3 +82,30 @@ is omitted for every other position).
 - A future backtested `CeilingMultiplier` QB rushing component, if pursued, is separate follow-on
   work building on top of this module's already-real designed-run/scramble split -- not blocked or
   pre-empted by anything decided here.
+
+## Update (2026-09-14): the backtested CeilingMultiplier component this ADR left open (Component D) is closed -- a clean null, this descriptive layer unaffected
+
+Chris directed exactly the two-stage plan this ADR's "Consequences" section anticipated:
+descriptive layer first (this ADR, unchanged), then a real backtested `CeilingMultiplier`
+component. That backtest -- full design review by both experts, a 6-season live outcome backtest,
+an out-of-sample holdout check (new to this project's methodology), and both experts' interpretation
+of the results -- is fully recorded in **`docs/adr/0028-ceiling-signal-data-layer.md`'s own
+"Update (2026-09-14): Component D (QB rushing)" section**, not restated here.
+
+**Short version:** designed-run boom-rate and scramble-rate both came back clean nulls -- most
+decisively via a train/holdout sign flip on both legs, a failure mode this project's methodology
+had never checked for before this component. No live `CeilingMultiplier` leg ships for QB rushing.
+Both experts explicitly confirmed this null does NOT affect this ADR's descriptive data: "doesn't
+predict ceiling in aggregate across a pooled cross-section of QBs" and "useful context for a human
+comparing two specific QBs this week" are separate questions, not two readings of the same fact --
+the same distinction this project already settled for Component C/aDOT (ADR-0029). The Fantasy
+Football Expert's own words: the quantization finding behind the null (most qualifying QBs sit at
+a trailing median of 1-2 designed runs) is actually a small, concrete argument *for* trusting the
+raw numbers as-is -- knowing a QB's baseline sits at 2 tells a person eyeballing the dashboard that
+a 3-run week isn't a real usage change worth weighting heavily, exactly the judgment call a human
+applies to raw counts that a mechanical score can't replicate without inventing false precision.
+
+A genuinely different future candidate was named (not a retry of what was tested here): **explosive-
+rush rate**, a boom-shaped statistic on yards-per-rush-attempt over pooled designed+scramble
+attempts (not gated to designed runs alone) -- would need its own independent design review before
+any future backtest, per this project's standing discipline.
