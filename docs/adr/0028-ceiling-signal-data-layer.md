@@ -1,7 +1,9 @@
 # ADR-0028: `CeilingMultiplier` design + ceiling signal data layer
 
 **Status:** Accepted (data layer implemented, unit-tested, and live-verified against real 2026 pbp
-data; the live multiplier itself is explicitly NOT built this round -- see Decision 4)
+data; Component A's live multiplier is now ALSO backtested, calibrated, and signed off by both
+experts -- see "Update (2026-09-14): Component A backtest and calibration" below. Components B/C
+remain data-layer-only, per Decision 4.)
 **Date:** 2026-09-14
 **Owner:** Model Analytics Expert / Fantasy Football Expert, scoped by Chris
 **Related:** ADR-0011 (shared shrinkage form), ADR-0005 (capped log-space combination), ADR-0012
@@ -135,3 +137,83 @@ test (`test_adot_ceiling_signals_gates_below_min_targets_without_dropping_the_ro
   against (boom-rate/aDOT z-scores for real 2026 players) rather than starting from nothing.
 - Two extension points are named for the FFE's next pass, not silently dropped: TE-specific
   red-zone population, true-alignment aDOT population once `slot_coverage` lands.
+
+## Update (2026-09-14): Component A backtest and calibration
+
+Chris asked to continue this work with the actual outcome backtest both experts required before
+proposing `scale_i`. Run live (`scripts/ceiling_role_share_backtest.py`), Component A only:
+
+**Methodology:** 5 real seasons (2020-2024; 2025 skipped -- `nfl_data_py.import_weekly_data([2025])`
+returns a live HTTP 404, that season's aggregate weekly-stats file isn't published upstream yet,
+confirmed directly not assumed). For every `(season, target_week)` with `target_week` in `[4, 18]`,
+computed each RB/WR's `shrunk_z_score` using only weeks `1..target_week-1` (the exact live no-
+look-ahead window), then joined against that player's REAL actual `target_week` DK points (full DK
+Classic scoring computed from `nfl_data_py.import_weekly_data()`'s real box-score columns) and
+their own trailing-median DK points over the same window. 20,376 real (player, week) observations.
+
+**What the naive decile-mean approach got wrong, and how it was fixed:** an initial decile-bucketed
+analysis (n=10 points per role) showed a clean boom-rate relationship (R²=0.75-0.79) but a noisy,
+partly non-monotonic relative-performance relationship (R²=0.26-0.50) -- WR's even showed an
+apparent reversal in the top few deciles. The Model Analytics Expert diagnosed this as right-skew
+outlier sensitivity in decile means (verified concretely: dropping one outlying RB decile alone
+swung that fit's slope by 21%) and required two reruns before ruling on anything: (1) decile
+**median** instead of mean (R² improved to 0.68 RB / 0.56 WR), and (2) a real **player-level**
+regression (not a 10-point decile fit) of `log(relative_performance) ~ shrunk_z`, chosen
+specifically because a log transform compresses outlier influence and produces a genuinely
+multiplicative model consistent with this project's own ADR-0005 log-space convention.
+
+**Result -- the player-level regression resolved the ambiguity, not just added another data point:**
+both RB (n=5,608, 161 observations excluded for a real DK score of exactly 0 or negative, which
+log-space can't represent) and WR (n=13,641, 966 excluded, same reason) produced a positive slope
+whose 95% CI clears zero by 4+ standard errors -- RB: slope=0.1177, SE=0.0272, CI=[0.0643, 0.1710];
+WR: slope=0.0798, SE=0.0152, CI=[0.0499, 0.1097]. WR's apparent decile-level "reversal" did not
+survive at player-level -- exactly the outcome the Model Analytics Expert predicted a coarser
+aggregation losing to a finer one on a question about aggregation-induced distortion.
+
+**Final calibration, both experts' explicit sign-off, Component A only:**
+
+```
+m_i = max(1.0, exp(scale_i * shrunk_z_score_i))
+scale_RB = 0.1177   scale_WR = 0.0798
+```
+
+The Model Analytics Expert used the fitted log-space slopes directly (undamped beyond their own
+reported CIs), explicitly discarding an earlier eyeballed decile-mean estimate (~0.20 RB) as
+superseded rather than blended in, and chose the exponential/log-space form over the originally-
+drafted linear form specifically because that's the model the regression actually validated (the
+two forms only agree to first order near `z=0` and diverge exactly where a ceiling multiplier does
+its real work) and because it matches `capped_log_combine`'s existing log-space convention. The
+Fantasy Football Expert signed off on the specific magnitudes (1.08x-1.27x across realistic z
+ranges), the exponential shape (verified it doesn't reward a fluky thin-sample spike, since
+`shrunk_z >= 1.5` is structurally hard to reach off a 3-week sample given ADR-0011's shrinkage
+math), and the RB > WR asymmetry (matches real football intuition -- an RB touch converts to DK
+points more mechanically than a WR target, which has an extra catch/accuracy-dependent conversion
+step a role-share spike alone can't see).
+
+**Two explicit, non-blocking watch items carried into Consequences below, not silently dropped:**
+(1) WR's decile-median series still shows a soft plateau in the top few deciles even after the
+outlier fix -- both experts read the player-level evidence as outweighing it for sign-off, but
+flagged it as the first place to check if live WR ceiling reads under-perform at high z. (2)
+Component A's boom-rate has no game-script awareness -- a trailing team's garbage-time WR target
+spike is a legitimate boom-rate read here even though the same game's spread simultaneously damps
+that team's `StackProfile` bring-back viability elsewhere; not a contradiction (garbage-time
+production genuinely scores), but flagged for whoever eventually wires this signal alongside
+`StackProfile` to confirm the interaction is intentional, not a silent double-count.
+
+**Implemented:** `ceiling/signals.py`'s `component_a_multiplier(signal, role)` -- returns `None`
+(never a fabricated neutral `1.0`) when the underlying signal didn't clear `MIN_TRAILING_WEEKS`,
+same "unknown is not neutral" discipline the Fantasy Football Expert required for QB's still-
+uncalibrated ceiling read. 5 new tests. Live-verified end to end against a real synthetic boom/no-
+boom pair (boom-week player: real `1.034x`; steady player: correctly floors at exactly `1.0`).
+
+**Explicitly still not done:** Component B (red-zone boom-rate) and Component C (aDOT) have no
+backtest and no live multiplier -- the boom-rate fix was only extended to B "by direct structural
+analogy," never independently reviewed, and the Model Analytics Expert specifically flagged that A
+and B are plausibly correlated (both usage-volatility signals off overlapping trailing-week data)
+and must be checked for the same double-counting ADR-0005 already resolved for pass-protection/
+coverage before any combined cap is set. The combined `capped_log_combine` cap across A/B/C, and
+`ceiling_projection = blended_projection × ceiling_multiplier`'s actual wiring into
+`PlayerDetailRecord`/the dashboard, both remain open. Non-clustered standard errors are a named,
+non-blocking caveat (both experts stress-tested a 2x SE inflation and both CIs still cleared zero,
+but true `player_id`-clustered SEs should be computed before this becomes a Performance Analytics
+drift-monitoring baseline).

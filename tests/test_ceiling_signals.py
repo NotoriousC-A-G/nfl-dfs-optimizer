@@ -6,8 +6,11 @@ import pytest
 from nfl_dfs.ceiling.signals import (
     ADOT_MIN_TARGETS,
     CEILING_SHRINKAGE_K,
+    COMPONENT_A_SCALE,
     MIN_TRAILING_WEEKS,
+    CeilingSignal,
     adot_ceiling_signals,
+    component_a_multiplier,
     red_zone_ceiling_signals,
     role_share_ceiling_signals,
 )
@@ -218,3 +221,38 @@ def test_adot_ceiling_signals_excludes_future_weeks():
     )
     result = adot_ceiling_signals(pd.DataFrame(rows), target_week=2, position_by_player_id={"WR4": "WR"})
     assert result["WR"][0].raw_value == pytest.approx(10.0)  # week 2 excluded, only week 1 counts
+
+
+# --------------------------------------------------------------------------------------------
+# component_a_multiplier
+# --------------------------------------------------------------------------------------------
+
+
+def _signal(shrunk_z_score: float | None) -> CeilingSignal:
+    return CeilingSignal(
+        player_id="P1", player_name="Test Player", team="GB", sample_size=5,
+        raw_value=0.5, z_score=shrunk_z_score, shrinkage_weight=0.5, shrunk_z_score=shrunk_z_score,
+    )
+
+
+def test_component_a_multiplier_matches_the_signed_off_formula():
+    # m_i = max(1.0, exp(scale_i * z_i)) -- RB and WR use different, both-expert-signed-off scales.
+    assert component_a_multiplier(_signal(1.0), ROLE_RB) == pytest.approx(math.exp(COMPONENT_A_SCALE[ROLE_RB]))
+    assert component_a_multiplier(_signal(1.0), ROLE_WR) == pytest.approx(math.exp(COMPONENT_A_SCALE[ROLE_WR]))
+    assert COMPONENT_A_SCALE[ROLE_RB] > COMPONENT_A_SCALE[ROLE_WR]  # RB gets more credit per unit z
+
+
+def test_component_a_multiplier_floors_at_one_never_penalizes():
+    # One-sided by design (ADR-0028) -- a negative z contributes no ceiling credit, but never
+    # lowers the read below 1.0.
+    assert component_a_multiplier(_signal(-2.0), ROLE_RB) == pytest.approx(1.0)
+    assert component_a_multiplier(_signal(0.0), ROLE_RB) == pytest.approx(1.0)
+
+
+def test_component_a_multiplier_none_when_signal_ungated_not_fabricated_neutral():
+    assert component_a_multiplier(_signal(None), ROLE_RB) is None
+
+
+def test_component_a_multiplier_rejects_unsupported_role():
+    with pytest.raises(ValueError, match="RB.*WR|WR.*RB"):
+        component_a_multiplier(_signal(1.0), "TE")

@@ -5,9 +5,11 @@ from nfl_dfs.ceiling.signals import (
     ADOT_MIN_TARGETS,
     BOOM_THRESHOLD,
     CEILING_SHRINKAGE_K,
+    COMPONENT_A_SCALE,
     MIN_TRAILING_WEEKS,
     CeilingSignal,
     adot_ceiling_signals,
+    component_a_multiplier,
     red_zone_ceiling_signals,
     role_share_ceiling_signals,
 )
@@ -16,9 +18,11 @@ __all__ = [
     "ADOT_MIN_TARGETS",
     "BOOM_THRESHOLD",
     "CEILING_SHRINKAGE_K",
+    "COMPONENT_A_SCALE",
     "MIN_TRAILING_WEEKS",
     "CeilingSignal",
     "adot_ceiling_signals",
+    "component_a_multiplier",
     "red_zone_ceiling_signals",
     "role_share_ceiling_signals",
 ]

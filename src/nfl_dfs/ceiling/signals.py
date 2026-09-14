@@ -1,13 +1,16 @@
 """Ceiling signal data layer (PRD Section 6's newest construct, ADR-0028).
 
-**Deliberately not a live `CeilingMultiplier`/`ceiling_projection` yet.** Both the Model Analytics
-Expert (draft) and Fantasy Football Expert (review) declined to propose the scale/cap constants
-needed to turn a z-scored signal into an actual multiplier without a real outcome backtest
-(analogous to ADR-0012's own return-TD-rate correction) -- writing one down now would be exactly
-the kind of unbacked constant this project's review process exists to catch. Chris's own call
-(ADR-0028): build the real, inspectable, testable data layer this round -- retained per-week
-series, boom-rate/depth-of-target computation, cross-sectional z-scoring, ADR-0011 shrinkage --
-and leave the multiplier itself as an explicit, backtest-blocked follow-up.
+**Component A now has a real, backtested, both-experts-signed-off live multiplier
+(`component_a_multiplier`) -- Components B and C do not.** The original round built only the data
+layer: neither the Model Analytics Expert (draft) nor the Fantasy Football Expert (review) would
+propose the scale/cap constants needed to turn a z-scored signal into an actual multiplier without
+a real outcome backtest (analogous to ADR-0012's own return-TD-rate correction). That backtest has
+since been run live for Component A only (`scripts/ceiling_role_share_backtest.py`, 5 real seasons,
+20,376 real player-weeks, a player-level log-space regression of actual-DK-points-relative-to-own-
+trailing-median against `shrunk_z_score`) and both experts gave explicit, numbered sign-off on the
+result -- see the "Update" section of `docs/adr/0028-ceiling-signal-data-layer.md`. Components B and
+C remain exactly as before: real, inspectable signals with no live multiplier, still blocked on
+their own backtests.
 
 Three signal-producing functions, one per ADR-0028 component:
 
@@ -38,6 +41,7 @@ experts' review, not derived from backtested data. See `docs/adr/0028-ceiling-si
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 
 import pandas as pd
@@ -61,6 +65,14 @@ CEILING_SHRINKAGE_K = 6.0  # borrowed from pace/PROE per ADR-0011's "reuse befor
 # convention -- not re-derived for this use, per the Model Analytics Expert's own review.
 ADOT_MIN_TARGETS = 8  # deliberately well under usage_share.py's WR_GATE_MIN_VOLUME=20 (a
 # "lead receiver" gate built for a different purpose) -- paired with shrinkage, not a hard cutoff.
+
+# Component A's real, backtested, both-experts-signed-off scale constants (ADR-0028 Update) --
+# fitted via a player-level log-space regression on 5 real seasons / 20,376 real player-weeks,
+# NOT an eyeballed or decile-level number. See docs/adr/0028-ceiling-signal-data-layer.md's
+# "Update" section for the full calibration record (95% CIs, the Model Analytics Expert's and
+# Fantasy Football Expert's explicit sign-off reasoning). Component B/C have no equivalent
+# constant yet -- do not extrapolate these values to those components.
+COMPONENT_A_SCALE: dict[str, float] = {ROLE_RB: 0.1177, ROLE_WR: 0.0798}
 
 
 @dataclass(frozen=True)
@@ -185,6 +197,24 @@ def role_share_ceiling_signals(
         weekly = _exclude_trailing_qbs(weekly, pbp, target_week, season_type=season_type)
     boom = _boom_rate_per_player(weekly)
     return _z_score_and_shrink(boom)
+
+
+def component_a_multiplier(signal: CeilingSignal, role: str) -> float | None:
+    """The real, backtested, both-experts-signed-off Component A live multiplier (ADR-0028 Update):
+    `m_i = max(1.0, exp(scale_i * shrunk_z_score))`, `scale_i` from `COMPONENT_A_SCALE`. One-sided
+    by design (Model Analytics Expert's draft, Fantasy Football Expert's sign-off) -- a below-
+    average signal never lowers a player's read, it just contributes no ceiling credit.
+
+    Returns `None`, never a fabricated neutral `1.0`, when `signal.shrunk_z_score is None` (this
+    player didn't clear `MIN_TRAILING_WEEKS`) -- this project's established "unknown is not the
+    same as neutral" discipline (the same requirement the Fantasy Football Expert set for QB's
+    still-uncalibrated ceiling read).
+    """
+    if role not in COMPONENT_A_SCALE:
+        raise ValueError(f"component_a_multiplier only supports {sorted(COMPONENT_A_SCALE)}, got {role!r}")
+    if signal.shrunk_z_score is None:
+        return None
+    return max(1.0, math.exp(COMPONENT_A_SCALE[role] * signal.shrunk_z_score))
 
 
 def red_zone_ceiling_signals(
