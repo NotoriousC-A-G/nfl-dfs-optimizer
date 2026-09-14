@@ -21,6 +21,7 @@ from __future__ import annotations
 import warnings
 
 from nfl_dfs.analysis.ownership_calibration import run_full_calibration
+from nfl_dfs.ceiling.signals import role_share_ceiling_signals
 from nfl_dfs.composition.player_detail import build_gsis_to_pff_id_map, build_player_detail_record
 from nfl_dfs.config import config
 from nfl_dfs.dashboard.renderer import SlateGameRow, write_dashboard_html
@@ -239,6 +240,14 @@ def main() -> None:
     red_zone_trailing = aggregate_player_trailing_red_zone(pbp, WEEK)
     print(f"  {len(red_zone_trailing)} trailing red-zone player-role row(s)")
 
+    print("Building real Component A ceiling signals (ADR-0028)...")
+    ceiling_signals_by_gsis_id = {}
+    for role in (ROLE_RB, ROLE_WR):
+        for signal in role_share_ceiling_signals(pbp, WEEK, role):
+            ceiling_signals_by_gsis_id[signal.player_id] = signal
+    n_with_real_z = sum(1 for s in ceiling_signals_by_gsis_id.values() if s.shrunk_z_score is not None)
+    print(f"  {len(ceiling_signals_by_gsis_id)} player(s) with a Component A signal, {n_with_real_z} with a real (gated-in) shrunk_z_score")
+
     print("Fetching real PFF receiving/scheme and defense/coverage_scheme facet grades...")
     receiving_scheme_grades = fetch_matchup_grades("receiving/scheme", WEEK, SEASON)
     coverage_scheme_grades = fetch_matchup_grades("defense/coverage_scheme", WEEK, SEASON)
@@ -306,6 +315,7 @@ def main() -> None:
             injury_by_canonical_id=injury_by_canonical_id,
             kickoff_utc_by_team=kickoff_utc_by_team,
             implied_total_by_team=implied_total_by_team,
+            ceiling_signals_by_gsis_id=ceiling_signals_by_gsis_id,
         )
         player_details.append(record)
 
@@ -315,11 +325,13 @@ def main() -> None:
     populated_own_scheme = sum(1 for r in player_details if r.own_scheme_splits.reason is None and r.own_scheme_splits.applicable)
     populated_ge = sum(1 for r in player_details if r.game_environment is not None and r.game_environment.is_available)
     populated_ownership = sum(1 for r in player_details if r.ownership is not None)
+    populated_ceiling = sum(1 for r in player_details if r.ceiling_multiplier is not None)
     print(
         f"  Populated: role_share={populated_role_share}/{len(player_details)}, "
         f"own_scheme_splits={populated_own_scheme}/{len(player_details)}, "
         f"game_environment={populated_ge}/{len(player_details)}, "
-        f"ownership={populated_ownership}/{len(player_details)}"
+        f"ownership={populated_ownership}/{len(player_details)}, "
+        f"ceiling={populated_ceiling}/{len(player_details)}"
     )
 
     # ------------------------------------------------------------------------------------------

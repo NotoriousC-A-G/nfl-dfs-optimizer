@@ -303,6 +303,8 @@ def _fully_populated_player_detail(
         slate_window_reason=None,
         implied_total=27.5,
         implied_total_reason=None,
+        ceiling_multiplier=1.09,
+        ceiling_multiplier_reason=None,
     )
 
 
@@ -373,6 +375,8 @@ def _rb_with_tier_and_uncontested_prior(canonical_id: str, name: str, team: str)
         slate_window_reason="no kickoff time known for this player's game.",
         implied_total=None,
         implied_total_reason="no implied point total for this player's team.",
+        ceiling_multiplier=None,
+        ceiling_multiplier_reason="no Component A ceiling signal for this player.",
     )
 
 
@@ -445,6 +449,10 @@ def test_normal_case_renders_all_three_tabs_and_real_lineup_data():
     assert 'class="view-filter' in html
     assert 'class="player-expand-row"' in html
 
+    # ADR-0028: real Component A ceiling read appears -- 18.7 projection * 1.09 multiplier.
+    assert "20.4" in html  # ceiling_projection
+    assert "1.09x" in html
+
     # Search filter present for the browsable player table.
     assert 'id="player-search"' in html
 
@@ -497,6 +505,8 @@ def test_missing_fields_show_reason_strings_not_blank_or_none():
     assert "no blended projection found for this player." in html
     assert "no StackProfile found for this player&#x27;s game." in html
     assert "no kickoff time known for this player&#x27;s game." in html
+    # New (ADR-0028): no ceiling signal supplied -> real reason string shown.
+    assert "no Component A ceiling signal for this player." in html
     # Not on the injury report is real, positive information -- rendered plainly, not as an N/A.
     assert "Healthy" in html
     assert "presumed healthy" not in html  # the raw reason text stays internal, not user-facing

@@ -973,6 +973,14 @@ def _render_projection_cell(record: PlayerDetailRecord) -> str:
     return f'<span class="num">{record.projection:.1f}</span>'
 
 
+def _render_ceiling_cell(record: PlayerDetailRecord) -> str:
+    if record.ceiling_multiplier is None:
+        return _na(record.ceiling_multiplier_reason, fallback="no ceiling read for this player")
+    main = f'<span class="num">{record.ceiling_projection:.1f}</span>' if record.ceiling_projection is not None else "&mdash;"
+    sub = f'<div class="cell-sub">{record.ceiling_multiplier:.2f}x</div>'
+    return main + sub
+
+
 def _render_value_cell(record: PlayerDetailRecord) -> str:
     value = record.value
     if value is None:
@@ -1159,8 +1167,9 @@ _SORTABLE_COLUMNS: tuple[tuple[int, str, str], ...] = (
     (2, "Team", "str"),
     (4, "Salary", "num"),
     (5, "Projection", "num"),
-    (6, "Value", "num"),
-    (7, "Proj Own%", "num"),
+    (6, "Ceiling", "num"),
+    (7, "Value", "num"),
+    (8, "Proj Own%", "num"),
 )
 
 
@@ -1189,8 +1198,10 @@ def _render_player_detail_tab(
         "does not yet thread those facet pulls through, so these fields still read as "
         "<code>None</code> here specifically (not because the formula is unimplemented). Also "
         "still out: a lineup-*set*-level ownership rollup (does the 3-lineup set actually span "
-        "chalk-to-leverage) and a real ceiling/variance metric -- both flagged in this round's "
-        "dashboard review, both explicitly deferred (ceiling needs its own formula-design pass).</p>"
+        "chalk-to-leverage). The Ceiling column (ADR-0028) is real but partial: RB/WR only, "
+        "Component A (role-share boom-rate) only, both-experts-backtested-and-signed-off -- "
+        "TE/QB/DST and Components B/C (red-zone boom-rate, depth-of-target) remain uncalibrated, "
+        "so a low or missing Ceiling read is not the same claim as \"this player has no upside.\"</p>"
         "<p><strong>Narrowed at this render layer</strong> (present in the underlying "
         "<code>PlayerDetailRecord</code>, not shown in full here): snap share's "
         "<code>defense_pct</code>/<code>st_pct</code> (structurally near-zero for a rostered "
@@ -1244,6 +1255,7 @@ def _render_player_detail_tab(
         value = record.value
         value_sort = "" if value is None else f"{value:.4f}"
         projected_own_sort = "" if record.ownership is None else f"{record.ownership.projected_ownership:.4f}"
+        ceiling_sort = "" if record.ceiling_multiplier is None else f"{record.ceiling_multiplier:.4f}"
         rows.append(
             f'<tr class="player-row" data-position="{_esc(record.position)}" '
             f'data-view="{_player_view(record.position)}" data-has-baseline="{has_baseline}" '
@@ -1254,15 +1266,16 @@ def _render_player_detail_tab(
             f"<td>{opponent_cell}</td>"
             f'<td data-sort-value="{record.salary or ""}">{_render_salary_cell(record)}</td>'
             f'<td data-sort-value="{record.projection if record.projection is not None else ""}">{_render_projection_cell(record)}</td>'
+            f'<td data-sort-value="{ceiling_sort}">{_render_ceiling_cell(record)}</td>'
             f'<td data-sort-value="{value_sort}">{_render_value_cell(record)}</td>'
             f'<td data-sort-value="{projected_own_sort}">{_render_ownership_cell(record)}</td>'
             f"<td>{_render_stack_cell(record)}</td>"
             "</tr>"
-            f'<tr class="player-expand-row" hidden><td colspan="9">{_render_player_expand_content(record)}</td></tr>'
+            f'<tr class="player-expand-row" hidden><td colspan="10">{_render_player_expand_content(record)}</td></tr>'
         )
 
     header_cells = []
-    all_headers = ["Player", "Pos", "Team", "Opp", "Salary", "Projection", "Value", "Proj Own%", "Stack"]
+    all_headers = ["Player", "Pos", "Team", "Opp", "Salary", "Projection", "Ceiling", "Value", "Proj Own%", "Stack"]
     sortable_by_index = {idx: sort_type for idx, _label, sort_type in _SORTABLE_COLUMNS}
     for idx, label in enumerate(all_headers):
         if idx in sortable_by_index:

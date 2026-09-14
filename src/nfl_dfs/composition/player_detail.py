@@ -97,6 +97,7 @@ from datetime import datetime
 
 import pandas as pd
 
+from nfl_dfs.ceiling.signals import COMPONENT_A_SCALE, CeilingSignal, component_a_multiplier
 from nfl_dfs.correlation.stack_profile import StackProfile
 from nfl_dfs.game_environment.score import GameEnvironmentScore
 from nfl_dfs.ingestion.pff import PffFacetGrades, ResolvedGrade, TeamCoverageTendency, resolve_grade
@@ -150,6 +151,16 @@ _NO_SLATE_WINDOW_REASON = (
 _NO_IMPLIED_TOTAL_REASON = (
     "no implied point total for this player's team -- implied_total_by_team wasn't supplied, or "
     "this team has no live odds line this pull (ingestion/odds_api.py)."
+)
+
+_NO_CEILING_SIGNAL_REASON = (
+    "no Component A ceiling signal for this player -- either ceiling_signals_by_gsis_id wasn't "
+    "supplied to this composer call, this player has no resolvable gsis_id, or their trailing "
+    "role-share boom-rate didn't clear MIN_TRAILING_WEEKS this week (ceiling/signals.py, ADR-0028)."
+)
+_CEILING_NOT_APPLICABLE_REASON = (
+    "Component A ceiling is only calibrated for RB/WR (ADR-0028) -- TE/QB/DST have no live "
+    "ceiling multiplier yet, a scope gap for the position, not a data gap for this player."
 )
 
 _NO_OWNERSHIP_REASON = (
@@ -364,6 +375,14 @@ class PlayerDetailRecord:
     team's worst unresolved case, not this player. `slate_window`/`implied_total` are both simple,
     directly-sourced values (this game's kickoff bucket and this team's live implied point total)
     with their own reasons, same shape as `salary`.
+
+    `ceiling_multiplier` (ADR-0028) is Component A's real, backtested, both-experts-signed-off
+    multiplier (`ceiling.signals.component_a_multiplier`) -- RB/WR only, joined via
+    `identity.nflverse_gsis_id` against an already-built `CeilingSignal` pool. `None` with
+    `_CEILING_NOT_APPLICABLE_REASON` for TE/QB/DST (Component A isn't calibrated for those
+    positions at all, a scope gap, not a data gap), `None` with `_NO_CEILING_SIGNAL_REASON`
+    otherwise. `ceiling_projection` is a derived `@property` (`projection * ceiling_multiplier`)
+    -- a real but partial ceiling read, since Components B/C remain uncalibrated.
     """
 
     season: int
@@ -400,6 +419,9 @@ class PlayerDetailRecord:
     implied_total: float | None
     implied_total_reason: str | None
 
+    ceiling_multiplier: float | None
+    ceiling_multiplier_reason: str | None
+
     notes: list[str] = field(default_factory=list)
 
     @property
@@ -408,6 +430,15 @@ class PlayerDetailRecord:
         if self.projection is None or not self.salary:
             return None
         return self.projection / (self.salary / 1000.0)
+
+    @property
+    def ceiling_projection(self) -> float | None:
+        """`projection * ceiling_multiplier` -- Component A only (ADR-0028), not the full
+        eventual `CeilingMultiplier` (Components B/C are uncalibrated), so this is a real but
+        partial ceiling read, not the final number. `None` whenever either input is."""
+        if self.projection is None or self.ceiling_multiplier is None:
+            return None
+        return self.projection * self.ceiling_multiplier
 
 
 # --------------------------------------------------------------------------------------------
@@ -834,6 +865,24 @@ def _implied_total(team: str, implied_total_by_team: dict[str, float] | None) ->
     return implied_total, None
 
 
+def _ceiling_multiplier(
+    gsis_id: str | None, position: str, ceiling_signals_by_gsis_id: dict[str, CeilingSignal] | None
+) -> tuple[float | None, str | None]:
+    """Joined via `identity.nflverse_gsis_id` -- the same key `ceiling.signals.CeilingSignal.player_id`
+    already uses (both are nflverse gsis_id-space, confirmed by that module's own docstring)."""
+    if position not in COMPONENT_A_SCALE:
+        return None, _CEILING_NOT_APPLICABLE_REASON
+    if gsis_id is None:
+        return None, _NO_CEILING_SIGNAL_REASON
+    signal = (ceiling_signals_by_gsis_id or {}).get(gsis_id)
+    if signal is None:
+        return None, _NO_CEILING_SIGNAL_REASON
+    multiplier = component_a_multiplier(signal, position)
+    if multiplier is None:
+        return None, _NO_CEILING_SIGNAL_REASON
+    return multiplier, None
+
+
 # --------------------------------------------------------------------------------------------
 # Top-level composer
 # --------------------------------------------------------------------------------------------
@@ -861,6 +910,7 @@ def build_player_detail_record(
     injury_by_canonical_id: dict[str, InjuryReportEntry] | None = None,
     kickoff_utc_by_team: dict[str, str] | None = None,
     implied_total_by_team: dict[str, float] | None = None,
+    ceiling_signals_by_gsis_id: dict[str, CeilingSignal] | None = None,
 ) -> PlayerDetailRecord:
     """Join one player's ADR-0022 `PlayerDetailRecord` for one (season, week) out of already-
     computed, week-scoped lookup collections -- see module docstring for the exact join keys used
@@ -902,6 +952,11 @@ def build_player_detail_record(
     flattened by the caller into one `canonical_id`-keyed dict across every team) for `injury`;
     `kickoff_utc_by_team`/`implied_total_by_team` (plain dicts the caller already has on hand from
     the DK slate/`odds_api.py` pulls respectively) for `slate_window`/`implied_total`.
+
+    `ceiling_signals_by_gsis_id` (new, ADR-0028) is Component A's already-built `CeilingSignal`
+    pool (`ceiling.signals.role_share_ceiling_signals`'s output for RB and WR, merged by the
+    caller into one `{signal.player_id: signal}` dict) for `ceiling_multiplier`. Optional, same
+    "caller has nothing for this source" shape as every other lookup above.
     """
     gsis_id = identity.nflverse_gsis_id
 
@@ -920,6 +975,7 @@ def build_player_detail_record(
     injury, injury_reason = _injury(identity, injury_by_canonical_id)
     slate_window, slate_window_reason = _slate_window(team, kickoff_utc_by_team)
     implied_total, implied_total_reason = _implied_total(team, implied_total_by_team)
+    ceiling_multiplier, ceiling_multiplier_reason = _ceiling_multiplier(gsis_id, position, ceiling_signals_by_gsis_id)
 
     notes: list[str] = []
     if gsis_id is None:
@@ -961,5 +1017,7 @@ def build_player_detail_record(
         slate_window_reason=slate_window_reason,
         implied_total=implied_total,
         implied_total_reason=implied_total_reason,
+        ceiling_multiplier=ceiling_multiplier,
+        ceiling_multiplier_reason=ceiling_multiplier_reason,
         notes=notes,
     )

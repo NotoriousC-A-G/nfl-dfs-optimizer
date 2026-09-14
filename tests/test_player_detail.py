@@ -1,6 +1,7 @@
 import pandas as pd
 import pytest
 
+from nfl_dfs.ceiling.signals import CeilingSignal
 from nfl_dfs.composition.player_detail import (
     SCHEME_SPLIT_POSITIONS,
     build_gsis_to_pff_id_map,
@@ -901,3 +902,68 @@ def test_slate_window_and_implied_total_none_with_reason_when_team_missing():
 )
 def test_slate_window_label_buckets_real_kickoff_times(kickoff_utc, expected):
     assert slate_window_label(kickoff_utc) == expected
+
+
+# --------------------------------------------------------------------------------------------
+# ADR-0028: ceiling_multiplier / ceiling_projection
+# --------------------------------------------------------------------------------------------
+
+
+def _ceiling_signal(shrunk_z_score: float | None, player_id: str = "00-1") -> CeilingSignal:
+    return CeilingSignal(
+        player_id=player_id, player_name="Some RB", team="GB", sample_size=5,
+        raw_value=0.5, z_score=shrunk_z_score, shrinkage_weight=0.5, shrunk_z_score=shrunk_z_score,
+    )
+
+
+def test_ceiling_multiplier_joins_via_gsis_id_for_rb():
+    identity = _identity("00-1", "Some RB", "RB", "GB", gsis_id="00-1")
+    record = build_player_detail_record(
+        identity, SEASON, WEEK, team="GB", position="RB", opponent_team_this_week="CHI",
+        ceiling_signals_by_gsis_id={"00-1": _ceiling_signal(1.0)},
+        projections_by_canonical_id={"00-1": _projection("00-1", salary=6000, blended_projection=15.0)},
+    )
+    assert record.ceiling_multiplier is not None
+    assert record.ceiling_multiplier > 1.0
+    assert record.ceiling_multiplier_reason is None
+    assert record.ceiling_projection == pytest.approx(15.0 * record.ceiling_multiplier)
+
+
+def test_ceiling_multiplier_not_applicable_for_te():
+    identity = _identity("00-1", "Some TE", "TE", "GB", gsis_id="00-1")
+    record = build_player_detail_record(
+        identity, SEASON, WEEK, team="GB", position="TE", opponent_team_this_week="CHI",
+        ceiling_signals_by_gsis_id={"00-1": _ceiling_signal(1.0)},
+    )
+    assert record.ceiling_multiplier is None
+    assert "only calibrated for RB/WR" in record.ceiling_multiplier_reason
+
+
+def test_ceiling_multiplier_none_with_reason_when_no_pool_supplied():
+    identity = _identity("00-1", "Some RB", "RB", "GB", gsis_id="00-1")
+    record = build_player_detail_record(identity, SEASON, WEEK, team="GB", position="RB", opponent_team_this_week="CHI")
+    assert record.ceiling_multiplier is None
+    assert "no Component A ceiling signal" in record.ceiling_multiplier_reason
+
+
+def test_ceiling_multiplier_none_with_reason_when_signal_itself_ungated():
+    # A real CeilingSignal exists for this player but its own shrunk_z_score is None (didn't clear
+    # MIN_TRAILING_WEEKS) -- still a real, distinguishable reason, not a fabricated neutral value.
+    identity = _identity("00-1", "Some RB", "RB", "GB", gsis_id="00-1")
+    record = build_player_detail_record(
+        identity, SEASON, WEEK, team="GB", position="RB", opponent_team_this_week="CHI",
+        ceiling_signals_by_gsis_id={"00-1": _ceiling_signal(None)},
+    )
+    assert record.ceiling_multiplier is None
+    assert "no Component A ceiling signal" in record.ceiling_multiplier_reason
+
+
+def test_ceiling_projection_none_when_either_input_missing():
+    identity = _identity("00-1", "Some RB", "RB", "GB", gsis_id="00-1")
+    record = build_player_detail_record(
+        identity, SEASON, WEEK, team="GB", position="RB", opponent_team_this_week="CHI",
+        ceiling_signals_by_gsis_id={"00-1": _ceiling_signal(1.0)},
+    )
+    assert record.ceiling_multiplier is not None  # real multiplier
+    assert record.projection is None  # no projections_by_canonical_id supplied
+    assert record.ceiling_projection is None
