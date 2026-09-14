@@ -473,9 +473,117 @@ rushing dashboard data -- "doesn't predict ceiling in aggregate" and "useful con
 comparing two specific QBs" remain separate questions, the same distinction already settled for
 Component C/aDOT (ADR-0029). See ADR-0030's own Update section for that framing applied here.
 
-**Final state of `CeilingMultiplier`, four components resolved:** Component A shipped. Components
-B, C, and D all ship nothing live -- B for statistical insufficiency (RB) and architectural
-inexpressibility (WR's real negative effect), C and D for clean, thoroughly-verified nulls. Three
-named future candidates now on record for a possible future round: WR red-zone role-security
-(Component B), explosive-target rate (Component C), explosive-rush rate (Component D) -- each a
-genuinely different hypothesis from what was tested, not a retry of the same one.
+## Update (2026-09-14): Component E (QB explosive-rush rate) -- closed as a clean null; the QB-rushing CeilingMultiplier line of work stops here
+
+Component D's closure named a genuinely different next candidate: **explosive-rush rate**, a
+LEVEL statistic on yards-per-rush-attempt (not attempt count), computed over POOLED
+designed+scramble rush attempts (DK scoring doesn't distinguish a scheme-called keeper from a
+broken-pocket scramble that goes the same distance) -- the Fantasy Football Expert's own naming.
+Chris directed pursuing this next, following the same design-review-before-backtest discipline.
+
+**Design review (both experts, before any code was written)** -- the Model Analytics Expert
+confirmed this should be a LEVEL signal (trailing pooled explosive-rush rate, z-scored + shrunk
+the same way aDOT/Component D's scramble-rate test were built), explicitly NOT a week-to-week
+boom-rate comparison: QB rush volume (3-8 attempts/week) is too low for a per-week boom-rate on an
+already-rare threshold event to mean anything, and stacking two layers of thresholding would
+compound, not fix, Component D's quantization failure. Primary threshold set at 15+ yards (20+
+ruled out as collapsing toward a near-binary indicator at realistic trailing attempt counts), with
+a required 10+ yard sensitivity check. The population floor (`QB_EXPLOSIVE_RUSH_MIN_TRAILING_VOLUME
+=30`) was explicitly DERIVED rather than asserted-by-analogy: solving `SE(rate)=sqrt(p(1-p)/n)` for
+`n` at a target SE of ~5 percentage points and a plausible population rate of 8% gives `n≈29.4`,
+rounded to 30 -- a real calculation Component D's own floor never got (see `ceiling/signals.py`'s
+constant comment for the full derivation).
+
+Both experts explicitly flagged this construct sits on shakier "opportunity, not outcome" ground
+than Component D did -- whether a run clears 15 yards is partly scheme/blocking and partly pure
+single-play variance (a missed tackle, a lucky bounce), the same category of noise rushing points
+were rejected as a Component D `raw_value` candidate for smuggling back in. Both accepted this as
+a conscious, disclosed tradeoff, not an inherited exemption -- and the Fantasy Football Expert set
+an explicit prior going in (not discovered reactively): given Component D's scramble-rate leg
+already nulled with a sign flip, and scrambles are football-plausibly more likely than designed
+runs to produce a long gain (broken-pocket improvisation vs. a blocked, defined lane), this
+construct was flagged as being at real risk of just re-deriving that already-nulled finding through
+a more outcome-adjacent lens, not a fresh, neutral hypothesis. The Fantasy Football Expert required
+two diagnostics beyond Component D's precedent: a scramble-share TERCILE split, AND (their explicit
+addition) the SAME regression residualized against scramble share as a continuous covariate, since
+a tercile split alone could miss a confound a continuous control catches. The goal-line-share
+diagnostic carried forward from Component D too, now correcting a structural confound
+(`yardline_100` mechanically caps how long a run near the goal line CAN be) rather than a role-
+conflation risk.
+
+**Backtest** (`scripts/ceiling_qb_explosive_rush_backtest.py`, `qb_explosive_rush_rate_signals` in
+`ceiling/signals.py`) ran every required check up front on 6 real seasons:
+
+- **Primary test (15+ yard threshold)**: TRAIN (2020-2022, n=309) cluster-robust 95%
+  CI=[-0.1402, 0.1085], slope=-0.0158. HOLDOUT (2023-2024, n=248) cluster-robust 95%
+  CI=[-0.0928, 0.1341], slope=+0.0207. Sign flips, but -- unlike Component D's flip, where both
+  point estimates were further from zero and one nearly cleared significance -- **both estimates
+  here are already near-zero in magnitude**, so the flip corroborates rather than does the
+  evidentiary work; the null was already present in each split independently.
+- **Required 10+ yard sensitivity check**: TRAIN slope=-0.0596 [-0.1782, 0.0590], HOLDOUT
+  slope=-0.0041 [-0.1463, 0.1381] -- same sign both splits (unlike the 15+ flip), still doesn't
+  clear zero, still small in magnitude. Threshold-consistency across two different cuts rules out
+  "15+ was simply the wrong cutoff," which both experts read as strengthening the null rather than
+  suggesting a threshold-sensitive real effect hiding nearby.
+- **Scramble-share diagnostics**: tercile split shows no clearing tier and no monotonic pattern
+  (low/mid/high slopes 0.0973/-0.0491/-0.0337, all CIs straddle zero). The residualized regression
+  (both `shrunk_z` and `scramble_share` in one model, cluster-robust, n=557, G=44) is the most
+  informative single result: `shrunk_z` controlling for scramble_share = +0.0058 (essentially
+  nothing), `scramble_share` controlling for shrunk_z = -0.1097 [-0.5504, 0.3309] (also null). Both
+  experts read this as complicating rather than confirming the "explosive-rush rate is just
+  scramble rate in disguise" prior -- a real confound story requires one coefficient to visibly
+  absorb the other's effect when both enter the model; here neither predictor has anything to
+  absorb, together or apart.
+- **Goal-line-share diagnostic**: all three tiers flat (0.0360/-0.0444/-0.0291, all CIs straddle
+  zero) -- the structural confound the Fantasy Football Expert specifically flagged as more
+  load-bearing here than for Component D doesn't appear to be masking anything.
+- **Quantization check**: n=560 qualifying (player, week) observations, sample_size (pooled
+  trailing attempts) distribution mean=54.5, median=45, min=30 (the floor itself) -- much finer
+  granularity (1/30≈0.033 per step at the floor) than Component D's designed-run-count axis ever
+  achieved, confirming the deliberate LEVEL-signal, pooled-window design choice actually solved the
+  quantization problem rather than moving it. The Model Analytics Expert noted this specifically:
+  unlike Component D, this null cannot be attributed to a too-coarse measurement axis -- it's a
+  clean null on a well-resolved variable.
+- A decile-level fit on the full 15yd sample showed a notably higher R²=0.252 than the tiny
+  player-level slope would predict -- both experts read this as likely decile-aggregation bias (a
+  10-point OLS fit is highly leverage-sensitive; this project's own prior components already show
+  aggregation can inflate apparent signal, e.g. Component B's original un-clustered RB result), not
+  a masked real effect, and explicitly ranked it below the cluster-robust player-level train/holdout
+  result in this project's own diagnostic hierarchy either way.
+
+**Both experts signed off on closing this out as a clean null, no live multiplier.** The Model
+Analytics Expert called this "the most complete falsification protocol this project has applied to
+any `CeilingMultiplier` candidate" -- cluster-robust SEs from the first run, train/holdout, two
+thresholds, two independent scramble-share designs, all null. The Fantasy Football Expert confirmed
+their own design-review concern (that a yardage threshold doesn't really escape the "opportunity,
+not outcome" problem Component D was built to avoid) was borne out by the data, and drew a specific,
+narrower final framing for the whole QB-rushing investigation: nothing here undermines the real
+football intuition that mobile QBs (Lamar Jackson/Hurts/Fields-type) have a genuinely different
+rushing ceiling than pocket passers -- that's visible on tape and in season-long totals, and is
+presumably already priced into their vendor baseline projections. What three independent, real
+backtests (Component D's two legs plus Component E) actually falsified is the narrower, more
+specific claim that any of designed-run volume, scramble rate, or explosive-rush rate adds
+detectable WEEK-TO-WEEK predictive signal ON TOP OF that baseline -- variance that's predictable in
+advance, which is what a `CeilingMultiplier` leg would need to contribute.
+
+**Both experts explicitly recommend stopping the QB-rushing `CeilingMultiplier` line of work here**
+rather than naming a fourth variant -- the Fantasy Football Expert's own accounting: every
+remaining candidate they could construct (red-zone/goal-line rush RATE, an EPA-weighted explosive
+statistic, a designed-run-count-times-explosiveness interaction) is a repackaging of what's already
+nulled, not a genuinely new hypothesis, and a real fourth hypothesis would need data this pipeline
+doesn't ingest (PFF blocking-scheme charting of called RPO/read-option/tush-push packages -- real
+opportunity, not realized outcome). `docs/adr/0030-qb-rushing-opportunity-profile.md`'s already-
+shipped descriptive layer (raw designed-run rate, scramble split, red-zone/goal-line counts) is
+confirmed as the permanent, final answer for this axis, not a placeholder awaiting a future
+multiplier. One genuinely different candidate was named for the record only, not as a next step:
+the Model Analytics Expert's **volatility-based** alternative -- week-to-week variance (coefficient
+of variation) of trailing rushing yards, testing whether an *unpredictable* rushing role correlates
+with ceiling variance, a different mechanism in kind (dispersion of the predictor, not its central
+tendency) from anything A through E tested.
+
+**Final state of `CeilingMultiplier`, five components resolved:** Component A shipped. Components
+B, C, D, and E all ship nothing live -- B for statistical insufficiency (RB) and architectural
+inexpressibility (WR's real negative effect), C/D/E for clean, thoroughly-verified nulls. Two named
+future candidates remain open for a possible future round outside QB rushing: WR red-zone role-
+security (Component B) and explosive-target rate (Component C) -- QB rushing itself is closed, not
+open-ended, per both experts' explicit recommendation above.

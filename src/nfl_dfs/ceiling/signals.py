@@ -1,7 +1,7 @@
 """Ceiling signal data layer (PRD Section 6's newest construct, ADR-0028).
 
 **Component A now has a real, backtested, both-experts-signed-off live multiplier
-(`component_a_multiplier`) -- Components B, C, and D do not.** The original round built only the
+(`component_a_multiplier`) -- Components B, C, D, and E do not.** The original round built only the
 data layer: neither the Model Analytics Expert (draft) nor the Fantasy Football Expert (review)
 would propose the scale/cap constants needed to turn a z-scored signal into an actual multiplier
 without a real outcome backtest (analogous to ADR-0012's own return-TD-rate correction). That
@@ -9,12 +9,15 @@ backtest has since been run live for Component A only (`scripts/ceiling_role_sha
 real seasons, 20,376 real player-weeks, a player-level log-space regression of actual-DK-points-
 relative-to-own-trailing-median against `shrunk_z_score`) and both experts gave explicit, numbered
 sign-off on the result -- see the "Update" section of `docs/adr/0028-ceiling-signal-data-layer.md`.
-Components B, C, and D each got their own backtest too, and all three ship nothing live: real,
+Components B, C, D, and E each got their own backtest too, and all four ship nothing live: real,
 inspectable signals with no live multiplier, closed out as either a real-but-insufficient/
-architecturally-inexpressible finding (B) or a clean, thoroughly-verified null (C, D) -- see that
-same ADR's Update sections for each.
+architecturally-inexpressible finding (B) or a clean, thoroughly-verified null (C, D, E) -- see that
+same ADR's Update sections for each. **Both experts explicitly recommend stopping the QB-rushing
+line of work at Component E** -- three independent hypotheses (D's two legs, E) all nulled under
+this project's strongest available methodology; `ingestion/qb_rushing_profile.py`'s descriptive
+dashboard data (ADR-0030) is the permanent, final answer for that axis, not a placeholder.
 
-Four signal-producing functions, one per ADR-0028 component:
+Five signal-producing functions, one per ADR-0028 component:
 
 - `role_share_ceiling_signals` -- Component A, RB/WR role-share "boom rate" (fraction of trailing
   weeks a player's share spiked above their own trailing median). Built as a boom-rate, not raw
@@ -41,6 +44,12 @@ Four signal-producing functions, one per ADR-0028 component:
   a clean null (both the designed-run boom-rate primary test and a scramble-rate secondary test) --
   see `docs/adr/0028-ceiling-signal-data-layer.md`'s Component D Update section. Kept in this module
   for traceability/reproducibility, same posture as B/C.
+- `qb_explosive_rush_rate_signals` -- Component E (ADR-0028/0030), a LEVEL signal on trailing
+  pooled (designed + scramble) explosive-rush rate (rushes clearing `EXPLOSIVE_RUSH_YARDS_THRESHOLD`
+  yards), the Fantasy Football Expert's named successor to Component D's null. Backtested and
+  closed as a clean null -- see `docs/adr/0028-ceiling-signal-data-layer.md`'s Component E Update
+  section. **Both experts explicitly recommend stopping the QB-rushing CeilingMultiplier line of
+  work here** -- kept in this module for traceability only.
 
 Every constant below (`BOOM_THRESHOLD`, `MIN_TRAILING_WEEKS`, `CEILING_SHRINKAGE_K`,
 `ADOT_MIN_TARGETS`) is an explicit, unvalidated starting placeholder -- named as such in both
@@ -56,6 +65,7 @@ import pandas as pd
 
 from nfl_dfs.ingestion.game_environment_stats import blend_toward_prior, shrinkage_weight
 from nfl_dfs.ingestion.usage_share import (
+    QB_EXCLUSION_MIN_TRAILING_PASS_ATTEMPTS,
     ROLE_RB,
     ROLE_WR,
     _trailing_qb_ids,
@@ -81,6 +91,20 @@ ADOT_MIN_TARGETS = 8  # deliberately well under usage_share.py's WR_GATE_MIN_VOL
 # Analytics Expert's explicit instruction ("the closest existing precedent for how much repeated
 # opportunity before a per-opportunity rate is trustworthy at all"), not a re-derived constant.
 QB_DESIGNED_RUN_MIN_TRAILING_VOLUME = 8
+
+# ADR-0028/0030 Component E (QB explosive-rush rate) -- design jointly reviewed by both experts
+# following Component D's closure (see qb_explosive_rush_rate_signals' docstring below for the
+# full rationale). EXPLOSIVE_RUSH_YARDS_THRESHOLD=15 is the Model-Analytics-Expert-recommended
+# primary cut (20+ collapses toward near-binary at realistic pooled trailing attempt counts; 10+
+# is run as a required sensitivity check by the BACKTEST script, not shipped as a second production
+# constant here). QB_EXPLOSIVE_RUSH_MIN_TRAILING_VOLUME=30 is DERIVED, not asserted-by-analogy (the
+# Model Analytics Expert's explicit instruction, after flagging that simply doubling Component D's
+# floor would conflate "more raw opportunities" with "a more reliable rate estimate"): solving
+# `SE(rate) = sqrt(p*(1-p)/n)` for `n` at a target SE of ~0.05 (5 percentage points) and a plausible
+# population explosive-rush rate `p=0.08` (midpoint of the Fantasy Football Expert's estimated 5-12%
+# range) gives `n = 0.08*0.92/0.05**2 ≈ 29.4`, rounded up to 30.
+EXPLOSIVE_RUSH_YARDS_THRESHOLD = 15
+QB_EXPLOSIVE_RUSH_MIN_TRAILING_VOLUME = 30
 
 # Component A's real, backtested, both-experts-signed-off scale constants (ADR-0028 Update) --
 # fitted via a player-level log-space regression on 5 real seasons / 20,376 real player-weeks,
@@ -482,3 +506,117 @@ def qb_rushing_ceiling_signals(pbp: pd.DataFrame, target_week: int, *, season_ty
     boom.loc[boom["_trailing_volume"] < QB_DESIGNED_RUN_MIN_TRAILING_VOLUME, "raw_value"] = None
     boom = boom.drop(columns=["_trailing_volume"])
     return _z_score_and_shrink(boom)
+
+
+# --------------------------------------------------------------------------------------------
+# ADR-0028/0030 Component E (QB explosive-rush rate) -- BACKTESTED AND CLOSED AS A CLEAN NULL, no
+# live multiplier, both experts explicitly recommending the QB-rushing CeilingMultiplier line of
+# work stop here (three independent hypotheses -- Component D's two legs, this one -- all nulled).
+# Full backtest result + both experts' interpretation: docs/adr/0028-ceiling-signal-data-layer.md's
+# "Update (2026-09-14): Component E (QB explosive-rush rate)" section. Kept in this module for
+# traceability/reproducibility only.
+#
+# Design jointly reviewed by both experts following Component D's closure, before any backtest
+# code was written, per this project's standing design-before-backtest discipline:
+#
+# - A LEVEL signal (trailing pooled explosive-rush rate, z-scored + shrunk the same way
+#   `adot_ceiling_signals`/Component D's scramble-rate secondary test were built), explicitly NOT
+#   a week-to-week boom-rate comparison. The Model Analytics Expert's reasoning, confirmed by the
+#   Fantasy Football Expert (who originally proposed this construct and clarified their own
+#   ambiguous "boom-shaped statistic" phrasing meant this): QB rush volume is too low (3-8 attempts
+#   a week) for a per-week boom-rate on an already-rare threshold event to mean anything --
+#   stacking two layers of thresholding (a rare per-week rate, boom-compared against its own
+#   trailing median) would compound, not fix, Component D's exact quantization failure. Pooling the
+#   whole trailing window into one rate (rather than binning by week) is what makes this axis usable
+#   at all, the same reason Component C's low-floor-plus-shrinkage approach beat a hard weekly gate.
+# - Pooled (designed + scramble) rush attempts, NOT designed-run-only -- DK scoring doesn't care
+#   whether a given rush originated as a called run or a broken-pocket improvisation (Fantasy
+#   Football Expert's explicit reasoning), so the denominator here is every rush attempt by an
+#   identified trailing passer, not the Component D-style designed-only population.
+# - `EXPLOSIVE_RUSH_YARDS_THRESHOLD=15` (not 20+, which the Model Analytics Expert flagged would
+#   collapse toward a near-binary indicator at realistic pooled trailing attempt counts) --
+#   `scripts/ceiling_qb_explosive_rush_backtest.py` runs a required 10+ yard sensitivity check
+#   alongside the 15+ primary, not shipped as a second production constant here.
+# - `QB_EXPLOSIVE_RUSH_MIN_TRAILING_VOLUME=30`, DERIVED from a target standard error (see the
+#   constant's own comment above), not asserted by simply doubling Component D's floor -- applied
+#   as a raw_value-nulling gate that also removes near-zero-rushing pocket passers from the
+#   cross-sectional z-scoring reference population, same mechanism Component D introduced.
+# - **Both experts explicitly flagged this construct sits on shakier "opportunity, not outcome"
+#   ground than Component D did** -- Component D's designed-run count was scheme-visible before the
+#   snap; whether a given run clears 15 yards is partly opportunity (blocking, space) and partly
+#   pure single-play outcome variance (a missed tackle, a lucky bounce), the same category of noise
+#   rushing points/yards were rejected as a Component D `raw_value` candidate for smuggling back in.
+#   Both experts accepted this as a conscious, disclosed tradeoff, not an inherited exemption from
+#   Component D's own rejection logic -- and the Fantasy Football Expert set an explicit prior going
+#   in (not just after the fact, the way Component D's quantization risk was only found reactively):
+#   given scramble rate already nulled with a sign flip, and scrambles are football-plausibly more
+#   likely than designed runs to produce a long gain (broken-pocket improvisation vs. a blocked,
+#   defined running lane), this construct is at real risk of simply re-deriving the already-nulled
+#   scramble-rate finding through a more outcome-adjacent lens, not finding something independent.
+# - Required diagnostics (Fantasy Football Expert, run by the backtest script, not this function):
+#   a scramble-SHARE tercile split AND a regression residualized against scramble share as a
+#   continuous covariate (the tercile split alone could miss the confound a continuous control
+#   catches, per their explicit request); a goal-line-share diagnostic split carried forward from
+#   Component D, now correcting a structural confound rather than a role-conflation risk --
+#   `yardline_100` mechanically caps how long a run near the goal line CAN be, so a short-yardage/
+#   goal-line-specialist QB would show a mechanically DEPRESSED explosive-rate for a structural
+#   reason having nothing to do with real explosiveness (the reverse direction of Component D's own
+#   goal-line concern, which risked inflating a level read rather than deflating a rate read).
+# --------------------------------------------------------------------------------------------
+
+
+def _aggregate_trailing_qb_explosive_rush(
+    pbp: pd.DataFrame, target_week: int, *, season_type: str | None = "REG", yards_threshold: int = EXPLOSIVE_RUSH_YARDS_THRESHOLD
+) -> pd.DataFrame:
+    """Trailing (`week < target_week`) pooled (designed + scramble) rush-attempt explosive rate,
+    one row per (team, player_id) for every identified trailing passer (`usage_share.py`'s existing
+    `>= QB_EXCLUSION_MIN_TRAILING_PASS_ATTEMPTS` convention, reused directly rather than a second
+    identification mechanism). `sample_size` is the pooled trailing rush-attempt count (the
+    denominator `raw_value` itself is computed against, matching `ADOT_MIN_TARGETS`'s own "gate on
+    the signal's own denominator" convention); `raw_value` is the trailing explosive-rush rate
+    (rushes with `rushing_yards >= yards_threshold`, divided by `sample_size`). `yards_threshold`
+    is exposed as a parameter (not hardcoded) specifically so the backtest script's required 10+
+    yard sensitivity check can reuse this same aggregation rather than a duplicated one.
+    """
+    df = pbp if season_type is None else pbp[pbp["season_type"] == season_type]
+    trailing = df[df["week"] < target_week]
+
+    passer_week = aggregate_passer_week(df, season_type=season_type)
+    prior_passer_week = passer_week[passer_week["week"] < target_week]
+    qb_totals = prior_passer_week.groupby("player_id", observed=True)["pass_attempts"].sum()
+    qb_ids = set(qb_totals[qb_totals >= QB_EXCLUSION_MIN_TRAILING_PASS_ATTEMPTS].index)
+
+    rushes = trailing[
+        (trailing["play_type"] == "run") & trailing["rusher_player_id"].notna() & trailing["rusher_player_id"].isin(qb_ids)
+    ]
+    agg = (
+        rushes.groupby(["posteam", "rusher_player_id"], observed=True)
+        .agg(
+            sample_size=("play_id", "count"),
+            explosive=("rushing_yards", lambda s: int((s >= yards_threshold).sum())),
+            player_name=("rusher_player_name", "first"),
+        )
+        .reset_index()
+        .rename(columns={"posteam": "team", "rusher_player_id": "player_id"})
+    )
+    agg["team"] = agg["team"].map(lambda t: normalize_team("nflverse_schedule", t))
+    agg["raw_value"] = agg["explosive"] / agg["sample_size"]
+    return agg.drop(columns=["explosive"])
+
+
+def qb_explosive_rush_rate_signals(
+    pbp: pd.DataFrame, target_week: int, *, season_type: str | None = "REG", yards_threshold: int = EXPLOSIVE_RUSH_YARDS_THRESHOLD
+) -> list[CeilingSignal]:
+    """ADR-0028/0030 Component E: trailing explosive-rush-rate LEVEL signal (see module section
+    docstring above for the full design rationale/sign-off). **BACKTESTED AND CLOSED AS A CLEAN
+    NULL -- no `component_a_multiplier`-style live multiplier exists or will be added for this.**
+    Kept for traceability/reproducibility (`scripts/ceiling_qb_explosive_rush_backtest.py` still
+    consumes it) -- see `docs/adr/0028-ceiling-signal-data-layer.md`'s Component E Update section
+    for the full backtest record and both experts' sign-off on closing it (and the whole
+    QB-rushing CeilingMultiplier line of work) out.
+    """
+    trailing = _aggregate_trailing_qb_explosive_rush(pbp, target_week, season_type=season_type, yards_threshold=yards_threshold)
+    trailing = trailing.copy()
+    trailing.loc[trailing["sample_size"] < QB_EXPLOSIVE_RUSH_MIN_TRAILING_VOLUME, "raw_value"] = None
+    pool = trailing[["player_id", "player_name", "team", "sample_size", "raw_value"]]
+    return _z_score_and_shrink(pool)

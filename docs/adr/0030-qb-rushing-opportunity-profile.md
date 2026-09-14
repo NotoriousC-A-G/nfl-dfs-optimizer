@@ -109,3 +109,37 @@ A genuinely different future candidate was named (not a retry of what was tested
 rush rate**, a boom-shaped statistic on yards-per-rush-attempt over pooled designed+scramble
 attempts (not gated to designed runs alone) -- would need its own independent design review before
 any future backtest, per this project's standing discipline.
+
+## Update (2026-09-14): explosive-rush rate (Component E) also closed as a clean null -- the QB-rushing CeilingMultiplier line of work is done, this descriptive layer is the permanent answer
+
+Chris directed pursuing explosive-rush rate next. Both experts jointly designed it as a LEVEL
+signal (trailing pooled designed+scramble explosive-rush rate, 15+ yard threshold, a floor DERIVED
+from a target standard error rather than asserted), backtested it against 6 real seasons with the
+same rigor Component D established (cluster-robust SEs, a train/holdout split, plus two required
+scramble-share diagnostics and a goal-line-share diagnostic). Full record:
+`docs/adr/0028-ceiling-signal-data-layer.md`'s "Update (2026-09-14): Component E (QB explosive-rush
+rate)" section.
+
+**Result:** a clean null, if anything more immediately decisive than Component D's -- both the
+15-yard primary test and the required 10-yard sensitivity check came back null in both the train
+and holdout splits, and a residualized regression showed neither the explosive-rush signal nor
+scramble share carries any independent relationship to ceiling outcomes once the other is
+controlled for. Both experts signed off on closing it out.
+
+**Both experts explicitly recommend stopping here, not naming a fourth QB-rushing variant.** Three
+real hypotheses (Component D's designed-run-count and scramble-rate legs, Component E's
+explosive-rush rate) have now been tested against real DK outcomes with this project's strongest
+available methodology, and all three nulled. The Fantasy Football Expert's closing framing, worth
+keeping as the permanent read on this whole line of work: nothing about these nulls undermines the
+real football fact that mobile QBs (Lamar Jackson/Hurts/Fields-type) have a genuinely different
+rushing ceiling than pocket passers -- that's visible on tape and in season-long totals, and is
+presumably already priced into their vendor baseline projections. What actually got falsified is
+the narrower, more specific claim that any of these usage/production statistics adds detectable
+WEEK-TO-WEEK predictive signal ON TOP OF that already-priced-in baseline.
+
+**This module's descriptive data is the permanent, final answer for the QB-rushing axis of the
+Player Detail dashboard, not a placeholder awaiting a future backtested multiplier.** If anything,
+the null strengthens the case for trusting the raw numbers as-is: there's no hidden mechanical
+ceiling edge a formula could have extracted instead, so the real designed-run rate, scramble split,
+and red-zone/goal-line counts this module already surfaces are doing the real, non-redundant work
+of the tie-breaking use case Chris originally asked for.

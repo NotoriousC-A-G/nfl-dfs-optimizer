@@ -7,11 +7,14 @@ from nfl_dfs.ceiling.signals import (
     ADOT_MIN_TARGETS,
     CEILING_SHRINKAGE_K,
     COMPONENT_A_SCALE,
+    EXPLOSIVE_RUSH_YARDS_THRESHOLD,
     MIN_TRAILING_WEEKS,
     QB_DESIGNED_RUN_MIN_TRAILING_VOLUME,
+    QB_EXPLOSIVE_RUSH_MIN_TRAILING_VOLUME,
     CeilingSignal,
     adot_ceiling_signals,
     component_a_multiplier,
+    qb_explosive_rush_rate_signals,
     qb_rushing_ceiling_signals,
     red_zone_ceiling_signals,
     role_share_ceiling_signals,
@@ -443,6 +446,111 @@ def test_qb_rushing_ceiling_signals_excludes_future_weeks():
     signals = qb_rushing_ceiling_signals(pd.DataFrame(rows), target_week=5)
     qb4 = next(s for s in signals if s.player_id == "QB4")
     assert qb4.sample_size == 3  # unchanged by the week-5 spike
+
+
+# --------------------------------------------------------------------------------------------
+# qb_explosive_rush_rate_signals (ADR-0028/0030 Component E -- level signal, backtest phase)
+# --------------------------------------------------------------------------------------------
+
+
+def _qb_rush_with_yards(week: int, team: str, player_id: str, name: str, play_id: int, yards: float, *, scramble: bool = False) -> dict:
+    return _pbp_row(
+        week=week, posteam=team, play_type="run", rusher_player_id=player_id, rusher_player_name=name,
+        play_id=play_id, qb_scramble=1 if scramble else 0, rushing_yards=yards,
+    )
+
+
+def _qualifying_passer(week: int, team: str, player_id: str, name: str, play_id_start: int) -> list[dict]:
+    return _pass_attempts(week, team, player_id, name, 10, play_id_start)
+
+
+def test_qb_explosive_rush_rate_signals_pools_designed_and_scramble_attempts():
+    # QB1: 30 pooled attempts (20 designed + 10 scramble, both types contribute to the pool), 6 of
+    # them clearing EXPLOSIVE_RUSH_YARDS_THRESHOLD=15 (3 designed, 3 scramble) -- rate = 6/30 = 0.2.
+    rows = _qualifying_passer(1, "GB", "QB1", "Dual Threat", 1)
+    play_id = 100
+    for i in range(20):
+        yards = 20.0 if i < 3 else 5.0
+        rows.append(_qb_rush_with_yards(1, "GB", "QB1", "Dual Threat", play_id, yards, scramble=False))
+        play_id += 1
+    for i in range(10):
+        yards = 18.0 if i < 3 else 4.0
+        rows.append(_qb_rush_with_yards(1, "GB", "QB1", "Dual Threat", play_id, yards, scramble=True))
+        play_id += 1
+
+    signals = qb_explosive_rush_rate_signals(pd.DataFrame(rows), target_week=2)
+    qb1 = next(s for s in signals if s.player_id == "QB1")
+    assert qb1.sample_size == 30
+    assert qb1.raw_value == pytest.approx(0.2)
+
+
+def test_qb_explosive_rush_rate_signals_gates_below_min_trailing_volume():
+    # QB2 has 29 pooled trailing attempts -- one short of QB_EXPLOSIVE_RUSH_MIN_TRAILING_VOLUME=30.
+    assert QB_EXPLOSIVE_RUSH_MIN_TRAILING_VOLUME == 30
+    rows = _qualifying_passer(1, "GB", "QB2", "Just Short", 1)
+    play_id = 100
+    for _ in range(29):
+        rows.append(_qb_rush_with_yards(1, "GB", "QB2", "Just Short", play_id, 20.0))
+        play_id += 1
+
+    signals = qb_explosive_rush_rate_signals(pd.DataFrame(rows), target_week=2)
+    qb2 = next(s for s in signals if s.player_id == "QB2")
+    assert qb2.sample_size == 29
+    assert qb2.raw_value is None
+    assert qb2.z_score is None
+
+
+def test_qb_explosive_rush_rate_signals_excludes_rushers_who_never_clear_the_trailing_passer_gate():
+    # A real rusher with real explosive gains but who never cleared the trailing-passer
+    # identification threshold (>= QB_EXCLUSION_MIN_TRAILING_PASS_ATTEMPTS=5 pass attempts) must
+    # not appear at all -- this signal only covers identified trailing passers, not every rusher.
+    rows = _pass_attempts(1, "GB", "QB3", "Not Enough Passes", 4, 1)  # one short of the gate
+    play_id = 100
+    for _ in range(30):
+        rows.append(_qb_rush_with_yards(1, "GB", "QB3", "Not Enough Passes", play_id, 20.0))
+        play_id += 1
+    rows += [_qb_rush_with_yards(1, "GB", "WR_JET", "Jet Sweep WR", 900 + i, 20.0) for i in range(30)]
+
+    signals = qb_explosive_rush_rate_signals(pd.DataFrame(rows), target_week=2)
+    assert "QB3" not in {s.player_id for s in signals}
+    assert "WR_JET" not in {s.player_id for s in signals}
+
+
+def test_qb_explosive_rush_rate_signals_excludes_future_weeks():
+    rows = _qualifying_passer(1, "GB", "QB4", "Trailing Only", 1)
+    play_id = 100
+    for _ in range(30):
+        rows.append(_qb_rush_with_yards(1, "GB", "QB4", "Trailing Only", play_id, 5.0))  # none explosive
+        play_id += 1
+    # Week 2 (the target week) gets a huge explosive spike that must not leak into the trailing read.
+    rows += _qualifying_passer(2, "GB", "QB4", "Trailing Only", 500)
+    for _ in range(30):
+        rows.append(_qb_rush_with_yards(2, "GB", "QB4", "Trailing Only", play_id, 50.0))
+        play_id += 1
+
+    signals = qb_explosive_rush_rate_signals(pd.DataFrame(rows), target_week=2)
+    qb4 = next(s for s in signals if s.player_id == "QB4")
+    assert qb4.sample_size == 30  # unchanged by week 2's spike
+    assert qb4.raw_value == pytest.approx(0.0)
+
+
+def test_qb_explosive_rush_rate_signals_respects_custom_yards_threshold():
+    # Same population computed at yards_threshold=10 instead of the default 15 -- the backtest
+    # script's required sensitivity check reuses this same parameterization.
+    rows = _qualifying_passer(1, "GB", "QB5", "Threshold Check", 1)
+    play_id = 100
+    for i in range(30):
+        rows.append(_qb_rush_with_yards(1, "GB", "QB5", "Threshold Check", play_id, 12.0 if i < 9 else 3.0))
+        play_id += 1
+
+    default_signals = qb_explosive_rush_rate_signals(pd.DataFrame(rows), target_week=2)
+    qb5_default = next(s for s in default_signals if s.player_id == "QB5")
+    assert qb5_default.raw_value == pytest.approx(0.0)  # nothing clears 15 yards
+
+    loose_signals = qb_explosive_rush_rate_signals(pd.DataFrame(rows), target_week=2, yards_threshold=10)
+    qb5_loose = next(s for s in loose_signals if s.player_id == "QB5")
+    assert qb5_loose.raw_value == pytest.approx(9 / 30)  # 9 rushes clear the looser 10-yard threshold
+    assert EXPLOSIVE_RUSH_YARDS_THRESHOLD == 15  # confirms the production default is unchanged
 
 
 # --------------------------------------------------------------------------------------------
