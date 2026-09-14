@@ -102,8 +102,15 @@ def _boom_rate_per_player(weekly: pd.DataFrame, *, value_col: str = "share") -> 
     """`weekly` must already be filtered to the trailing window and the desired role/pool --
     columns `week, player_id, player_name, team, <value_col>`. One output row per `player_id`:
     `sample_size` (trailing weeks with recorded volume), `raw_value` (boom rate, `None` below
-    `MIN_TRAILING_WEEKS`). A player whose trailing median is exactly 0 gets `raw_value=0.0`
-    (no meaningful "spike ratio" over a zero baseline), not a division error.
+    `MIN_TRAILING_WEEKS`).
+
+    A player whose trailing median is exactly 0 can't be measured against "1.35x of zero" -- for
+    those players, ANY week with real (nonzero) involvement counts as a boom relative to their own
+    zero baseline, rather than flatly assigning `raw_value=0.0` regardless of how many real spike
+    weeks they actually had (Model Analytics Expert's required fix, ADR-0028 Component B
+    interpretation round: the flat-0.0 version pinned a large, non-random slice of a sparse-volume
+    population -- e.g. red-zone touches, common post-zero-fill -- to zero regardless of real
+    boom weeks, exactly the boom/bust players a boom-rate signal exists to catch).
     """
     rows = []
     for player_id, group in weekly.groupby("player_id", observed=True):
@@ -117,10 +124,10 @@ def _boom_rate_per_player(weekly: pd.DataFrame, *, value_col: str = "share") -> 
             continue
         median = group[value_col].median()
         if median <= 0:
-            raw_value = 0.0
+            boom_weeks = int((group[value_col] > 0).sum())
         else:
             boom_weeks = int((group[value_col] > BOOM_THRESHOLD * median).sum())
-            raw_value = boom_weeks / sample_size
+        raw_value = boom_weeks / sample_size
         rows.append(
             {"player_id": player_id, "player_name": player_name, "team": team, "sample_size": sample_size, "raw_value": raw_value}
         )

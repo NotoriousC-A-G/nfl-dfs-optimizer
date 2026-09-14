@@ -213,6 +213,37 @@ def test_red_zone_ceiling_signals_zero_fills_real_shutout_weeks_not_team_no_redz
     assert rbf.raw_value is not None
 
 
+def test_red_zone_ceiling_signals_zero_median_still_credits_real_spike_weeks():
+    # Model Analytics Expert's required fix (ADR-0028 Component B interpretation round): a player
+    # whose trailing MEDIAN share is exactly 0 (common post-zero-fill, since red-zone involvement
+    # is sparse) must not have every real spike week silently discarded down to a flat 0.0 boom
+    # rate -- any real nonzero week counts as a boom relative to a genuine zero baseline.
+    rows = []
+    play_id = 1
+    # Weeks 1 and 3: RBH gets both of the team's 2 RZ carries (a real spike, share=1.0).
+    for week in (1, 3):
+        rows += _rush(week, "GB", "RBH", "Runner H", 2, play_id, yardline_100=10)
+        play_id += 2
+        rows += _rush(week, "GB", "RBH", "Runner H", 3, play_id, yardline_100=45)  # overall volume
+        play_id += 3
+    # Weeks 2, 4, 5: RBH has overall volume but zero RZ touches; RBI takes the team's RZ carries,
+    # so the team DID reach the red zone -- these are real, zero-filled shutout weeks for RBH.
+    for week in (2, 4, 5):
+        rows += _rush(week, "GB", "RBH", "Runner H", 3, play_id, yardline_100=45)
+        play_id += 3
+        rows += _rush(week, "GB", "RBI", "Runner I", 2, play_id, yardline_100=10)
+        play_id += 2
+
+    signals = red_zone_ceiling_signals(pd.DataFrame(rows), target_week=6, role=ROLE_RB)
+    rbh = next(s for s in signals if s.player_id == "RBH")
+
+    # Trailing shares: [1.0, 0.0, 1.0, 0.0, 0.0] -- median is exactly 0.0. The two real 1.0 spike
+    # weeks must still be credited (2/5 = 0.4), not flattened to 0.0 just because the median sits
+    # at zero.
+    assert rbh.sample_size == 5
+    assert rbh.raw_value == pytest.approx(0.4)
+
+
 # --------------------------------------------------------------------------------------------
 # adot_ceiling_signals
 # --------------------------------------------------------------------------------------------

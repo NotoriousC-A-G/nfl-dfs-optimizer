@@ -16,6 +16,20 @@ docstring for the full method. Two things specific to Component B:
    underlying event," the same shape of question ADR-0005 already resolved for pass-protection/
    coverage.
 
+**Interpretation-round follow-up (also already fixed before this script was rerun):** the first
+pass of this backtest surfaced a real, negative, statistically-significant relationship for WR
+that neither expert expected. The Model Analytics Expert traced part of it to a second bug in
+`_boom_rate_per_player`'s zero-median branch -- it used to flatly assign `raw_value=0.0` whenever
+a player's trailing MEDIAN share was exactly 0, which (after the zero-fill above) silently
+discarded real spike weeks for any player with a sub-50%-of-weeks red-zone involvement rate,
+exactly the boom/bust players this signal exists to catch. Fixed: a zero-median player's real
+nonzero weeks now count as booms relative to their own zero baseline. This script also now
+reports the fraction of each role's population landing at exactly `raw_value=0.0` (to see how much
+mass that branch still legitimately produces post-fix) and splits the WR regression by a trailing
+team-red-zone-volume tercile, to test the Model Analytics Expert's other named concern: that a
+small, noisy denominator (team red-zone play counts are often single digits) could itself produce
+a systematic negative bias independent of any real role-security signal.
+
 NOT part of `pytest` -- a one-time live-data research pass, run by hand:
 
     PYTHONPATH=. .venv/bin/python scripts/ceiling_red_zone_backtest.py
@@ -30,7 +44,7 @@ import numpy as np
 import pandas as pd
 
 from nfl_dfs.ceiling.signals import red_zone_ceiling_signals, role_share_ceiling_signals
-from nfl_dfs.ingestion.usage_share import ROLE_RB, ROLE_WR
+from nfl_dfs.ingestion.usage_share import ROLE_RB, ROLE_WR, aggregate_team_week_volume_red_zone
 from scripts.ceiling_role_share_backtest import (
     BOOM_OUTCOME_MULTIPLE,
     MAX_TARGET_WEEK,
@@ -61,6 +75,11 @@ def main() -> None:
         weekly["dk_points"] = weekly.apply(dk_points_row, axis=1)
         max_week_this_season = int(weekly["week"].max())
 
+        # Model Analytics Expert's volume-tier check: team-level trailing red-zone play counts,
+        # precomputed once per season so the small-denominator/quantization hypothesis can be
+        # tested without re-aggregating pbp per target_week.
+        team_rz_volume = aggregate_team_week_volume_red_zone(pbp)
+
         for target_week in range(MIN_TARGET_WEEK, min(MAX_TARGET_WEEK, max_week_this_season + 1)):
             trailing_weekly = weekly[weekly["week"] < target_week]
             actual_weekly = weekly[weekly["week"] == target_week]
@@ -68,10 +87,13 @@ def main() -> None:
                 continue
             trailing_median = trailing_weekly.groupby("player_id")["dk_points"].median()
             actual_points = actual_weekly.set_index("player_id")["dk_points"]
+            trailing_team_rz = team_rz_volume[team_rz_volume["week"] < target_week]
 
             for role in (ROLE_RB, ROLE_WR):
                 b_signals = red_zone_ceiling_signals(pbp, target_week, role)
                 a_signals = {s.player_id: s for s in role_share_ceiling_signals(pbp, target_week, role)}
+                volume_col = "team_rush_attempts" if role == ROLE_RB else "team_targets"
+                trailing_team_rz_avg = trailing_team_rz.groupby("team")[volume_col].mean()
 
                 for signal in b_signals:
                     a_signal = a_signals.get(signal.player_id)
@@ -101,6 +123,8 @@ def main() -> None:
                             "shrunk_z": signal.shrunk_z_score,
                             "boom": boom,
                             "relative_performance": actual / median,
+                            "raw_value": signal.raw_value,
+                            "team_rz_volume": trailing_team_rz_avg.get(signal.team, float("nan")),
                         }
                     )
         print(f"  {len(all_pairs)} cumulative (signal, outcome) pairs so far, {len(ab_pairs)} A/B pairs")
@@ -110,6 +134,13 @@ def main() -> None:
 
     for role in (ROLE_RB, ROLE_WR):
         role_df = df[df["role"] == role].copy()
+
+        # Model Analytics Expert's required check #1: how much of the population lands at exactly
+        # raw_value=0.0 post-fix (a real "zero real spike weeks" result now, not the old flat-pin
+        # artifact) -- reported for transparency, not because a large fraction is itself wrong.
+        zero_frac = (role_df["raw_value"] == 0.0).mean()
+        print(f"--- {role} role: {zero_frac:.1%} of the population has raw_value == 0.0 (post zero-median fix) ---")
+
         role_df["decile"] = pd.qcut(role_df["shrunk_z"], N_DECILES, labels=False, duplicates="drop")
         summary = role_df.groupby("decile").agg(
             n=("boom", "size"), boom_rate=("boom", "mean"), mean_shrunk_z=("shrunk_z", "mean")
@@ -133,7 +164,30 @@ def main() -> None:
             f"-- log(relative_performance) ~ shrunk_z: "
             f"slope={log_slope:.4f}  SE={log_se:.4f}  95% CI=[{log_ci[0]:.4f}, {log_ci[1]:.4f}]  R2={log_r2:.3f}"
         )
-        print(f"  --> exp(slope) = {np.exp(log_slope):.4f}\n")
+        print(f"  --> exp(slope) = {np.exp(log_slope):.4f}")
+
+        # Model Analytics Expert's required check #2 (WR only, where the negative finding was):
+        # split by a tercile of trailing team red-zone play volume -- tests whether the negative
+        # relationship is a small-denominator/quantization artifact (concentrated in the low-volume
+        # tier) or survives in the high-volume, less-quantized tier (evidence for a real effect).
+        if role == ROLE_WR:
+            tiered = positive.dropna(subset=["team_rz_volume"]).copy()
+            tiered["volume_tier"] = pd.qcut(tiered["team_rz_volume"], 3, labels=["low", "mid", "high"], duplicates="drop")
+            print("  Volume-tier split (tercile of trailing team red-zone plays):")
+            for tier in ["low", "mid", "high"]:
+                tier_df = tiered[tiered["volume_tier"] == tier]
+                if len(tier_df) < 30:
+                    print(f"    {tier}: n={len(tier_df)} too small to fit")
+                    continue
+                t_log_perf = np.log(tier_df["relative_performance"].to_numpy())
+                t_z = tier_df["shrunk_z"].to_numpy()
+                t_slope, t_r2, t_se, t_ci = _linear_fit_with_se(t_z, t_log_perf)
+                mean_vol = tier_df["team_rz_volume"].mean()
+                print(
+                    f"    {tier:>4} (mean trailing team RZ volume={mean_vol:.1f}, n={len(tier_df)}): "
+                    f"slope={t_slope:.4f}  SE={t_se:.4f}  95% CI=[{t_ci[0]:.4f}, {t_ci[1]:.4f}]  R2={t_r2:.3f}"
+                )
+        print()
 
     # Model Analytics Expert's required A/B correlation check.
     ab_df = pd.DataFrame(ab_pairs)

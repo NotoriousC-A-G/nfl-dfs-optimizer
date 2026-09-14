@@ -242,10 +242,44 @@ relationship (CI=[-0.1380, -0.0824], fairly monotonic across deciles, R²=0.437 
 -- a red-zone-share spike predicts *worse* subsequent relative performance for WR, the opposite
 direction from Component A.
 
-Sent to both experts for interpretation (in progress) rather than resolved unilaterally: is this a
-remaining construction artifact (small-denominator red-zone-share noise, the zero-fill's effect on
-sample composition) or a real football finding (e.g., red-zone share may be too low-frequency an
-event to support a boom-rate framing the way overall role share does, or WR red-zone spikes may
-reflect a one-off matchup exploit a defense adjusts to rather than a durable role signal)? No
-`scale_B` proposed or implemented pending that interpretation -- this update documents the honest,
-surprising result as found, not a conclusion.
+Sent to both experts for interpretation. **Result: both experts converged on "no live multiplier
+ships from Component B this round," from two different angles.** The Fantasy Football Expert read
+the negative WR result as real and football-explicable (a red-zone-share spike is usually a
+single-game matchup exploit a defense scouts and shuts down the next week -- role insecurity, not
+growth -- while RB's role is more scripted and less matchup-dependent). The Model Analytics Expert
+found a second, real construction bug independent of that football question: `_boom_rate_per_player`'s
+zero-median branch was flatly pinning `raw_value=0.0` for any player whose trailing median share
+was exactly 0 -- common post-zero-fill for a sparse statistic like red-zone share -- discarding real
+spike weeks for exactly the boom/bust players this component exists to catch. They also flagged
+that a negative `scale_i` is architecturally impossible in `CeilingMultiplier`'s one-sided,
+floored-at-1.0 form regardless of whether the WR finding is real (it would just floor back to 1.0
+for the only players it'd ever fire on) -- so WR ships nothing either way, settling that half
+immediately.
+
+### The two required reruns, and what they changed
+
+Fixed the zero-median branch (a zero-median player's real nonzero weeks now count as booms against
+their own zero baseline, `_boom_rate_per_player`, regression-tested) and reran the full 5-season
+backtest with a new required diagnostic: a WR volume-tier split (tercile of trailing team red-zone
+plays) to test whether the negative finding was small-denominator noise.
+
+**RB flipped from null to a real, corroborated (if still borderline) positive result:**
+slope -0.0429→+0.0519, 95% CI [-0.0958,0.0101]→[-0.0024,0.1062] (barely clears zero), decile R²
+0.015→0.523, and -- the most telling change -- **A/B correlation jumped from 0.042 to 0.248**,
+landing much closer to both experts' original stated prior ("moderate positive, most players move
+together") than the pre-fix near-zero result did. The zero-pinning bug was genuinely suppressing a
+real RB signal.
+
+**WR's negative finding survived the volume-tier check cleanly:** slope -0.1102→-0.0784 (magnitude
+shrank, direction/significance held, CI=[-0.1099,-0.0469]), and critically the negative slope holds
+in ALL THREE volume tiers including the high-volume/least-quantized one (slope=-0.0684,
+CI=[-0.1246,-0.0121], mean 6.0 trailing red-zone plays) -- ruling out the Model Analytics Expert's
+own construction-artifact hypothesis as the primary driver and corroborating the Fantasy Football
+Expert's football-mechanism read instead. WR's A/B correlation stayed near zero even post-fix
+(-0.0175), unlike RB's now-real 0.248 -- these really do look like two different kinds of signal
+for the two roles.
+
+Final calibration verdict on the improved RB result is in progress with both experts (a real but
+technically-still-zero-touching CI is a genuine judgment call, the same shape of question Component
+A's WR-plateau watch item raised) -- this update will be revised again once that lands, rather than
+called final here.
