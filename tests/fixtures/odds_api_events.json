@@ -1,0 +1,84 @@
+[
+  {
+    "id": "evt1",
+    "sport_key": "americanfootball_nfl",
+    "sport_title": "NFL",
+    "commence_time": "2026-09-13T17:00:00Z",
+    "home_team": "Jacksonville Jaguars",
+    "away_team": "Cleveland Browns",
+    "bookmakers": [
+      {
+        "key": "draftkings",
+        "title": "DraftKings",
+        "last_update": "2026-09-13T16:00:00Z",
+        "markets": [
+          {
+            "key": "spreads",
+            "last_update": "2026-09-13T16:00:00Z",
+            "outcomes": [
+              {"name": "Cleveland Browns", "price": -110, "point": 3.5},
+              {"name": "Jacksonville Jaguars", "price": -110, "point": -3.5}
+            ]
+          },
+          {
+            "key": "totals",
+            "last_update": "2026-09-13T16:00:00Z",
+            "outcomes": [
+              {"name": "Over", "price": -110, "point": 44.0},
+              {"name": "Under", "price": -110, "point": 44.0}
+            ]
+          }
+        ]
+      },
+      {
+        "key": "fanduel",
+        "title": "FanDuel",
+        "last_update": "2026-09-13T16:00:00Z",
+        "markets": [
+          {
+            "key": "spreads",
+            "last_update": "2026-09-13T16:00:00Z",
+            "outcomes": [
+              {"name": "Cleveland Browns", "price": -105, "point": 3.0},
+              {"name": "Jacksonville Jaguars", "price": -115, "point": -3.0}
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "id": "evt2",
+    "sport_key": "americanfootball_nfl",
+    "sport_title": "NFL",
+    "commence_time": "2026-09-13T17:00:00Z",
+    "home_team": "Pittsburgh Steelers",
+    "away_team": "Atlanta Falcons",
+    "bookmakers": [
+      {
+        "key": "fanduel",
+        "title": "FanDuel",
+        "last_update": "2026-09-13T16:00:00Z",
+        "markets": [
+          {
+            "key": "spreads",
+            "last_update": "2026-09-13T16:00:00Z",
+            "outcomes": [
+              {"name": "Atlanta Falcons", "price": -105, "point": 1.5},
+              {"name": "Pittsburgh Steelers", "price": -115, "point": -1.5}
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "id": "evt3",
+    "sport_key": "americanfootball_nfl",
+    "sport_title": "NFL",
+    "commence_time": "2026-09-13T17:00:00Z",
+    "home_team": "AFC All-Stars",
+    "away_team": "NFC All-Stars",
+    "bookmakers": []
+  }
+]

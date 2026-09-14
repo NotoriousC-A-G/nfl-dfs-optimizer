@@ -1,0 +1,228 @@
+{
+  "Contests": [
+    {
+      "uc": 0,
+      "ec": 0,
+      "mec": 150,
+      "fpp": 0,
+      "s": 1,
+      "n": "NFL $500K Afternoon Only Rush [$100K to 1st] (Afternoon Only)",
+      "attr": {
+        "IsGuaranteed": "true",
+        "IsStarred": "true"
+      },
+      "nt": 22808,
+      "m": 32679,
+      "a": 18,
+      "po": 500000.0,
+      "pd": {
+        "Cash": "$500,000"
+      },
+      "tix": false,
+      "sdstring": "Sun 4:25PM",
+      "sd": "/Date(1789331100000)/",
+      "id": 195469936,
+      "tmpl": 964674,
+      "pt": 1,
+      "so": -99999999,
+      "fwt": false,
+      "isOwner": false,
+      "startTimeType": 0,
+      "dg": 153070,
+      "ulc": 0,
+      "cs": 1,
+      "gameType": "Classic",
+      "gameTypeId": 1,
+      "ssd": null,
+      "cso": 0,
+      "ir": 0,
+      "rl": false,
+      "rlc": 0,
+      "rll": 99999,
+      "sa": true,
+      "freeWithCrowns": false,
+      "crownAmount": 9900,
+      "isBonusFinalized": false,
+      "freeWithCrownCash": false,
+      "isSnakeDraft": false,
+      "payoutDescriptionMetadata": [
+        {
+          "PayoutDescriptionType": 1,
+          "Order": 1,
+          "PayoutDescription": "$500,000",
+          "Quantity": 1,
+          "Value": 0
+        }
+      ],
+      "crownsAwarded": 0
+    },
+    {
+      "uc": 0,
+      "ec": 0,
+      "mec": 150,
+      "fpp": 0,
+      "s": 1,
+      "n": "NFL $125K Showdown Special [$25K to 1st] (WAS @ PHI)",
+      "attr": {
+        "IsGuaranteed": "true",
+        "IsStarred": "true"
+      },
+      "nt": 3781,
+      "m": 8169,
+      "a": 18,
+      "po": 125000.0,
+      "pd": {
+        "Cash": "$125,000"
+      },
+      "tix": false,
+      "sdstring": "Sun 4:25PM",
+      "sd": "/Date(1789331100000)/",
+      "id": 195470031,
+      "tmpl": 971456,
+      "pt": 1,
+      "so": -99999995,
+      "fwt": false,
+      "isOwner": false,
+      "startTimeType": 0,
+      "dg": 153084,
+      "ulc": 0,
+      "cs": 1,
+      "gameType": "Showdown Captain Mode",
+      "gameTypeId": 96,
+      "ssd": null,
+      "cso": 4,
+      "ir": 0,
+      "rl": false,
+      "rlc": 0,
+      "rll": 99999,
+      "sa": true,
+      "freeWithCrowns": false,
+      "crownAmount": 9900,
+      "isBonusFinalized": false,
+      "freeWithCrownCash": false,
+      "isSnakeDraft": false,
+      "payoutDescriptionMetadata": [
+        {
+          "PayoutDescriptionType": 1,
+          "Order": 1,
+          "PayoutDescription": "$125,000",
+          "Quantity": 1,
+          "Value": 0
+        }
+      ],
+      "crownsAwarded": 0
+    },
+    {
+      "uc": 0,
+      "ec": 0,
+      "mec": 3,
+      "fpp": 0,
+      "s": 1,
+      "n": "NFL $30K Wildcat [$10K to 1st] (Primetime)",
+      "attr": {
+        "IsGuaranteed": "true",
+        "IsStarred": "true"
+      },
+      "nt": 11,
+      "m": 100,
+      "a": 333,
+      "po": 30000.0,
+      "pd": {
+        "Cash": "$30,000"
+      },
+      "tix": false,
+      "sdstring": "Sun 8:20PM",
+      "sd": "/Date(1789345200000)/",
+      "id": 195526201,
+      "tmpl": 320992,
+      "pt": 1,
+      "so": -99999941,
+      "fwt": false,
+      "isOwner": false,
+      "startTimeType": 0,
+      "dg": 153071,
+      "ulc": 0,
+      "cs": 1,
+      "gameType": "Classic",
+      "gameTypeId": 1,
+      "ssd": null,
+      "cso": 58,
+      "ir": 0,
+      "rl": false,
+      "rlc": 0,
+      "rll": 99999,
+      "sa": true,
+      "freeWithCrowns": false,
+      "crownAmount": 183150,
+      "isBonusFinalized": false,
+      "freeWithCrownCash": false,
+      "isSnakeDraft": false,
+      "payoutDescriptionMetadata": [
+        {
+          "PayoutDescriptionType": 1,
+          "Order": 1,
+          "PayoutDescription": "$30,000",
+          "Quantity": 1,
+          "Value": 0
+        }
+      ],
+      "crownsAwarded": 0
+    },
+    {
+      "uc": 0,
+      "ec": 0,
+      "mec": 150,
+      "fpp": 0,
+      "s": 1,
+      "n": "NFL $30K Flea Flicker [$10K to 1st] (Mon-Thu)",
+      "attr": {
+        "IsGuaranteed": "true",
+        "IsStarred": "true"
+      },
+      "nt": 176,
+      "m": 7134,
+      "a": 5,
+      "po": 30000.0,
+      "pd": {
+        "Cash": "$30,000"
+      },
+      "tix": false,
+      "sdstring": "Mon 8:15PM",
+      "sd": "/Date(1789431300000)/",
+      "id": 195526303,
+      "tmpl": 366722,
+      "pt": 1,
+      "so": -99999656,
+      "fwt": false,
+      "isOwner": false,
+      "startTimeType": 0,
+      "dg": 153109,
+      "ulc": 0,
+      "cs": 1,
+      "gameType": "Classic",
+      "gameTypeId": 1,
+      "ssd": null,
+      "cso": 343,
+      "ir": 0,
+      "rl": false,
+      "rlc": 0,
+      "rll": 99999,
+      "sa": true,
+      "freeWithCrowns": false,
+      "crownAmount": 2750,
+      "isBonusFinalized": false,
+      "freeWithCrownCash": false,
+      "isSnakeDraft": false,
+      "payoutDescriptionMetadata": [
+        {
+          "PayoutDescriptionType": 1,
+          "Order": 1,
+          "PayoutDescription": "$30,000",
+          "Quantity": 1,
+          "Value": 0
+        }
+      ],
+      "crownsAwarded": 0
+    }
+  ]
+}

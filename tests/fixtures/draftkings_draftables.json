@@ -1,0 +1,1321 @@
+{
+  "draftables": [
+    {
+      "draftableId": 44096027,
+      "firstName": "Justin",
+      "lastName": "Jefferson",
+      "displayName": "Justin Jefferson",
+      "shortName": "Ju. Jefferson",
+      "playerId": 1069535,
+      "playerDkId": 485454,
+      "position": "WR",
+      "rosterSlotId": 68,
+      "salary": 7300,
+      "status": "None",
+      "isSwappable": true,
+      "isDisabled": false,
+      "newsStatus": "None",
+      "playerImage50": "https://dkn.gs/sports/images/nfl/players/50/485454.png",
+      "playerImage160": "https://dkn.gs/sports/images/nfl/players/160/485454.png",
+      "altPlayerImage50": "",
+      "altPlayerImage160": "",
+      "competition": {
+        "competitionId": 6175964,
+        "name": "GB @ MIN",
+        "nameDisplay": [
+          {
+            "value": "GB"
+          },
+          {
+            "value": " @ "
+          },
+          {
+            "value": "MIN",
+            "isEmphasized": true
+          }
+        ],
+        "startTime": "2026-09-13T20:25:00.0000000Z"
+      },
+      "competitions": [
+        {
+          "competitionId": 6175964,
+          "name": "GB @ MIN",
+          "nameDisplay": [
+            {
+              "value": "GB"
+            },
+            {
+              "value": " @ "
+            },
+            {
+              "value": "MIN",
+              "isEmphasized": true
+            }
+          ],
+          "startTime": "2026-09-13T20:25:00.0000000Z"
+        }
+      ],
+      "draftStatAttributes": [
+        {
+          "id": 90,
+          "value": "12.4",
+          "sortValue": "12.4"
+        },
+        {
+          "id": -2,
+          "value": "18th",
+          "sortValue": "18",
+          "quality": "Medium"
+        }
+      ],
+      "playerAttributes": [
+        {
+          "name": "ByeWeek",
+          "value": "6"
+        }
+      ],
+      "teamLeagueSeasonAttributes": [
+        {
+          "attributeId": 1,
+          "description": "Bye",
+          "value": "6"
+        }
+      ],
+      "playerGameAttributes": [],
+      "teamId": 347,
+      "teamAbbreviation": "MIN",
+      "draftAlerts": [],
+      "playerGameHash": "1069535-6175964",
+      "externalRequirements": {}
+    },
+    {
+      "draftableId": 44096028,
+      "firstName": "Justin",
+      "lastName": "Jefferson",
+      "displayName": "Justin Jefferson",
+      "shortName": "Ju. Jefferson",
+      "playerId": 1069535,
+      "playerDkId": 485454,
+      "position": "WR",
+      "rosterSlotId": 70,
+      "salary": 7300,
+      "status": "None",
+      "isSwappable": true,
+      "isDisabled": false,
+      "newsStatus": "None",
+      "playerImage50": "https://dkn.gs/sports/images/nfl/players/50/485454.png",
+      "playerImage160": "https://dkn.gs/sports/images/nfl/players/160/485454.png",
+      "altPlayerImage50": "",
+      "altPlayerImage160": "",
+      "competition": {
+        "competitionId": 6175964,
+        "name": "GB @ MIN",
+        "nameDisplay": [
+          {
+            "value": "GB"
+          },
+          {
+            "value": " @ "
+          },
+          {
+            "value": "MIN",
+            "isEmphasized": true
+          }
+        ],
+        "startTime": "2026-09-13T20:25:00.0000000Z"
+      },
+      "competitions": [
+        {
+          "competitionId": 6175964,
+          "name": "GB @ MIN",
+          "nameDisplay": [
+            {
+              "value": "GB"
+            },
+            {
+              "value": " @ "
+            },
+            {
+              "value": "MIN",
+              "isEmphasized": true
+            }
+          ],
+          "startTime": "2026-09-13T20:25:00.0000000Z"
+        }
+      ],
+      "draftStatAttributes": [
+        {
+          "id": 90,
+          "value": "12.4",
+          "sortValue": "12.4"
+        },
+        {
+          "id": -2,
+          "value": "18th",
+          "sortValue": "18",
+          "quality": "Medium"
+        }
+      ],
+      "playerAttributes": [
+        {
+          "name": "ByeWeek",
+          "value": "6"
+        }
+      ],
+      "teamLeagueSeasonAttributes": [
+        {
+          "attributeId": 1,
+          "description": "Bye",
+          "value": "6"
+        }
+      ],
+      "playerGameAttributes": [],
+      "teamId": 347,
+      "teamAbbreviation": "MIN",
+      "draftAlerts": [],
+      "playerGameHash": "1069535-6175964",
+      "externalRequirements": {}
+    },
+    {
+      "draftableId": 44095929,
+      "firstName": "De'Von",
+      "lastName": "Achane",
+      "displayName": "De'Von Achane",
+      "shortName": "D. Achane",
+      "playerId": 1231820,
+      "playerDkId": 706555,
+      "position": "RB",
+      "rosterSlotId": 67,
+      "salary": 7000,
+      "status": "None",
+      "isSwappable": true,
+      "isDisabled": false,
+      "newsStatus": "None",
+      "playerImage50": "https://dkn.gs/sports/images/nfl/players/50/706555.png",
+      "playerImage160": "https://dkn.gs/sports/images/nfl/players/160/706555.png",
+      "altPlayerImage50": "",
+      "altPlayerImage160": "",
+      "competition": {
+        "competitionId": 6176090,
+        "name": "MIA @ LV",
+        "nameDisplay": [
+          {
+            "value": "MIA",
+            "isEmphasized": true
+          },
+          {
+            "value": " @ "
+          },
+          {
+            "value": "LV"
+          }
+        ],
+        "startTime": "2026-09-13T20:25:00.0000000Z"
+      },
+      "competitions": [
+        {
+          "competitionId": 6176090,
+          "name": "MIA @ LV",
+          "nameDisplay": [
+            {
+              "value": "MIA",
+              "isEmphasized": true
+            },
+            {
+              "value": " @ "
+            },
+            {
+              "value": "LV"
+            }
+          ],
+          "startTime": "2026-09-13T20:25:00.0000000Z"
+        }
+      ],
+      "draftStatAttributes": [
+        {
+          "id": 90,
+          "value": "20.9",
+          "sortValue": "20.9"
+        },
+        {
+          "id": -2,
+          "value": "21st",
+          "sortValue": "21",
+          "quality": "Medium"
+        }
+      ],
+      "playerAttributes": [
+        {
+          "name": "ByeWeek",
+          "value": "6"
+        }
+      ],
+      "teamLeagueSeasonAttributes": [
+        {
+          "attributeId": 1,
+          "description": "Bye",
+          "value": "6"
+        }
+      ],
+      "playerGameAttributes": [],
+      "teamId": 345,
+      "teamAbbreviation": "MIA",
+      "draftAlerts": [],
+      "playerGameHash": "1231820-6176090",
+      "externalRequirements": {}
+    },
+    {
+      "draftableId": 44095930,
+      "firstName": "De'Von",
+      "lastName": "Achane",
+      "displayName": "De'Von Achane",
+      "shortName": "D. Achane",
+      "playerId": 1231820,
+      "playerDkId": 706555,
+      "position": "RB",
+      "rosterSlotId": 70,
+      "salary": 7000,
+      "status": "None",
+      "isSwappable": true,
+      "isDisabled": false,
+      "newsStatus": "None",
+      "playerImage50": "https://dkn.gs/sports/images/nfl/players/50/706555.png",
+      "playerImage160": "https://dkn.gs/sports/images/nfl/players/160/706555.png",
+      "altPlayerImage50": "",
+      "altPlayerImage160": "",
+      "competition": {
+        "competitionId": 6176090,
+        "name": "MIA @ LV",
+        "nameDisplay": [
+          {
+            "value": "MIA",
+            "isEmphasized": true
+          },
+          {
+            "value": " @ "
+          },
+          {
+            "value": "LV"
+          }
+        ],
+        "startTime": "2026-09-13T20:25:00.0000000Z"
+      },
+      "competitions": [
+        {
+          "competitionId": 6176090,
+          "name": "MIA @ LV",
+          "nameDisplay": [
+            {
+              "value": "MIA",
+              "isEmphasized": true
+            },
+            {
+              "value": " @ "
+            },
+            {
+              "value": "LV"
+            }
+          ],
+          "startTime": "2026-09-13T20:25:00.0000000Z"
+        }
+      ],
+      "draftStatAttributes": [
+        {
+          "id": 90,
+          "value": "20.9",
+          "sortValue": "20.9"
+        },
+        {
+          "id": -2,
+          "value": "21st",
+          "sortValue": "21",
+          "quality": "Medium"
+        }
+      ],
+      "playerAttributes": [
+        {
+          "name": "ByeWeek",
+          "value": "6"
+        }
+      ],
+      "teamLeagueSeasonAttributes": [
+        {
+          "attributeId": 1,
+          "description": "Bye",
+          "value": "6"
+        }
+      ],
+      "playerGameAttributes": [],
+      "teamId": 345,
+      "teamAbbreviation": "MIA",
+      "draftAlerts": [],
+      "playerGameHash": "1231820-6176090",
+      "externalRequirements": {}
+    },
+    {
+      "draftableId": 44095931,
+      "firstName": "Saquon",
+      "lastName": "Barkley",
+      "displayName": "Saquon Barkley",
+      "shortName": "S. Barkley",
+      "playerId": 883302,
+      "playerDkId": 18972,
+      "position": "RB",
+      "rosterSlotId": 67,
+      "salary": 6900,
+      "status": "None",
+      "isSwappable": true,
+      "isDisabled": false,
+      "newsStatus": "None",
+      "playerImage50": "https://dkn.gs/sports/images/nfl/players/50/18972.png",
+      "playerImage160": "https://dkn.gs/sports/images/nfl/players/160/18972.png",
+      "altPlayerImage50": "",
+      "altPlayerImage160": "",
+      "competition": {
+        "competitionId": 6175988,
+        "name": "WAS @ PHI",
+        "nameDisplay": [
+          {
+            "value": "WAS"
+          },
+          {
+            "value": " @ "
+          },
+          {
+            "value": "PHI",
+            "isEmphasized": true
+          }
+        ],
+        "startTime": "2026-09-13T20:25:00.0000000Z"
+      },
+      "competitions": [
+        {
+          "competitionId": 6175988,
+          "name": "WAS @ PHI",
+          "nameDisplay": [
+            {
+              "value": "WAS"
+            },
+            {
+              "value": " @ "
+            },
+            {
+              "value": "PHI",
+              "isEmphasized": true
+            }
+          ],
+          "startTime": "2026-09-13T20:25:00.0000000Z"
+        }
+      ],
+      "draftStatAttributes": [
+        {
+          "id": 90,
+          "value": "15.4",
+          "sortValue": "15.4"
+        },
+        {
+          "id": -2,
+          "value": "28th",
+          "sortValue": "28",
+          "quality": "High"
+        }
+      ],
+      "playerAttributes": [
+        {
+          "name": "ByeWeek",
+          "value": "10"
+        }
+      ],
+      "teamLeagueSeasonAttributes": [
+        {
+          "attributeId": 1,
+          "description": "Bye",
+          "value": "10"
+        }
+      ],
+      "playerGameAttributes": [],
+      "teamId": 354,
+      "teamAbbreviation": "PHI",
+      "draftAlerts": [],
+      "playerGameHash": "883302-6175988",
+      "externalRequirements": {}
+    },
+    {
+      "draftableId": 44096175,
+      "firstName": "Brock",
+      "lastName": "Bowers",
+      "displayName": "Brock Bowers",
+      "shortName": "B. Bowers",
+      "playerId": 1285917,
+      "playerDkId": 781453,
+      "position": "TE",
+      "rosterSlotId": 69,
+      "salary": 6900,
+      "status": "OUT",
+      "isSwappable": true,
+      "isDisabled": false,
+      "newsStatus": "Recent",
+      "playerImage50": "https://dkn.gs/sports/images/nfl/players/50/781453.png",
+      "playerImage160": "https://dkn.gs/sports/images/nfl/players/160/781453.png",
+      "altPlayerImage50": "",
+      "altPlayerImage160": "",
+      "competition": {
+        "competitionId": 6176090,
+        "name": "MIA @ LV",
+        "nameDisplay": [
+          {
+            "value": "MIA"
+          },
+          {
+            "value": " @ "
+          },
+          {
+            "value": "LV",
+            "isEmphasized": true
+          }
+        ],
+        "startTime": "2026-09-13T20:25:00.0000000Z"
+      },
+      "competitions": [
+        {
+          "competitionId": 6176090,
+          "name": "MIA @ LV",
+          "nameDisplay": [
+            {
+              "value": "MIA"
+            },
+            {
+              "value": " @ "
+            },
+            {
+              "value": "LV",
+              "isEmphasized": true
+            }
+          ],
+          "startTime": "2026-09-13T20:25:00.0000000Z"
+        }
+      ],
+      "draftStatAttributes": [
+        {
+          "id": 90,
+          "value": "15.2",
+          "sortValue": "15.2"
+        },
+        {
+          "id": -2,
+          "value": "30th",
+          "sortValue": "30",
+          "quality": "High"
+        }
+      ],
+      "playerAttributes": [
+        {
+          "name": "ByeWeek",
+          "value": "13"
+        }
+      ],
+      "teamLeagueSeasonAttributes": [
+        {
+          "attributeId": 1,
+          "description": "Bye",
+          "value": "13"
+        }
+      ],
+      "playerGameAttributes": [],
+      "teamId": 341,
+      "teamAbbreviation": "LV",
+      "draftAlerts": [],
+      "playerGameHash": "1285917-6176090",
+      "externalRequirements": {}
+    },
+    {
+      "draftableId": 44096176,
+      "firstName": "Brock",
+      "lastName": "Bowers",
+      "displayName": "Brock Bowers",
+      "shortName": "B. Bowers",
+      "playerId": 1285917,
+      "playerDkId": 781453,
+      "position": "TE",
+      "rosterSlotId": 70,
+      "salary": 6900,
+      "status": "OUT",
+      "isSwappable": true,
+      "isDisabled": false,
+      "newsStatus": "Recent",
+      "playerImage50": "https://dkn.gs/sports/images/nfl/players/50/781453.png",
+      "playerImage160": "https://dkn.gs/sports/images/nfl/players/160/781453.png",
+      "altPlayerImage50": "",
+      "altPlayerImage160": "",
+      "competition": {
+        "competitionId": 6176090,
+        "name": "MIA @ LV",
+        "nameDisplay": [
+          {
+            "value": "MIA"
+          },
+          {
+            "value": " @ "
+          },
+          {
+            "value": "LV",
+            "isEmphasized": true
+          }
+        ],
+        "startTime": "2026-09-13T20:25:00.0000000Z"
+      },
+      "competitions": [
+        {
+          "competitionId": 6176090,
+          "name": "MIA @ LV",
+          "nameDisplay": [
+            {
+              "value": "MIA"
+            },
+            {
+              "value": " @ "
+            },
+            {
+              "value": "LV",
+              "isEmphasized": true
+            }
+          ],
+          "startTime": "2026-09-13T20:25:00.0000000Z"
+        }
+      ],
+      "draftStatAttributes": [
+        {
+          "id": 90,
+          "value": "15.2",
+          "sortValue": "15.2"
+        },
+        {
+          "id": -2,
+          "value": "30th",
+          "sortValue": "30",
+          "quality": "High"
+        }
+      ],
+      "playerAttributes": [
+        {
+          "name": "ByeWeek",
+          "value": "13"
+        }
+      ],
+      "teamLeagueSeasonAttributes": [
+        {
+          "attributeId": 1,
+          "description": "Bye",
+          "value": "13"
+        }
+      ],
+      "playerGameAttributes": [],
+      "teamId": 341,
+      "teamAbbreviation": "LV",
+      "draftAlerts": [],
+      "playerGameHash": "1285917-6176090",
+      "externalRequirements": {}
+    },
+    {
+      "draftableId": 44096177,
+      "firstName": "Trey",
+      "lastName": "McBride",
+      "displayName": "Trey McBride",
+      "shortName": "T. McBride",
+      "playerId": 1108161,
+      "playerDkId": 640885,
+      "position": "TE",
+      "rosterSlotId": 69,
+      "salary": 6800,
+      "status": "None",
+      "isSwappable": true,
+      "isDisabled": false,
+      "newsStatus": "None",
+      "playerImage50": "https://dkn.gs/sports/images/nfl/players/50/640885.png",
+      "playerImage160": "https://dkn.gs/sports/images/nfl/players/160/640885.png",
+      "altPlayerImage50": "",
+      "altPlayerImage160": "",
+      "competition": {
+        "competitionId": 6176048,
+        "name": "ARI @ LAC",
+        "nameDisplay": [
+          {
+            "value": "ARI",
+            "isEmphasized": true
+          },
+          {
+            "value": " @ "
+          },
+          {
+            "value": "LAC"
+          }
+        ],
+        "startTime": "2026-09-13T20:25:00.0000000Z"
+      },
+      "competitions": [
+        {
+          "competitionId": 6176048,
+          "name": "ARI @ LAC",
+          "nameDisplay": [
+            {
+              "value": "ARI",
+              "isEmphasized": true
+            },
+            {
+              "value": " @ "
+            },
+            {
+              "value": "LAC"
+            }
+          ],
+          "startTime": "2026-09-13T20:25:00.0000000Z"
+        }
+      ],
+      "draftStatAttributes": [
+        {
+          "id": 90,
+          "value": "19.1",
+          "sortValue": "19.1"
+        },
+        {
+          "id": -2,
+          "value": "5th",
+          "sortValue": "5",
+          "quality": "Low"
+        }
+      ],
+      "playerAttributes": [
+        {
+          "name": "ByeWeek",
+          "value": "14"
+        }
+      ],
+      "teamLeagueSeasonAttributes": [
+        {
+          "attributeId": 1,
+          "description": "Bye",
+          "value": "14"
+        }
+      ],
+      "playerGameAttributes": [],
+      "teamId": 355,
+      "teamAbbreviation": "ARI",
+      "draftAlerts": [],
+      "playerGameHash": "1108161-6176048",
+      "externalRequirements": {}
+    },
+    {
+      "draftableId": 44095902,
+      "firstName": "Jalen",
+      "lastName": "Hurts",
+      "displayName": "Jalen Hurts",
+      "shortName": "J. Hurts",
+      "playerId": 913271,
+      "playerDkId": 479300,
+      "position": "QB",
+      "rosterSlotId": 66,
+      "salary": 6600,
+      "status": "None",
+      "isSwappable": true,
+      "isDisabled": false,
+      "newsStatus": "None",
+      "playerImage50": "https://dkn.gs/sports/images/nfl/players/50/479300.png",
+      "playerImage160": "https://dkn.gs/sports/images/nfl/players/160/479300.png",
+      "altPlayerImage50": "",
+      "altPlayerImage160": "",
+      "competition": {
+        "competitionId": 6175988,
+        "name": "WAS @ PHI",
+        "nameDisplay": [
+          {
+            "value": "WAS"
+          },
+          {
+            "value": " @ "
+          },
+          {
+            "value": "PHI",
+            "isEmphasized": true
+          }
+        ],
+        "startTime": "2026-09-13T20:25:00.0000000Z"
+      },
+      "competitions": [
+        {
+          "competitionId": 6175988,
+          "name": "WAS @ PHI",
+          "nameDisplay": [
+            {
+              "value": "WAS"
+            },
+            {
+              "value": " @ "
+            },
+            {
+              "value": "PHI",
+              "isEmphasized": true
+            }
+          ],
+          "startTime": "2026-09-13T20:25:00.0000000Z"
+        }
+      ],
+      "draftStatAttributes": [
+        {
+          "id": 90,
+          "value": "19.1",
+          "sortValue": "19.1"
+        },
+        {
+          "id": -2,
+          "value": "29th",
+          "sortValue": "29",
+          "quality": "High"
+        }
+      ],
+      "playerAttributes": [
+        {
+          "name": "ByeWeek",
+          "value": "10"
+        }
+      ],
+      "teamLeagueSeasonAttributes": [
+        {
+          "attributeId": 1,
+          "description": "Bye",
+          "value": "10"
+        }
+      ],
+      "playerGameAttributes": [],
+      "teamId": 354,
+      "teamAbbreviation": "PHI",
+      "draftAlerts": [],
+      "playerGameHash": "913271-6175988",
+      "externalRequirements": {}
+    },
+    {
+      "draftableId": 44096029,
+      "firstName": "DeVonta",
+      "lastName": "Smith",
+      "displayName": "DeVonta Smith",
+      "shortName": "D. Smith",
+      "playerId": 1060262,
+      "playerDkId": 545016,
+      "position": "WR",
+      "rosterSlotId": 68,
+      "salary": 6600,
+      "status": "None",
+      "isSwappable": true,
+      "isDisabled": false,
+      "newsStatus": "None",
+      "playerImage50": "https://dkn.gs/sports/images/nfl/players/50/545016.png",
+      "playerImage160": "https://dkn.gs/sports/images/nfl/players/160/545016.png",
+      "altPlayerImage50": "",
+      "altPlayerImage160": "",
+      "competition": {
+        "competitionId": 6175988,
+        "name": "WAS @ PHI",
+        "nameDisplay": [
+          {
+            "value": "WAS"
+          },
+          {
+            "value": " @ "
+          },
+          {
+            "value": "PHI",
+            "isEmphasized": true
+          }
+        ],
+        "startTime": "2026-09-13T20:25:00.0000000Z"
+      },
+      "competitions": [
+        {
+          "competitionId": 6175988,
+          "name": "WAS @ PHI",
+          "nameDisplay": [
+            {
+              "value": "WAS"
+            },
+            {
+              "value": " @ "
+            },
+            {
+              "value": "PHI",
+              "isEmphasized": true
+            }
+          ],
+          "startTime": "2026-09-13T20:25:00.0000000Z"
+        }
+      ],
+      "draftStatAttributes": [
+        {
+          "id": 90,
+          "value": "12.4",
+          "sortValue": "12.4"
+        },
+        {
+          "id": -2,
+          "value": "24th",
+          "sortValue": "24",
+          "quality": "High"
+        }
+      ],
+      "playerAttributes": [
+        {
+          "name": "ByeWeek",
+          "value": "10"
+        }
+      ],
+      "teamLeagueSeasonAttributes": [
+        {
+          "attributeId": 1,
+          "description": "Bye",
+          "value": "10"
+        }
+      ],
+      "playerGameAttributes": [],
+      "teamId": 354,
+      "teamAbbreviation": "PHI",
+      "draftAlerts": [],
+      "playerGameHash": "1060262-6175988",
+      "externalRequirements": {}
+    },
+    {
+      "draftableId": 44095903,
+      "firstName": "Jayden",
+      "lastName": "Daniels",
+      "displayName": "Jayden Daniels",
+      "shortName": "J. Daniels",
+      "playerId": 1161228,
+      "playerDkId": 779695,
+      "position": "QB",
+      "rosterSlotId": 66,
+      "salary": 6500,
+      "status": "None",
+      "isSwappable": true,
+      "isDisabled": false,
+      "newsStatus": "None",
+      "playerImage50": "https://dkn.gs/sports/images/nfl/players/50/779695.png",
+      "playerImage160": "https://dkn.gs/sports/images/nfl/players/160/779695.png",
+      "altPlayerImage50": "",
+      "altPlayerImage160": "",
+      "competition": {
+        "competitionId": 6175988,
+        "name": "WAS @ PHI",
+        "nameDisplay": [
+          {
+            "value": "WAS",
+            "isEmphasized": true
+          },
+          {
+            "value": " @ "
+          },
+          {
+            "value": "PHI"
+          }
+        ],
+        "startTime": "2026-09-13T20:25:00.0000000Z"
+      },
+      "competitions": [
+        {
+          "competitionId": 6175988,
+          "name": "WAS @ PHI",
+          "nameDisplay": [
+            {
+              "value": "WAS",
+              "isEmphasized": true
+            },
+            {
+              "value": " @ "
+            },
+            {
+              "value": "PHI"
+            }
+          ],
+          "startTime": "2026-09-13T20:25:00.0000000Z"
+        }
+      ],
+      "draftStatAttributes": [
+        {
+          "id": 90,
+          "value": "17.0",
+          "sortValue": "17.0"
+        },
+        {
+          "id": -2,
+          "value": "10th",
+          "sortValue": "10",
+          "quality": "Low"
+        }
+      ],
+      "playerAttributes": [
+        {
+          "name": "ByeWeek",
+          "value": "7"
+        }
+      ],
+      "teamLeagueSeasonAttributes": [
+        {
+          "attributeId": 1,
+          "description": "Bye",
+          "value": "7"
+        }
+      ],
+      "playerGameAttributes": [],
+      "teamId": 363,
+      "teamAbbreviation": "WAS",
+      "draftAlerts": [],
+      "playerGameHash": "1161228-6175988",
+      "externalRequirements": {}
+    },
+    {
+      "draftableId": 44095904,
+      "firstName": "Justin",
+      "lastName": "Herbert",
+      "displayName": "Justin Herbert",
+      "shortName": "J. Herbert",
+      "playerId": 910562,
+      "playerDkId": 468527,
+      "position": "QB",
+      "rosterSlotId": 66,
+      "salary": 6100,
+      "status": "None",
+      "isSwappable": true,
+      "isDisabled": false,
+      "newsStatus": "None",
+      "playerImage50": "https://dkn.gs/sports/images/nfl/players/50/468527.png",
+      "playerImage160": "https://dkn.gs/sports/images/nfl/players/160/468527.png",
+      "altPlayerImage50": "",
+      "altPlayerImage160": "",
+      "competition": {
+        "competitionId": 6176048,
+        "name": "ARI @ LAC",
+        "nameDisplay": [
+          {
+            "value": "ARI"
+          },
+          {
+            "value": " @ "
+          },
+          {
+            "value": "LAC",
+            "isEmphasized": true
+          }
+        ],
+        "startTime": "2026-09-13T20:25:00.0000000Z"
+      },
+      "competitions": [
+        {
+          "competitionId": 6176048,
+          "name": "ARI @ LAC",
+          "nameDisplay": [
+            {
+              "value": "ARI"
+            },
+            {
+              "value": " @ "
+            },
+            {
+              "value": "LAC",
+              "isEmphasized": true
+            }
+          ],
+          "startTime": "2026-09-13T20:25:00.0000000Z"
+        }
+      ],
+      "draftStatAttributes": [
+        {
+          "id": 90,
+          "value": "19.1",
+          "sortValue": "19.1"
+        },
+        {
+          "id": -2,
+          "value": "18th",
+          "sortValue": "18",
+          "quality": "Medium"
+        }
+      ],
+      "playerAttributes": [
+        {
+          "name": "ByeWeek",
+          "value": "7"
+        }
+      ],
+      "teamLeagueSeasonAttributes": [
+        {
+          "attributeId": 1,
+          "description": "Bye",
+          "value": "7"
+        }
+      ],
+      "playerGameAttributes": [],
+      "teamId": 357,
+      "teamAbbreviation": "LAC",
+      "draftAlerts": [],
+      "playerGameHash": "910562-6176048",
+      "externalRequirements": {}
+    },
+    {
+      "draftableId": 44096277,
+      "firstName": "Chargers",
+      "lastName": "",
+      "displayName": "Chargers",
+      "shortName": "Chargers",
+      "playerId": 357,
+      "playerDkId": 18461,
+      "position": "DST",
+      "rosterSlotId": 71,
+      "salary": 3500,
+      "status": "None",
+      "isSwappable": true,
+      "isDisabled": false,
+      "playerImage50": "https://dkn.gs/sports/images/nfl/teams/50/18461.png",
+      "playerImage160": "https://dkn.gs/sports/images/nfl/teams/160/18461.png",
+      "altPlayerImage50": "",
+      "altPlayerImage160": "",
+      "competition": {
+        "competitionId": 6176048,
+        "name": "ARI @ LAC",
+        "nameDisplay": [
+          {
+            "value": "ARI"
+          },
+          {
+            "value": " @ "
+          },
+          {
+            "value": "LAC",
+            "isEmphasized": true
+          }
+        ],
+        "startTime": "2026-09-13T20:25:00.0000000Z"
+      },
+      "competitions": [
+        {
+          "competitionId": 6176048,
+          "name": "ARI @ LAC",
+          "nameDisplay": [
+            {
+              "value": "ARI"
+            },
+            {
+              "value": " @ "
+            },
+            {
+              "value": "LAC",
+              "isEmphasized": true
+            }
+          ],
+          "startTime": "2026-09-13T20:25:00.0000000Z"
+        }
+      ],
+      "draftStatAttributes": [
+        {
+          "id": 90,
+          "value": "6.7",
+          "sortValue": "6.7"
+        },
+        {
+          "id": -2,
+          "value": "24th",
+          "sortValue": "24",
+          "quality": "High"
+        }
+      ],
+      "playerAttributes": [
+        {
+          "name": "ByeWeek",
+          "value": "7"
+        }
+      ],
+      "teamLeagueSeasonAttributes": [
+        {
+          "attributeId": 1,
+          "description": "Bye",
+          "value": "7"
+        }
+      ],
+      "playerGameAttributes": [],
+      "teamId": 357,
+      "teamAbbreviation": "LAC",
+      "draftAlerts": [],
+      "playerGameHash": "357-6176048",
+      "externalRequirements": {}
+    },
+    {
+      "draftableId": 44096278,
+      "firstName": "Eagles",
+      "lastName": "",
+      "displayName": "Eagles",
+      "shortName": "Eagles",
+      "playerId": 354,
+      "playerDkId": 18448,
+      "position": "DST",
+      "rosterSlotId": 71,
+      "salary": 3200,
+      "status": "None",
+      "isSwappable": true,
+      "isDisabled": false,
+      "playerImage50": "https://dkn.gs/sports/images/nfl/teams/50/18448.png",
+      "playerImage160": "https://dkn.gs/sports/images/nfl/teams/160/18448.png",
+      "altPlayerImage50": "",
+      "altPlayerImage160": "",
+      "competition": {
+        "competitionId": 6175988,
+        "name": "WAS @ PHI",
+        "nameDisplay": [
+          {
+            "value": "WAS"
+          },
+          {
+            "value": " @ "
+          },
+          {
+            "value": "PHI",
+            "isEmphasized": true
+          }
+        ],
+        "startTime": "2026-09-13T20:25:00.0000000Z"
+      },
+      "competitions": [
+        {
+          "competitionId": 6175988,
+          "name": "WAS @ PHI",
+          "nameDisplay": [
+            {
+              "value": "WAS"
+            },
+            {
+              "value": " @ "
+            },
+            {
+              "value": "PHI",
+              "isEmphasized": true
+            }
+          ],
+          "startTime": "2026-09-13T20:25:00.0000000Z"
+        }
+      ],
+      "draftStatAttributes": [
+        {
+          "id": 90,
+          "value": "7.8",
+          "sortValue": "7.8"
+        },
+        {
+          "id": -2,
+          "value": "15th",
+          "sortValue": "15",
+          "quality": "Medium"
+        }
+      ],
+      "playerAttributes": [
+        {
+          "name": "ByeWeek",
+          "value": "10"
+        }
+      ],
+      "teamLeagueSeasonAttributes": [
+        {
+          "attributeId": 1,
+          "description": "Bye",
+          "value": "10"
+        }
+      ],
+      "playerGameAttributes": [],
+      "teamId": 354,
+      "teamAbbreviation": "PHI",
+      "draftAlerts": [],
+      "playerGameHash": "354-6175988",
+      "externalRequirements": {}
+    },
+    {
+      "draftableId": 44096279,
+      "firstName": "Packers",
+      "lastName": "",
+      "displayName": "Packers",
+      "shortName": "Packers",
+      "playerId": 335,
+      "playerDkId": 18357,
+      "position": "DST",
+      "rosterSlotId": 71,
+      "salary": 3000,
+      "status": "None",
+      "isSwappable": true,
+      "isDisabled": false,
+      "playerImage50": "https://dkn.gs/sports/images/nfl/teams/50/18357.png",
+      "playerImage160": "https://dkn.gs/sports/images/nfl/teams/160/18357.png",
+      "altPlayerImage50": "",
+      "altPlayerImage160": "",
+      "competition": {
+        "competitionId": 6175964,
+        "name": "GB @ MIN",
+        "nameDisplay": [
+          {
+            "value": "GB",
+            "isEmphasized": true
+          },
+          {
+            "value": " @ "
+          },
+          {
+            "value": "MIN"
+          }
+        ],
+        "startTime": "2026-09-13T20:25:00.0000000Z"
+      },
+      "competitions": [
+        {
+          "competitionId": 6175964,
+          "name": "GB @ MIN",
+          "nameDisplay": [
+            {
+              "value": "GB",
+              "isEmphasized": true
+            },
+            {
+              "value": " @ "
+            },
+            {
+              "value": "MIN"
+            }
+          ],
+          "startTime": "2026-09-13T20:25:00.0000000Z"
+        }
+      ],
+      "draftStatAttributes": [
+        {
+          "id": 90,
+          "value": "4.6",
+          "sortValue": "4.6"
+        },
+        {
+          "id": -2,
+          "value": "30th",
+          "sortValue": "30",
+          "quality": "High"
+        }
+      ],
+      "playerAttributes": [
+        {
+          "name": "ByeWeek",
+          "value": "11"
+        }
+      ],
+      "teamLeagueSeasonAttributes": [
+        {
+          "attributeId": 1,
+          "description": "Bye",
+          "value": "11"
+        }
+      ],
+      "playerGameAttributes": [],
+      "teamId": 335,
+      "teamAbbreviation": "GB",
+      "draftAlerts": [],
+      "playerGameHash": "335-6175964",
+      "externalRequirements": {}
+    }
+  ]
+}

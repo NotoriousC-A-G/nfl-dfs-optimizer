@@ -1,0 +1,39 @@
+{
+  "properties": {
+    "periods": [
+      {
+        "number": 1,
+        "startTime": "2026-11-15T12:00:00-05:00",
+        "endTime": "2026-11-15T13:00:00-05:00",
+        "temperature": 32,
+        "temperatureUnit": "F",
+        "probabilityOfPrecipitation": {"unitCode": "wmoUnit:percent", "value": 10},
+        "windSpeed": "10 mph",
+        "windDirection": "NW",
+        "shortForecast": "Mostly Cloudy"
+      },
+      {
+        "number": 2,
+        "startTime": "2026-11-15T13:00:00-05:00",
+        "endTime": "2026-11-15T14:00:00-05:00",
+        "temperature": 30,
+        "temperatureUnit": "F",
+        "probabilityOfPrecipitation": {"unitCode": "wmoUnit:percent", "value": 60},
+        "windSpeed": "15 to 20 mph",
+        "windDirection": "NW",
+        "shortForecast": "Thunderstorm Likely"
+      },
+      {
+        "number": 3,
+        "startTime": "2026-11-15T14:00:00-05:00",
+        "endTime": "2026-11-15T15:00:00-05:00",
+        "temperature": 29,
+        "temperatureUnit": "F",
+        "probabilityOfPrecipitation": {"unitCode": "wmoUnit:percent", "value": 55},
+        "windSpeed": "18 mph",
+        "windDirection": "NW",
+        "shortForecast": "Rain"
+      }
+    ]
+  }
+}

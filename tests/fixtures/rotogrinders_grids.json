@@ -1,0 +1,28 @@
+{
+  "data": {
+    "user": {"id": 12345, "cloud_storage_key": "deadbeef0000111122223333"},
+    "grids": {
+      "3350867": {
+        "access": {"custom_rules_access": true, "late_swap_access": true, "max_lineups": null, "stacks_access": true},
+        "id": 3350867,
+        "name": "NFL DFS Projections",
+        "is_rg": true,
+        "has_access": true,
+        "has_fpts": true,
+        "has_pown": true,
+        "order": 0
+      },
+      "2009661": {
+        "access": {"custom_rules_access": false, "late_swap_access": false, "max_lineups": 0, "stacks_access": false},
+        "id": 2009661,
+        "name": "THE BLITZ Projections",
+        "is_rg": false,
+        "has_access": false,
+        "has_fpts": true,
+        "has_pown": true,
+        "order": 1
+      }
+    }
+  },
+  "status": 200
+}

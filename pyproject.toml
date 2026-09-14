@@ -1,0 +1,31 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "nfl-dfs-optimizer"
+version = "0.1.0"
+description = "DraftKings NFL Classic GPP lineup construction tool"
+requires-python = ">=3.11"
+dependencies = [
+    "pandas>=2.2",
+    "requests>=2.31",
+    "python-dotenv>=1.0",
+    "pulp>=2.8",
+    "nfl-data-py>=0.3",
+    # Footballguys' projections endpoint (ingestion/footballguys.py) returns HTML where a
+    # player's team and position live in nested <span> elements inside the name cell, not their
+    # own table columns -- pandas.read_html flattens each <tr> to plain cell text and drops
+    # element attributes entirely, so it can't recover team/position from that nesting and can't
+    # see the tr[data-playerid] attribute at all, which is this source's only native player ID.
+    # BeautifulSoup (stdlib html.parser backend, no lxml needed) can select on both.
+    "beautifulsoup4>=4.12",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+]
+
+[tool.setuptools.packages.find]
+where = ["src"]

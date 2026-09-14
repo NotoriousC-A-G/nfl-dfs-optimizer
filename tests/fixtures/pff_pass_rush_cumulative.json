@@ -1,0 +1,50 @@
+{
+  "pass_rush_summary": [
+    {
+      "player_id": 4364,
+      "player": "Calais Campbell",
+      "team": "ARZ",
+      "team_name": "ARZ",
+      "position": "DI",
+      "jersey_number": "93",
+      "franchise_id": 1,
+      "draft_season": 2008,
+      "eligible_season": 2008,
+      "player_game_count": 3,
+      "grades_pass_rush_defense": 77.6,
+      "pass_rush_win_rate": 14.7,
+      "pass_rush_percent": 100.0,
+      "pass_rush_wins": 11,
+      "pass_rush_opp": 75,
+      "sacks": 2,
+      "hits": 2,
+      "hurries": 5,
+      "total_pressures": 9,
+      "snap_counts_pass_rush": 80,
+      "snap_counts_pass_play": 80
+    },
+    {
+      "player_id": 55501,
+      "player": "Sample Edge",
+      "team": "BUF",
+      "team_name": "BUF",
+      "position": "ED",
+      "jersey_number": "9",
+      "franchise_id": 4,
+      "draft_season": 2019,
+      "eligible_season": 2019,
+      "player_game_count": 3,
+      "grades_pass_rush_defense": 82.3,
+      "pass_rush_win_rate": 21.4,
+      "pass_rush_percent": 95.0,
+      "pass_rush_wins": 15,
+      "pass_rush_opp": 70,
+      "sacks": 4,
+      "hits": 3,
+      "hurries": 8,
+      "total_pressures": 15,
+      "snap_counts_pass_rush": 78,
+      "snap_counts_pass_play": 78
+    }
+  ]
+}
