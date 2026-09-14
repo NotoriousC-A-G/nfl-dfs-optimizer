@@ -20,6 +20,9 @@ dependencies = [
     # see the tr[data-playerid] attribute at all, which is this source's only native player ID.
     # BeautifulSoup (stdlib html.parser backend, no lxml needed) can select on both.
     "beautifulsoup4>=4.12",
+    # ResultsDB raw/curated storage (storage/resultsdb_store.py, ADR-0024) writes curated tables as
+    # Parquet -- no other module in this codebase needed a Parquet engine before this.
+    "pyarrow>=15.0",
 ]
 
 [project.optional-dependencies]
