@@ -35,14 +35,21 @@ NEUTRAL_GRADE_DIFFERENTIAL = 0.0
 
 
 def _resolve_opponents(client: PFFClient, league: str, season: int, week: int) -> dict[str, str]:
-    """team -> opponent team, from that week's schedule."""
+    """team -> opponent team, from that week's schedule.
+
+    `/v1/games`'s `home_team`/`away_team` are nested team objects
+    (`{"abbreviation": "SF", ...}`), not flat strings as the OpenAPI spec's
+    own example suggested — this pulls the abbreviation out of each.
+    """
     payload = client.get(GAMES_PATH, {"league": league, "season": season, "week": week})
     opponents = {}
     for game in payload.get("games", []):
         home, away = game.get("home_team"), game.get("away_team")
-        if home and away:
-            opponents[home] = away
-            opponents[away] = home
+        home_abbr = home.get("abbreviation") if isinstance(home, dict) else home
+        away_abbr = away.get("abbreviation") if isinstance(away, dict) else away
+        if home_abbr and away_abbr:
+            opponents[home_abbr] = away_abbr
+            opponents[away_abbr] = home_abbr
     return opponents
 
 
