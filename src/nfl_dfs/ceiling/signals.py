@@ -1,0 +1,261 @@
+"""Ceiling signal data layer (PRD Section 6's newest construct, ADR-0028).
+
+**Deliberately not a live `CeilingMultiplier`/`ceiling_projection` yet.** Both the Model Analytics
+Expert (draft) and Fantasy Football Expert (review) declined to propose the scale/cap constants
+needed to turn a z-scored signal into an actual multiplier without a real outcome backtest
+(analogous to ADR-0012's own return-TD-rate correction) -- writing one down now would be exactly
+the kind of unbacked constant this project's review process exists to catch. Chris's own call
+(ADR-0028): build the real, inspectable, testable data layer this round -- retained per-week
+series, boom-rate/depth-of-target computation, cross-sectional z-scoring, ADR-0011 shrinkage --
+and leave the multiplier itself as an explicit, backtest-blocked follow-up.
+
+Three signal-producing functions, one per ADR-0028 component:
+
+- `role_share_ceiling_signals` -- Component A, RB/WR role-share "boom rate" (fraction of trailing
+  weeks a player's share spiked above their own trailing median). Built as a boom-rate, not raw
+  variance (coefficient of variation), per the Fantasy Football Expert's specific correction to the
+  Model Analytics Expert's original draft: a symmetric variance measure can't distinguish a real
+  upside spike from `BlowoutVolumeDiscount`-shaped downside benching, and would have misfired
+  (read as high-ceiling) for exactly the blowout-prone-offense running back that discount already
+  exists to penalize.
+- `red_zone_ceiling_signals` -- Component B, the same boom-rate construction applied to red-zone
+  share. Extends the Fantasy Football Expert's Component A fix here by direct structural analogy
+  (the underlying symmetric-CV concern isn't role-share-specific) -- **not independently reviewed
+  by the Fantasy Football Expert**, flagged for the record per ADR-0028.
+- `adot_ceiling_signals` -- Component C, WR/TE trailing depth-of-target (aDOT), a LEVEL signal (not
+  a boom-rate) per the Model Analytics Expert's original framing -- a receiver who is consistently
+  thrown deep has real ceiling regardless of week-to-week volatility in that depth. Population split
+  by position label (WR pool, TE pool) is a disclosed degradation from the Fantasy Football Expert's
+  requested true alignment split (joker/flex TE pooled with WR, in-line Y kept separate) -- that
+  split needs PFF's `slot_coverage` alignment data (ADR-0001), confirmed NOT ingested anywhere in
+  this pipeline (`matchup/coverage.py`'s own documented gap), not something this pass invents a
+  workaround for.
+
+Every constant below (`BOOM_THRESHOLD`, `MIN_TRAILING_WEEKS`, `CEILING_SHRINKAGE_K`,
+`ADOT_MIN_TARGETS`) is an explicit, unvalidated starting placeholder -- named as such in both
+experts' review, not derived from backtested data. See `docs/adr/0028-ceiling-signal-data-layer.md`.
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+
+import pandas as pd
+
+from nfl_dfs.ingestion.game_environment_stats import blend_toward_prior, shrinkage_weight
+from nfl_dfs.ingestion.usage_share import (
+    ROLE_RB,
+    ROLE_WR,
+    _trailing_qb_ids,
+    aggregate_passer_week,
+    aggregate_player_week,
+    aggregate_player_week_red_zone,
+)
+from nfl_dfs.normalization.team_aliases import normalize_team
+
+# Every constant here is an explicit, unvalidated placeholder (ADR-0028) -- a starting proposal
+# from the Model-Analytics-Expert/Fantasy-Football-Expert review, not backtested fact.
+BOOM_THRESHOLD = 1.35
+MIN_TRAILING_WEEKS = 3
+CEILING_SHRINKAGE_K = 6.0  # borrowed from pace/PROE per ADR-0011's "reuse before inventing"
+# convention -- not re-derived for this use, per the Model Analytics Expert's own review.
+ADOT_MIN_TARGETS = 8  # deliberately well under usage_share.py's WR_GATE_MIN_VOLUME=20 (a
+# "lead receiver" gate built for a different purpose) -- paired with shrinkage, not a hard cutoff.
+
+
+@dataclass(frozen=True)
+class CeilingSignal:
+    """One shrunk, cross-sectionally z-scored ceiling-relevant signal for one player -- not yet a
+    multiplier, see module docstring.
+
+    `sample_size` is the axis `shrinkage_weight`'s `n` is computed against for this signal type --
+    trailing weeks for the two boom-rate signals, trailing target count for the aDOT signal.
+    `raw_value` is the boom rate (0-1) or trailing mean aDOT (yards), signal-type-dependent. `None`
+    fields mean this player didn't clear `MIN_TRAILING_WEEKS`/`ADOT_MIN_TARGETS` -- never a
+    fabricated zero or an imputed value.
+    """
+
+    player_id: str
+    player_name: str | None
+    team: str
+    sample_size: int
+    raw_value: float | None
+    z_score: float | None
+    shrinkage_weight: float | None
+    shrunk_z_score: float | None
+
+
+def _boom_rate_per_player(weekly: pd.DataFrame, *, value_col: str = "share") -> pd.DataFrame:
+    """`weekly` must already be filtered to the trailing window and the desired role/pool --
+    columns `week, player_id, player_name, team, <value_col>`. One output row per `player_id`:
+    `sample_size` (trailing weeks with recorded volume), `raw_value` (boom rate, `None` below
+    `MIN_TRAILING_WEEKS`). A player whose trailing median is exactly 0 gets `raw_value=0.0`
+    (no meaningful "spike ratio" over a zero baseline), not a division error.
+    """
+    rows = []
+    for player_id, group in weekly.groupby("player_id", observed=True):
+        sample_size = len(group)
+        player_name = group["player_name"].iloc[0]
+        team = group["team"].iloc[-1]  # most recent trailing team, in case of a mid-window trade
+        if sample_size < MIN_TRAILING_WEEKS:
+            rows.append(
+                {"player_id": player_id, "player_name": player_name, "team": team, "sample_size": sample_size, "raw_value": None}
+            )
+            continue
+        median = group[value_col].median()
+        if median <= 0:
+            raw_value = 0.0
+        else:
+            boom_weeks = int((group[value_col] > BOOM_THRESHOLD * median).sum())
+            raw_value = boom_weeks / sample_size
+        rows.append(
+            {"player_id": player_id, "player_name": player_name, "team": team, "sample_size": sample_size, "raw_value": raw_value}
+        )
+    return pd.DataFrame(rows, columns=["player_id", "player_name", "team", "sample_size", "raw_value"])
+
+
+def _z_score_and_shrink(df: pd.DataFrame, *, k: float = CEILING_SHRINKAGE_K) -> list[CeilingSignal]:
+    """`df` must have `player_id, player_name, team, sample_size, raw_value` (`raw_value` may be
+    `None`). Z-scores `raw_value` cross-sectionally against every row in `df` with a real value
+    (the caller has already scoped `df` to the right population -- e.g. one role, one week, one
+    position pool), then shrinks the z-score toward 0 (neutral) via ADR-0011's shared
+    `shrinkage_weight`/`blend_toward_prior` form, reusing `game_environment_stats.py`'s exact
+    functions rather than restating the math.
+    """
+    valid = df[df["raw_value"].notna()]
+    if len(valid) >= 2 and valid["raw_value"].std() > 0:
+        pop_mean = valid["raw_value"].mean()
+        pop_std = valid["raw_value"].std()
+    else:
+        pop_mean = pop_std = None
+
+    signals = []
+    for row in df.itertuples(index=False):
+        # A gated-out raw_value can arrive here as either Python None or pandas/numpy NaN
+        # (assigning None into a float64 column silently becomes NaN) -- pd.isna() catches both,
+        # `is None` alone would miss the NaN case and let a "None" value leak through as a real
+        # float, corrupting every downstream check that only compares against None.
+        raw_value = None if pd.isna(row.raw_value) else row.raw_value
+        if raw_value is None or pop_std is None:
+            z_score = None
+        else:
+            z_score = (raw_value - pop_mean) / pop_std
+        weight = shrinkage_weight(row.sample_size, k) if z_score is not None else None
+        shrunk = blend_toward_prior(z_score, 0.0, weight) if z_score is not None else None
+        signals.append(
+            CeilingSignal(
+                player_id=row.player_id,
+                player_name=row.player_name,
+                team=row.team,
+                sample_size=int(row.sample_size),
+                raw_value=raw_value,
+                z_score=z_score,
+                shrinkage_weight=weight,
+                shrunk_z_score=shrunk,
+            )
+        )
+    return signals
+
+
+def _exclude_trailing_qbs(weekly: pd.DataFrame, pbp: pd.DataFrame, target_week: int, *, season_type: str | None) -> pd.DataFrame:
+    """Same exclusion this project already trusts for `RoleShare` (ADR-0020 Decision 1c,
+    `usage_share.py`'s `_trailing_qb_ids`) -- a mobile QB's scramble rows land in the raw RB-role
+    data too (no position filter is applied anywhere in `aggregate_player_week`), and this reuses
+    the established trailing-pass-attempt heuristic rather than inventing a second exclusion
+    mechanism.
+    """
+    passer_week = aggregate_passer_week(pbp, season_type=season_type)
+    prior_passer_week = passer_week[passer_week["week"] < target_week]
+    excluded_ids: set[str] = set()
+    for team in weekly["team"].unique():
+        excluded_ids |= _trailing_qb_ids(prior_passer_week, team)
+    return weekly[~weekly["player_id"].isin(excluded_ids)]
+
+
+def role_share_ceiling_signals(
+    pbp: pd.DataFrame, target_week: int, role: str, *, season_type: str | None = "REG"
+) -> list[CeilingSignal]:
+    """ADR-0028 Component A: role-share boom-rate ceiling signal, RB or WR only. RB role excludes
+    QB scramblers (see `_exclude_trailing_qbs`)."""
+    if role not in (ROLE_RB, ROLE_WR):
+        raise ValueError(f"role_share_ceiling_signals only supports {ROLE_RB!r}/{ROLE_WR!r}, got {role!r}")
+    weekly = aggregate_player_week(pbp, season_type=season_type)
+    weekly = weekly[(weekly["week"] < target_week) & (weekly["role"] == role)]
+    if role == ROLE_RB:
+        weekly = _exclude_trailing_qbs(weekly, pbp, target_week, season_type=season_type)
+    boom = _boom_rate_per_player(weekly)
+    return _z_score_and_shrink(boom)
+
+
+def red_zone_ceiling_signals(
+    pbp: pd.DataFrame, target_week: int, role: str, *, season_type: str | None = "REG"
+) -> list[CeilingSignal]:
+    """ADR-0028 Component B: red-zone-share boom-rate ceiling signal, RB or WR/pass-catcher pool.
+    **Known, disclosed limitation:** this pipeline's red-zone aggregation (same as role-share)
+    buckets every pass-catcher -- WR and TE alike -- into one `ROLE_WR`-labeled pool; there is no
+    position split, so a TE's signal is z-scored against the combined WR+TE population, not a
+    TE-specific one. Splitting this would need the same position join `adot_ceiling_signals` takes
+    from its caller -- a real, separate follow-up, not solved here.
+    """
+    if role not in (ROLE_RB, ROLE_WR):
+        raise ValueError(f"red_zone_ceiling_signals only supports {ROLE_RB!r}/{ROLE_WR!r}, got {role!r}")
+    weekly = aggregate_player_week_red_zone(pbp, season_type=season_type)
+    weekly = weekly[(weekly["week"] < target_week) & (weekly["role"] == role)]
+    if role == ROLE_RB:
+        weekly = _exclude_trailing_qbs(weekly, pbp, target_week, season_type=season_type)
+    boom = _boom_rate_per_player(weekly)
+    return _z_score_and_shrink(boom)
+
+
+def _aggregate_trailing_adot(pbp: pd.DataFrame, target_week: int, *, season_type: str | None = "REG") -> pd.DataFrame:
+    """Trailing (`week < target_week`) mean `air_yards` per target, one row per receiver --
+    `air_yards` rides the same `import_pbp_data()` pull `usage_share.py` already consumes for
+    `receiver_player_id` (confirmed present, Phase 0), no new ingestion."""
+    df = pbp if season_type is None else pbp[pbp["season_type"] == season_type]
+    trailing = df[
+        (df["week"] < target_week)
+        & (df["play_type"] == "pass")
+        & df["receiver_player_id"].notna()
+        & df["air_yards"].notna()
+    ]
+    agg = (
+        trailing.groupby(["posteam", "receiver_player_id"], observed=True)
+        .agg(
+            sample_size=("play_id", "count"),
+            raw_value=("air_yards", "mean"),
+            player_name=("receiver_player_name", "first"),
+        )
+        .reset_index()
+        .rename(columns={"posteam": "team", "receiver_player_id": "player_id"})
+    )
+    agg["team"] = agg["team"].map(lambda t: normalize_team("nflverse_schedule", t))
+    return agg
+
+
+def adot_ceiling_signals(
+    pbp: pd.DataFrame, target_week: int, position_by_player_id: dict[str, str], *, season_type: str | None = "REG"
+) -> dict[str, list[CeilingSignal]]:
+    """ADR-0028 Component C: trailing depth-of-target ceiling signal, WR and TE, split into
+    separate position populations (see module docstring for why this is a position-label split,
+    not the Fantasy Football Expert's requested true alignment split). `position_by_player_id`
+    must be supplied by the caller (e.g. from the reconciled `PlayerIdentity` pool's own
+    `position` field) -- this pbp-derived aggregation carries no position field for receivers.
+
+    Volume handling: a low floor (`ADOT_MIN_TARGETS`) PAIRED WITH shrinkage toward the position
+    population's own mean, per the Fantasy Football Expert's explicit correction to the original
+    draft -- never a hard exclusionary gate, so a thin-but-real low-target-share deep-threat
+    sample gets dampened, not thrown away.
+    """
+    trailing = _aggregate_trailing_adot(pbp, target_week, season_type=season_type)
+    trailing = trailing.copy()
+    # Below the volume floor: keep the row (never silently drop a player from the output), just
+    # null the value -- same "gate nulls the value, never omits the row" discipline
+    # `_boom_rate_per_player` uses for MIN_TRAILING_WEEKS above.
+    trailing.loc[trailing["sample_size"] < ADOT_MIN_TARGETS, "raw_value"] = None
+    trailing["position"] = trailing["player_id"].map(position_by_player_id)
+
+    results: dict[str, list[CeilingSignal]] = {}
+    for position in ("WR", "TE"):
+        pool = trailing[trailing["position"] == position][["player_id", "player_name", "team", "sample_size", "raw_value"]]
+        results[position] = _z_score_and_shrink(pool)
+    return results
