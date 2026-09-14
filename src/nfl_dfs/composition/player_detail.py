@@ -101,6 +101,7 @@ from nfl_dfs.ceiling.signals import COMPONENT_A_SCALE, CeilingSignal, component_
 from nfl_dfs.correlation.stack_profile import StackProfile
 from nfl_dfs.game_environment.score import GameEnvironmentScore
 from nfl_dfs.ingestion.pff import PffFacetGrades, ResolvedGrade, TeamCoverageTendency, resolve_grade
+from nfl_dfs.ingestion.receiving_profile import TrailingReceivingProfile
 from nfl_dfs.ingestion.rotogrinders_injuries import InjuryReportEntry
 from nfl_dfs.ingestion.snap_share import PlayerSnapShare
 from nfl_dfs.ingestion.usage_share import ROLE_RB, ROLE_WR, PlayerRoleShare, RoleShareResult
@@ -161,6 +162,17 @@ _NO_CEILING_SIGNAL_REASON = (
 _CEILING_NOT_APPLICABLE_REASON = (
     "Component A ceiling is only calibrated for RB/WR (ADR-0028) -- TE/QB/DST have no live "
     "ceiling multiplier yet, a scope gap for the position, not a data gap for this player."
+)
+
+_NO_RECEIVING_PROFILE_REASON = (
+    "no trailing receiving-opportunity profile for this player -- either "
+    "receiving_profile_by_gsis_id wasn't supplied to this composer call, or this player has no "
+    "resolvable gsis_id (usage_share/receiving_profile data is only joinable through nflverse's "
+    "own gsis_id space)."
+)
+_RECEIVING_PROFILE_NOT_APPLICABLE_REASON = (
+    "trailing receiving-opportunity profile only applies to pass-catchers (RB/WR/TE, ADR-0029) "
+    "-- not a data gap for this position."
 )
 
 _NO_OWNERSHIP_REASON = (
@@ -383,6 +395,13 @@ class PlayerDetailRecord:
     positions at all, a scope gap, not a data gap), `None` with `_NO_CEILING_SIGNAL_REASON`
     otherwise. `ceiling_projection` is a derived `@property` (`projection * ceiling_multiplier`)
     -- a real but partial ceiling read, since Components B/C remain uncalibrated.
+
+    `receiving_profile` (ADR-0029) is a REAL, descriptive (not predictive) trailing receiving-
+    opportunity read -- targets, air yards, aDOT, YAC per reception (`ingestion.receiving_profile
+    .TrailingReceivingProfile`) -- for RB/WR/TE (`SCHEME_SPLIT_POSITIONS`). Deliberately carries no
+    backtested claim (Component C's own aDOT backtest came back a clean null, ADR-0028) -- this
+    exists for a different job: letting a person judge what kind of opportunity two similarly-
+    priced players are each getting when choosing between them, not to feed an automated score.
     """
 
     season: int
@@ -421,6 +440,9 @@ class PlayerDetailRecord:
 
     ceiling_multiplier: float | None
     ceiling_multiplier_reason: str | None
+
+    receiving_profile: TrailingReceivingProfile | None
+    receiving_profile_reason: str | None
 
     notes: list[str] = field(default_factory=list)
 
@@ -883,6 +905,21 @@ def _ceiling_multiplier(
     return multiplier, None
 
 
+def _receiving_profile(
+    gsis_id: str | None, position: str, receiving_profile_by_gsis_id: dict[str, TrailingReceivingProfile] | None
+) -> tuple[TrailingReceivingProfile | None, str | None]:
+    """Joined via `identity.nflverse_gsis_id` -- same gsis_id-space key every other trailing-stat
+    section in this module already uses."""
+    if position not in SCHEME_SPLIT_POSITIONS:
+        return None, _RECEIVING_PROFILE_NOT_APPLICABLE_REASON
+    if gsis_id is None:
+        return None, _NO_RECEIVING_PROFILE_REASON
+    profile = (receiving_profile_by_gsis_id or {}).get(gsis_id)
+    if profile is None:
+        return None, _NO_RECEIVING_PROFILE_REASON
+    return profile, None
+
+
 # --------------------------------------------------------------------------------------------
 # Top-level composer
 # --------------------------------------------------------------------------------------------
@@ -911,6 +948,7 @@ def build_player_detail_record(
     kickoff_utc_by_team: dict[str, str] | None = None,
     implied_total_by_team: dict[str, float] | None = None,
     ceiling_signals_by_gsis_id: dict[str, CeilingSignal] | None = None,
+    receiving_profile_by_gsis_id: dict[str, TrailingReceivingProfile] | None = None,
 ) -> PlayerDetailRecord:
     """Join one player's ADR-0022 `PlayerDetailRecord` for one (season, week) out of already-
     computed, week-scoped lookup collections -- see module docstring for the exact join keys used
@@ -957,6 +995,10 @@ def build_player_detail_record(
     pool (`ceiling.signals.role_share_ceiling_signals`'s output for RB and WR, merged by the
     caller into one `{signal.player_id: signal}` dict) for `ceiling_multiplier`. Optional, same
     "caller has nothing for this source" shape as every other lookup above.
+
+    `receiving_profile_by_gsis_id` (new, ADR-0029) is `ingestion.receiving_profile
+    .trailing_receiving_profiles`' already-built output for `receiving_profile`. Optional, same
+    shape as every other lookup above.
     """
     gsis_id = identity.nflverse_gsis_id
 
@@ -976,6 +1018,7 @@ def build_player_detail_record(
     slate_window, slate_window_reason = _slate_window(team, kickoff_utc_by_team)
     implied_total, implied_total_reason = _implied_total(team, implied_total_by_team)
     ceiling_multiplier, ceiling_multiplier_reason = _ceiling_multiplier(gsis_id, position, ceiling_signals_by_gsis_id)
+    receiving_profile, receiving_profile_reason = _receiving_profile(gsis_id, position, receiving_profile_by_gsis_id)
 
     notes: list[str] = []
     if gsis_id is None:
@@ -1019,5 +1062,7 @@ def build_player_detail_record(
         implied_total_reason=implied_total_reason,
         ceiling_multiplier=ceiling_multiplier,
         ceiling_multiplier_reason=ceiling_multiplier_reason,
+        receiving_profile=receiving_profile,
+        receiving_profile_reason=receiving_profile_reason,
         notes=notes,
     )

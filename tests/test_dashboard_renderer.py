@@ -25,6 +25,7 @@ from nfl_dfs.composition.player_detail import (
 from nfl_dfs.dashboard.renderer import SlateGameRow, render_dashboard_html, write_dashboard_html
 from nfl_dfs.game_environment.score import ComponentScore, GameEnvironmentScore
 from nfl_dfs.ingestion.pff import TeamCoverageTendency
+from nfl_dfs.ingestion.receiving_profile import TrailingReceivingProfile
 from nfl_dfs.ingestion.snap_share import PlayerSnapShare
 from nfl_dfs.ingestion.usage_share import ROLE_WR, PlayerRoleShare
 from nfl_dfs.ingestion.weather import WeatherReading
@@ -305,6 +306,12 @@ def _fully_populated_player_detail(
         implied_total_reason=None,
         ceiling_multiplier=1.09,
         ceiling_multiplier_reason=None,
+        receiving_profile=TrailingReceivingProfile(
+            player_id="rz-1", player_name=name, team=team,
+            trailing_targets=30, trailing_receptions=22, trailing_air_yards=270,
+            trailing_adot=9.0, trailing_yac_per_reception=4.5,
+        ),
+        receiving_profile_reason=None,
     )
 
 
@@ -377,6 +384,8 @@ def _rb_with_tier_and_uncontested_prior(canonical_id: str, name: str, team: str)
         implied_total_reason="no implied point total for this player's team.",
         ceiling_multiplier=None,
         ceiling_multiplier_reason="no Component A ceiling signal for this player.",
+        receiving_profile=None,
+        receiving_profile_reason="no trailing receiving-opportunity profile for this player.",
     )
 
 
@@ -453,6 +462,12 @@ def test_normal_case_renders_all_three_tabs_and_real_lineup_data():
     assert "20.4" in html  # ceiling_projection
     assert "1.09x" in html
 
+    # ADR-0029: real descriptive receiving-opportunity data appears (targets/air yards/aDOT/YAC).
+    assert "30 targets, 22 rec" in html
+    assert "270 air yds" in html
+    assert "9.0 aDOT" in html
+    assert "4.5 YAC/rec" in html
+
     # Search filter present for the browsable player table.
     assert 'id="player-search"' in html
 
@@ -507,6 +522,8 @@ def test_missing_fields_show_reason_strings_not_blank_or_none():
     assert "no kickoff time known for this player&#x27;s game." in html
     # New (ADR-0028): no ceiling signal supplied -> real reason string shown.
     assert "no Component A ceiling signal for this player." in html
+    # New (ADR-0029): no receiving-opportunity profile supplied -> real reason string shown.
+    assert "no trailing receiving-opportunity profile for this player." in html
     # Not on the injury report is real, positive information -- rendered plainly, not as an N/A.
     assert "Healthy" in html
     assert "presumed healthy" not in html  # the raw reason text stays internal, not user-facing

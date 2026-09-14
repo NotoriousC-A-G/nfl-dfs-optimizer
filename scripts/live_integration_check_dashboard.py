@@ -22,6 +22,7 @@ import warnings
 
 from nfl_dfs.analysis.ownership_calibration import run_full_calibration
 from nfl_dfs.ceiling.signals import role_share_ceiling_signals
+from nfl_dfs.ingestion.receiving_profile import trailing_receiving_profiles
 from nfl_dfs.composition.player_detail import build_gsis_to_pff_id_map, build_player_detail_record
 from nfl_dfs.config import config
 from nfl_dfs.dashboard.renderer import SlateGameRow, write_dashboard_html
@@ -248,6 +249,10 @@ def main() -> None:
     n_with_real_z = sum(1 for s in ceiling_signals_by_gsis_id.values() if s.shrunk_z_score is not None)
     print(f"  {len(ceiling_signals_by_gsis_id)} player(s) with a Component A signal, {n_with_real_z} with a real (gated-in) shrunk_z_score")
 
+    print("Building real trailing receiving-opportunity profiles (ADR-0029, descriptive only)...")
+    receiving_profile_by_gsis_id = trailing_receiving_profiles(pbp, WEEK)
+    print(f"  {len(receiving_profile_by_gsis_id)} player(s) with a trailing receiving profile")
+
     print("Fetching real PFF receiving/scheme and defense/coverage_scheme facet grades...")
     receiving_scheme_grades = fetch_matchup_grades("receiving/scheme", WEEK, SEASON)
     coverage_scheme_grades = fetch_matchup_grades("defense/coverage_scheme", WEEK, SEASON)
@@ -316,6 +321,7 @@ def main() -> None:
             kickoff_utc_by_team=kickoff_utc_by_team,
             implied_total_by_team=implied_total_by_team,
             ceiling_signals_by_gsis_id=ceiling_signals_by_gsis_id,
+            receiving_profile_by_gsis_id=receiving_profile_by_gsis_id,
         )
         player_details.append(record)
 

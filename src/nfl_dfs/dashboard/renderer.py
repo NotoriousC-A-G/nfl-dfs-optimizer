@@ -861,6 +861,24 @@ def _render_red_zone_cell(record: PlayerDetailRecord) -> str:
     return "<br>".join(lines) + context
 
 
+def _render_receiving_profile_cell(record: PlayerDetailRecord) -> str:
+    """Real, descriptive trailing opportunity numbers (ADR-0029) -- no backtested claim, no
+    z-scoring. Shown for a person to judge what KIND of opportunity a player is getting (real
+    depth, real YAC upside, real volume) when choosing between two similarly-priced players, not
+    to feed an automated score -- Component C's own aDOT backtest came back a clean null
+    (ADR-0028), so this is deliberately presented as raw facts, not a ranked/scored signal.
+    """
+    profile = record.receiving_profile
+    if profile is None:
+        return _na(record.receiving_profile_reason, fallback="no receiving-opportunity data for this player")
+    adot = f"{profile.trailing_adot:.1f}" if profile.trailing_adot is not None else "--"
+    yac = f"{profile.trailing_yac_per_reception:.1f}" if profile.trailing_yac_per_reception is not None else "--"
+    return (
+        f'<div class="cell-main">{profile.trailing_targets} targets, {profile.trailing_receptions} rec</div>'
+        f'<div class="cell-sub">{profile.trailing_air_yards} air yds &middot; {adot} aDOT &middot; {yac} YAC/rec</div>'
+    )
+
+
 def _render_own_scheme_cell(splits: OwnSchemeSplits) -> str:
     if not splits.applicable:
         return _na(splits.reason)
@@ -1083,6 +1101,7 @@ def _render_player_expand_content(record: PlayerDetailRecord) -> str:
         blocks.append(_expand_block("Role Share", _render_role_share_cell(record.usage.role_share)))
         blocks.append(_expand_block("Snap Share", _render_snap_share_cell(record.usage.snap_share)))
         blocks.append(_expand_block("Red Zone", _render_red_zone_cell(record)))
+        blocks.append(_expand_block("Receiving Opportunity", _render_receiving_profile_cell(record)))
     if record.own_scheme_splits.applicable:
         blocks.append(_expand_block("Own Scheme Split", _render_own_scheme_cell(record.own_scheme_splits)))
     blocks.append(_expand_block("Opp Coverage Faced", _render_coverage_tendency_cell(record.matchup_this_week)))

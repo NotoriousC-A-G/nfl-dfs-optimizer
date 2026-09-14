@@ -9,6 +9,7 @@ from nfl_dfs.composition.player_detail import (
     slate_window_label,
 )
 from nfl_dfs.correlation.stack_profile import StackProfile
+from nfl_dfs.ingestion.receiving_profile import TrailingReceivingProfile
 from nfl_dfs.game_environment.score import ComponentScore, GameEnvironmentScore
 from nfl_dfs.ingestion.pff import PffFacetGrades, PffGradeRow, TeamCoverageTendency
 from nfl_dfs.ingestion.rotogrinders_injuries import InjuryReportEntry
@@ -967,3 +968,45 @@ def test_ceiling_projection_none_when_either_input_missing():
     assert record.ceiling_multiplier is not None  # real multiplier
     assert record.projection is None  # no projections_by_canonical_id supplied
     assert record.ceiling_projection is None
+
+
+# --------------------------------------------------------------------------------------------
+# ADR-0029: receiving_profile (descriptive, not a ceiling signal)
+# --------------------------------------------------------------------------------------------
+
+
+def _profile(player_id: str = "00-1") -> TrailingReceivingProfile:
+    return TrailingReceivingProfile(
+        player_id=player_id, player_name="Some WR", team="GB",
+        trailing_targets=25, trailing_receptions=18, trailing_air_yards=210,
+        trailing_adot=8.4, trailing_yac_per_reception=4.1,
+    )
+
+
+def test_receiving_profile_joins_via_gsis_id_for_pass_catchers():
+    identity = _identity("00-1", "Some WR", "WR", "GB", gsis_id="00-1")
+    record = build_player_detail_record(
+        identity, SEASON, WEEK, team="GB", position="WR", opponent_team_this_week="CHI",
+        receiving_profile_by_gsis_id={"00-1": _profile()},
+    )
+    assert record.receiving_profile is not None
+    assert record.receiving_profile.trailing_targets == 25
+    assert record.receiving_profile.trailing_adot == pytest.approx(8.4)
+    assert record.receiving_profile_reason is None
+
+
+def test_receiving_profile_not_applicable_for_qb():
+    identity = _identity("00-1", "Some QB", "QB", "GB", gsis_id="00-1")
+    record = build_player_detail_record(
+        identity, SEASON, WEEK, team="GB", position="QB", opponent_team_this_week="CHI",
+        receiving_profile_by_gsis_id={"00-1": _profile()},
+    )
+    assert record.receiving_profile is None
+    assert "only applies to pass-catchers" in record.receiving_profile_reason
+
+
+def test_receiving_profile_none_with_reason_when_no_pool_supplied():
+    identity = _identity("00-1", "Some RB", "RB", "GB", gsis_id="00-1")
+    record = build_player_detail_record(identity, SEASON, WEEK, team="GB", position="RB", opponent_team_this_week="CHI")
+    assert record.receiving_profile is None
+    assert "no trailing receiving-opportunity profile" in record.receiving_profile_reason
