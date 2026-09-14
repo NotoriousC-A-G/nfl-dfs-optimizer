@@ -894,6 +894,27 @@ def _render_receiving_profile_cell(record: PlayerDetailRecord) -> str:
     )
 
 
+def _render_qb_rushing_cell(record: PlayerDetailRecord) -> str:
+    """Real, descriptive trailing QB rushing numbers (ADR-0030) -- designed-run rate, scramble
+    count, red-zone/goal-line rush volume. No z-scoring, no shrinkage, no backtested claim, same
+    posture as Receiving Opportunity (ADR-0029) -- ADR-0028's `CeilingMultiplier` investigation
+    explicitly deferred any QB rushing signal rather than risk an ungated leg that could only ever
+    inflate a QB's ceiling, so this is shown as raw facts, not a ranked/scored signal.
+    """
+    profile = record.qb_rushing_profile
+    if profile is None:
+        return _na(record.qb_rushing_profile_reason, fallback="no QB rushing-opportunity data for this player")
+    designed_rate = _fmt_pct(profile.designed_run_rate) if profile.designed_run_rate is not None else "--"
+    return (
+        f'<div class="cell-main">{profile.trailing_rush_attempts} rush att '
+        f"({profile.trailing_designed_runs} designed / {profile.trailing_scrambles} scramble)</div>"
+        f'<div class="cell-sub">{designed_rate} designed-run rate &middot; '
+        f"{profile.trailing_rushing_yards} yds, {profile.trailing_rush_tds} TD &middot; "
+        f"{profile.trailing_redzone_rush_attempts} RZ / {profile.trailing_goalline_rush_attempts} "
+        "goal-line att</div>"
+    )
+
+
 def _render_own_scheme_cell(splits: OwnSchemeSplits) -> str:
     if not splits.applicable:
         return _na(splits.reason)
@@ -1108,7 +1129,8 @@ def _render_player_expand_content(record: PlayerDetailRecord) -> str:
     """The deep-detail fields that don't earn a default-visible column (UI/UX's "wrong altitude
     for a scannable default view" call, ADR-0027) -- shown per row on click, not hidden entirely.
     Position-appropriate by construction: the skill-only blocks (role/snap/red-zone) are simply
-    omitted for QB/DST, and `own_scheme_splits.applicable` already gates itself, rather than this
+    omitted for QB/DST, QB Rushing (ADR-0030) is the QB-only mirror of that (omitted for every
+    other position), and `own_scheme_splits.applicable` already gates itself, rather than this
     function hardcoding a second, parallel position check.
     """
     blocks = []
@@ -1117,6 +1139,8 @@ def _render_player_expand_content(record: PlayerDetailRecord) -> str:
         blocks.append(_expand_block("Snap Share", _render_snap_share_cell(record.usage.snap_share)))
         blocks.append(_expand_block("Red Zone", _render_red_zone_cell(record)))
         blocks.append(_expand_block("Receiving Opportunity", _render_receiving_profile_cell(record)))
+    if record.position == "QB":
+        blocks.append(_expand_block("QB Rushing", _render_qb_rushing_cell(record)))
     if record.own_scheme_splits.applicable:
         blocks.append(_expand_block("Own Scheme Split", _render_own_scheme_cell(record.own_scheme_splits)))
     blocks.append(_expand_block("Opp Coverage Faced", _render_coverage_tendency_cell(record.matchup_this_week)))

@@ -101,6 +101,7 @@ from nfl_dfs.ceiling.signals import COMPONENT_A_SCALE, CeilingSignal, component_
 from nfl_dfs.correlation.stack_profile import StackProfile
 from nfl_dfs.game_environment.score import GameEnvironmentScore
 from nfl_dfs.ingestion.pff import PffFacetGrades, ResolvedGrade, TeamCoverageTendency, resolve_grade
+from nfl_dfs.ingestion.qb_rushing_profile import TrailingQbRushingProfile
 from nfl_dfs.ingestion.receiving_profile import TrailingReceivingProfile
 from nfl_dfs.ingestion.rotogrinders_injuries import InjuryReportEntry
 from nfl_dfs.ingestion.snap_share import PlayerSnapShare
@@ -173,6 +174,17 @@ _NO_RECEIVING_PROFILE_REASON = (
 _RECEIVING_PROFILE_NOT_APPLICABLE_REASON = (
     "trailing receiving-opportunity profile only applies to pass-catchers (RB/WR/TE, ADR-0029) "
     "-- not a data gap for this position."
+)
+
+_NO_QB_RUSHING_PROFILE_REASON = (
+    "no trailing QB rushing-opportunity profile for this player -- either "
+    "qb_rushing_profile_by_gsis_id wasn't supplied to this composer call, this player has no "
+    "resolvable gsis_id, or they haven't cleared usage_share.py's trailing-passer identification "
+    "threshold yet this season (ingestion.qb_rushing_profile, ADR-0030)."
+)
+_QB_RUSHING_PROFILE_NOT_APPLICABLE_REASON = (
+    "trailing QB rushing-opportunity profile only applies to QB (ADR-0030) -- not a data gap for "
+    "this position."
 )
 
 _NO_OWNERSHIP_REASON = (
@@ -456,6 +468,9 @@ class PlayerDetailRecord:
 
     receiving_profile: TrailingReceivingProfile | None
     receiving_profile_reason: str | None
+
+    qb_rushing_profile: TrailingQbRushingProfile | None
+    qb_rushing_profile_reason: str | None
 
     notes: list[str] = field(default_factory=list)
 
@@ -949,6 +964,23 @@ def _receiving_profile(
     return profile, None
 
 
+def _qb_rushing_profile(
+    gsis_id: str | None, position: str, qb_rushing_profile_by_gsis_id: dict[str, TrailingQbRushingProfile] | None
+) -> tuple[TrailingQbRushingProfile | None, str | None]:
+    """Joined via `identity.nflverse_gsis_id` -- same gsis_id-space key every other trailing-stat
+    section in this module already uses. Position-gated on `"QB"` directly (ADR-0030) rather than
+    a shared position-set constant like `SCHEME_SPLIT_POSITIONS` -- QB rushing is the only section
+    scoped to just this one position."""
+    if position != "QB":
+        return None, _QB_RUSHING_PROFILE_NOT_APPLICABLE_REASON
+    if gsis_id is None:
+        return None, _NO_QB_RUSHING_PROFILE_REASON
+    profile = (qb_rushing_profile_by_gsis_id or {}).get(gsis_id)
+    if profile is None:
+        return None, _NO_QB_RUSHING_PROFILE_REASON
+    return profile, None
+
+
 # --------------------------------------------------------------------------------------------
 # Top-level composer
 # --------------------------------------------------------------------------------------------
@@ -980,6 +1012,7 @@ def build_player_detail_record(
     receiving_profile_by_gsis_id: dict[str, TrailingReceivingProfile] | None = None,
     carry_share_by_week_by_gsis_id: dict[str, list[tuple[int, float]]] | None = None,
     target_share_by_week_by_gsis_id: dict[str, list[tuple[int, float]]] | None = None,
+    qb_rushing_profile_by_gsis_id: dict[str, TrailingQbRushingProfile] | None = None,
 ) -> PlayerDetailRecord:
     """Join one player's ADR-0022 `PlayerDetailRecord` for one (season, week) out of already-
     computed, week-scoped lookup collections -- see module docstring for the exact join keys used
@@ -1036,6 +1069,10 @@ def build_player_detail_record(
     and `role=ROLE_WR` respectively, for `red_zone.carry_share_by_week`/`target_share_by_week`.
     Optional, same shape as every other lookup above -- and independent of `red_zone_trailing`
     (a different, pre-aggregated data source), so these can populate even when that one is absent.
+
+    `qb_rushing_profile_by_gsis_id` (new, ADR-0030) is `ingestion.qb_rushing_profile
+    .trailing_qb_rushing_profiles`' already-built output for `qb_rushing_profile`. Optional, same
+    shape as every other lookup above.
     """
     gsis_id = identity.nflverse_gsis_id
 
@@ -1058,6 +1095,9 @@ def build_player_detail_record(
     implied_total, implied_total_reason = _implied_total(team, implied_total_by_team)
     ceiling_multiplier, ceiling_multiplier_reason = _ceiling_multiplier(gsis_id, position, ceiling_signals_by_gsis_id)
     receiving_profile, receiving_profile_reason = _receiving_profile(gsis_id, position, receiving_profile_by_gsis_id)
+    qb_rushing_profile, qb_rushing_profile_reason = _qb_rushing_profile(
+        gsis_id, position, qb_rushing_profile_by_gsis_id
+    )
 
     notes: list[str] = []
     if gsis_id is None:
@@ -1103,5 +1143,7 @@ def build_player_detail_record(
         ceiling_multiplier_reason=ceiling_multiplier_reason,
         receiving_profile=receiving_profile,
         receiving_profile_reason=receiving_profile_reason,
+        qb_rushing_profile=qb_rushing_profile,
+        qb_rushing_profile_reason=qb_rushing_profile_reason,
         notes=notes,
     )

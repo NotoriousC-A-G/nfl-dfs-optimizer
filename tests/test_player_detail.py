@@ -9,6 +9,7 @@ from nfl_dfs.composition.player_detail import (
     slate_window_label,
 )
 from nfl_dfs.correlation.stack_profile import StackProfile
+from nfl_dfs.ingestion.qb_rushing_profile import TrailingQbRushingProfile
 from nfl_dfs.ingestion.receiving_profile import TrailingReceivingProfile
 from nfl_dfs.game_environment.score import ComponentScore, GameEnvironmentScore
 from nfl_dfs.ingestion.pff import PffFacetGrades, PffGradeRow, TeamCoverageTendency
@@ -1041,3 +1042,46 @@ def test_receiving_profile_none_with_reason_when_no_pool_supplied():
     record = build_player_detail_record(identity, SEASON, WEEK, team="GB", position="RB", opponent_team_this_week="CHI")
     assert record.receiving_profile is None
     assert "no trailing receiving-opportunity profile" in record.receiving_profile_reason
+
+
+# --------------------------------------------------------------------------------------------
+# ADR-0030: qb_rushing_profile (descriptive, not a ceiling signal)
+# --------------------------------------------------------------------------------------------
+
+
+def _qb_rushing_profile(player_id: str = "00-1") -> TrailingQbRushingProfile:
+    return TrailingQbRushingProfile(
+        player_id=player_id, player_name="Some QB", team="GB",
+        trailing_rush_attempts=20, trailing_designed_runs=8, trailing_scrambles=12,
+        designed_run_rate=0.4, trailing_rushing_yards=95, trailing_rush_tds=2,
+        trailing_redzone_rush_attempts=4, trailing_goalline_rush_attempts=2,
+    )
+
+
+def test_qb_rushing_profile_joins_via_gsis_id_for_qb():
+    identity = _identity("00-1", "Some QB", "QB", "GB", gsis_id="00-1")
+    record = build_player_detail_record(
+        identity, SEASON, WEEK, team="GB", position="QB", opponent_team_this_week="CHI",
+        qb_rushing_profile_by_gsis_id={"00-1": _qb_rushing_profile()},
+    )
+    assert record.qb_rushing_profile is not None
+    assert record.qb_rushing_profile.trailing_rush_attempts == 20
+    assert record.qb_rushing_profile.designed_run_rate == pytest.approx(0.4)
+    assert record.qb_rushing_profile_reason is None
+
+
+def test_qb_rushing_profile_not_applicable_for_wr():
+    identity = _identity("00-1", "Some WR", "WR", "GB", gsis_id="00-1")
+    record = build_player_detail_record(
+        identity, SEASON, WEEK, team="GB", position="WR", opponent_team_this_week="CHI",
+        qb_rushing_profile_by_gsis_id={"00-1": _qb_rushing_profile()},
+    )
+    assert record.qb_rushing_profile is None
+    assert "only applies to QB" in record.qb_rushing_profile_reason
+
+
+def test_qb_rushing_profile_none_with_reason_when_no_pool_supplied():
+    identity = _identity("00-1", "Some QB", "QB", "GB", gsis_id="00-1")
+    record = build_player_detail_record(identity, SEASON, WEEK, team="GB", position="QB", opponent_team_this_week="CHI")
+    assert record.qb_rushing_profile is None
+    assert "no trailing QB rushing-opportunity profile" in record.qb_rushing_profile_reason

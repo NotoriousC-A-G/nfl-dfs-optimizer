@@ -25,6 +25,7 @@ from nfl_dfs.composition.player_detail import (
 from nfl_dfs.dashboard.renderer import SlateGameRow, render_dashboard_html, write_dashboard_html
 from nfl_dfs.game_environment.score import ComponentScore, GameEnvironmentScore
 from nfl_dfs.ingestion.pff import TeamCoverageTendency
+from nfl_dfs.ingestion.qb_rushing_profile import TrailingQbRushingProfile
 from nfl_dfs.ingestion.receiving_profile import TrailingReceivingProfile
 from nfl_dfs.ingestion.snap_share import PlayerSnapShare
 from nfl_dfs.ingestion.usage_share import ROLE_WR, PlayerRoleShare
@@ -313,6 +314,8 @@ def _fully_populated_player_detail(
             trailing_adot=9.0, trailing_yac_per_reception=4.5,
         ),
         receiving_profile_reason=None,
+        qb_rushing_profile=None,
+        qb_rushing_profile_reason="trailing QB rushing-opportunity profile only applies to QB.",
     )
 
 
@@ -387,6 +390,68 @@ def _rb_with_tier_and_uncontested_prior(canonical_id: str, name: str, team: str)
         ceiling_multiplier_reason="no Component A ceiling signal for this player.",
         receiving_profile=None,
         receiving_profile_reason="no trailing receiving-opportunity profile for this player.",
+        qb_rushing_profile=None,
+        qb_rushing_profile_reason="trailing QB rushing-opportunity profile only applies to QB.",
+    )
+
+
+def _qb_with_rushing_profile(canonical_id: str, name: str, team: str) -> PlayerDetailRecord:
+    identity = PlayerIdentity(
+        canonical_id=canonical_id, display_name=name, position="QB", team=team, nflverse_gsis_id=canonical_id
+    )
+    usage = PlayerDetailUsage(
+        role_share=RoleShareUsage(role_share=None, is_team_identified_leader=False, reason="not a skill position."),
+        snap_share=SnapShareUsage(snap_share=None, reason="no snap-share data for this player this week."),
+        red_zone=RedZoneUsage(
+            carries_trailing=None, carry_share_trailing=None, targets_trailing=None, target_share_trailing=None,
+            reason="no red-zone trailing data for this player.",
+        ),
+    )
+    own_scheme_splits = OwnSchemeSplits(
+        applicable=False, grades={}, population=None, pff_native_id=None,
+        reason="own-scheme splits only apply to pass-catchers (RB/WR/TE) -- not a data gap for QB.",
+    )
+    matchup_this_week = MatchupThisWeek(
+        opponent_team=None, own_unit_grade=None, opponent_unit_grade=None, coverage_tendency_faced=None,
+        coverage_tendency_reason="no opponent identified for this week.",
+    )
+    return PlayerDetailRecord(
+        season=SEASON,
+        week=WEEK,
+        identity=identity,
+        team=team,
+        position="QB",
+        salary=None,
+        salary_reason="no DK salary found for this player.",
+        opponent_team_this_week=None,
+        usage=usage,
+        own_scheme_splits=own_scheme_splits,
+        matchup_this_week=matchup_this_week,
+        game_environment=None,
+        game_environment_reason="no GameEnvironmentScore supplied for this team this week.",
+        ownership=None,
+        ownership_reason="no LeverageAssessment found for this player.",
+        projection=None,
+        projection_reason="no blended projection found for this player.",
+        stack_context=None,
+        stack_context_reason="no StackProfile found for this player's game.",
+        injury=None,
+        injury_reason="not on this week's injury report -- presumed healthy.",
+        slate_window=None,
+        slate_window_reason="no kickoff time known for this player's game.",
+        implied_total=None,
+        implied_total_reason="no implied point total for this player's team.",
+        ceiling_multiplier=None,
+        ceiling_multiplier_reason="Component A ceiling is only calibrated for RB/WR.",
+        receiving_profile=None,
+        receiving_profile_reason="trailing receiving-opportunity profile only applies to pass-catchers.",
+        qb_rushing_profile=TrailingQbRushingProfile(
+            player_id=canonical_id, player_name=name, team=team,
+            trailing_rush_attempts=25, trailing_designed_runs=10, trailing_scrambles=15,
+            designed_run_rate=0.40, trailing_rushing_yards=140, trailing_rush_tds=3,
+            trailing_redzone_rush_attempts=6, trailing_goalline_rush_attempts=3,
+        ),
+        qb_rushing_profile_reason=None,
     )
 
 
@@ -535,6 +600,30 @@ def test_missing_fields_show_reason_strings_not_blank_or_none():
     assert 'cell-main">None<' not in html
     assert 'cell-sub">None<' not in html
     assert "N/A &mdash; None" not in html
+
+
+# --------------------------------------------------------------------------------------------
+# ADR-0030: qb_rushing_profile -- QB-only expand block, descriptive not a ceiling signal
+# --------------------------------------------------------------------------------------------
+
+
+def test_qb_rushing_profile_renders_for_qb_but_not_for_other_positions():
+    weekly_output, _ = _weekly_output_with_three_lineups()
+    qb = _qb_with_rushing_profile("qb_mobile", "Mobile QB", "ZZZ")
+    rb = _rb_with_tier_and_uncontested_prior("rb_bye", "Bye Week Back", "ZZZ")
+
+    html = render_dashboard_html(weekly_output, [qb, rb])
+
+    # The QB's real rushing numbers appear, not dropped or blanked.
+    assert "25 rush att" in html
+    assert "10 designed / 15 scramble" in html
+    assert "40.0% designed-run rate" in html
+    assert "140 yds, 3 TD" in html
+    assert "6 RZ / 3 goal-line att" in html
+
+    # The block label itself only appears once -- for the QB row, not the RB row (RB's
+    # qb_rushing_profile_reason is the "not applicable" reason, which must not render a block).
+    assert html.count(">QB Rushing<") == 1
 
 
 def test_empty_weekly_output_and_empty_player_pool_render_without_crashing():

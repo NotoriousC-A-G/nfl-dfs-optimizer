@@ -22,6 +22,7 @@ import warnings
 
 from nfl_dfs.analysis.ownership_calibration import run_full_calibration
 from nfl_dfs.ceiling.signals import role_share_ceiling_signals, trailing_red_zone_share_by_week
+from nfl_dfs.ingestion.qb_rushing_profile import trailing_qb_rushing_profiles
 from nfl_dfs.ingestion.receiving_profile import trailing_receiving_profiles
 from nfl_dfs.composition.player_detail import build_gsis_to_pff_id_map, build_player_detail_record
 from nfl_dfs.config import config
@@ -261,6 +262,10 @@ def main() -> None:
         "with a trailing red-zone weekly share sequence"
     )
 
+    print("Building real trailing QB rushing-opportunity profiles (ADR-0030, descriptive only)...")
+    qb_rushing_profile_by_gsis_id = trailing_qb_rushing_profiles(pbp, WEEK)
+    print(f"  {len(qb_rushing_profile_by_gsis_id)} player(s) with a trailing QB rushing profile")
+
     print("Fetching real PFF receiving/scheme and defense/coverage_scheme facet grades...")
     receiving_scheme_grades = fetch_matchup_grades("receiving/scheme", WEEK, SEASON)
     coverage_scheme_grades = fetch_matchup_grades("defense/coverage_scheme", WEEK, SEASON)
@@ -332,6 +337,7 @@ def main() -> None:
             receiving_profile_by_gsis_id=receiving_profile_by_gsis_id,
             carry_share_by_week_by_gsis_id=carry_share_by_week_by_gsis_id,
             target_share_by_week_by_gsis_id=target_share_by_week_by_gsis_id,
+            qb_rushing_profile_by_gsis_id=qb_rushing_profile_by_gsis_id,
         )
         player_details.append(record)
 
