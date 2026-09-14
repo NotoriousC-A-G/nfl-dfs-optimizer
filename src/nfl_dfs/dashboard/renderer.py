@@ -836,6 +836,15 @@ def _render_snap_share_cell(usage: SnapShareUsage) -> str:
     )
 
 
+def _fmt_red_zone_trend(pairs: list[tuple[int, float]]) -> str | None:
+    """Real, ordered per-week share sequence behind a single trailing-share number (ADR-0029
+    addendum) -- shows consistency vs. spikiness directly rather than collapsing it, same
+    descriptive posture as the Receiving Opportunity block."""
+    if not pairs:
+        return None
+    return " &middot; ".join(f"W{week} {_fmt_pct(share)}" for week, share in pairs)
+
+
 def _render_red_zone_cell(record: PlayerDetailRecord) -> str:
     usage = record.usage.red_zone
     if usage.reason is not None:
@@ -845,11 +854,17 @@ def _render_red_zone_cell(record: PlayerDetailRecord) -> str:
         lines.append(
             f"RB: {usage.carries_trailing} carries ({_fmt_pct(usage.carry_share_trailing)} share)"
         )
+        carry_trend = _fmt_red_zone_trend(usage.carry_share_by_week)
+        if carry_trend:
+            lines.append(f'<div class="cell-sub">Trend: {carry_trend}</div>')
     if usage.targets_trailing is not None:
         lines.append(
             f"WR/TE: {usage.targets_trailing} targets "
             f"({_fmt_pct(usage.target_share_trailing)} share)"
         )
+        target_trend = _fmt_red_zone_trend(usage.target_share_by_week)
+        if target_trend:
+            lines.append(f'<div class="cell-sub">Trend: {target_trend}</div>')
     if not lines:
         # A real, distinguishable "not applicable role" state, not missing data -- e.g. a pure
         # WR/TE has no RB-role red-zone row at all. Muted, but not styled as an error/na state.

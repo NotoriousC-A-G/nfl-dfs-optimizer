@@ -296,6 +296,35 @@ def red_zone_ceiling_signals(
     return _z_score_and_shrink(boom)
 
 
+def trailing_red_zone_share_by_week(
+    pbp: pd.DataFrame, target_week: int, role: str, *, season_type: str | None = "REG"
+) -> dict[str, list[tuple[int, float]]]:
+    """Real, descriptive (not predictive) per-week trailing red-zone share sequence, `{player_id:
+    [(week, share), ...]}` ordered by week -- ADR-0029's "give the person the real inputs, not a
+    black-box score" posture, applied to Component B's real, bug-fixed data (the same zero-fill-
+    corrected weekly rows `red_zone_ceiling_signals` uses for its own now-shelved boom-rate
+    calibration) without collapsing them into a single summary statistic. A raw week-by-week
+    sequence like `[(1, 0.6), (2, 0.0), (3, 1.0)]` shows the actual consistency-vs-spikiness
+    pattern the Fantasy Football Expert's Component B review named directly, in a way a single
+    boom-rate number can't -- same RB/WR role scope and zero-fill/QB-exclusion treatment as
+    `red_zone_ceiling_signals`.
+    """
+    if role not in (ROLE_RB, ROLE_WR):
+        raise ValueError(f"trailing_red_zone_share_by_week only supports {ROLE_RB!r}/{ROLE_WR!r}, got {role!r}")
+    weekly = aggregate_player_week_red_zone(pbp, season_type=season_type)
+    weekly = weekly[weekly["role"] == role]
+    weekly = _zero_fill_red_zone_weekly(pbp, weekly, role, season_type=season_type)
+    weekly = weekly[weekly["week"] < target_week]
+    if role == ROLE_RB:
+        weekly = _exclude_trailing_qbs(weekly, pbp, target_week, season_type=season_type)
+
+    result: dict[str, list[tuple[int, float]]] = {}
+    for player_id, group in weekly.groupby("player_id", observed=True):
+        pairs = sorted(zip(group["week"], group["share"]), key=lambda pair: pair[0])
+        result[player_id] = [(int(week), float(share)) for week, share in pairs]
+    return result
+
+
 def _aggregate_trailing_adot(pbp: pd.DataFrame, target_week: int, *, season_type: str | None = "REG") -> pd.DataFrame:
     """Trailing (`week < target_week`) mean `air_yards` per target, one row per receiver --
     `air_yards` rides the same `import_pbp_data()` pull `usage_share.py` already consumes for

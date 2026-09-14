@@ -231,12 +231,25 @@ class RedZoneUsage:
     role row (if any), `targets_trailing`/`target_share_trailing` from their `"WR"`-role row (if
     any). A player can legitimately have one, both, or neither populated; `reason` is set only
     when all four are `None` (no trailing red-zone row of either role at all).
+
+    `carry_share_by_week`/`target_share_by_week` (new, ADR-0029 addendum) are the real, ordered
+    `(week, share)` sequence behind `carry_share_trailing`/`target_share_trailing` --
+    `ceiling.signals.trailing_red_zone_share_by_week`'s same descriptive, not-predictive posture
+    applied to Component B's real, bug-fixed data (zero-fill and QB-exclusion already applied),
+    so a person can see the actual consistency-vs-spikiness pattern behind the single trailing
+    number rather than just the number itself. Independent source from `red_zone_trailing`
+    (the pbp-derived weekly lookup vs. the pre-aggregated trailing-share DataFrame), so these can
+    be populated even when the single-number fields above are `None` for lack of the latter --
+    defaults to `[]`, never `None`, when no weekly lookup was supplied or this player has no rows
+    in it.
     """
 
     carries_trailing: int | None
     carry_share_trailing: float | None
     targets_trailing: int | None
     target_share_trailing: float | None
+    carry_share_by_week: list[tuple[int, float]] = field(default_factory=list)
+    target_share_by_week: list[tuple[int, float]] = field(default_factory=list)
     reason: str | None = None
 
 
@@ -574,13 +587,23 @@ def _snap_share_usage(
     return SnapShareUsage(snap_share=snap_share, reason=None)
 
 
-def _red_zone_usage(gsis_id: str | None, red_zone_trailing: pd.DataFrame | None) -> RedZoneUsage:
+def _red_zone_usage(
+    gsis_id: str | None,
+    red_zone_trailing: pd.DataFrame | None,
+    carry_share_by_week_by_gsis_id: dict[str, list[tuple[int, float]]] | None = None,
+    target_share_by_week_by_gsis_id: dict[str, list[tuple[int, float]]] | None = None,
+) -> RedZoneUsage:
+    carry_weeks = (carry_share_by_week_by_gsis_id or {}).get(gsis_id, []) if gsis_id is not None else []
+    target_weeks = (target_share_by_week_by_gsis_id or {}).get(gsis_id, []) if gsis_id is not None else []
+
     if gsis_id is None:
         return RedZoneUsage(
             carries_trailing=None,
             carry_share_trailing=None,
             targets_trailing=None,
             target_share_trailing=None,
+            carry_share_by_week=carry_weeks,
+            target_share_by_week=target_weeks,
             reason=_NO_GSIS_ID_REASON,
         )
     if red_zone_trailing is None or red_zone_trailing.empty:
@@ -589,6 +612,8 @@ def _red_zone_usage(gsis_id: str | None, red_zone_trailing: pd.DataFrame | None)
             carry_share_trailing=None,
             targets_trailing=None,
             target_share_trailing=None,
+            carry_share_by_week=carry_weeks,
+            target_share_by_week=target_weeks,
             reason="no red-zone trailing data supplied to the composer for this week.",
         )
 
@@ -599,6 +624,8 @@ def _red_zone_usage(gsis_id: str | None, red_zone_trailing: pd.DataFrame | None)
             carry_share_trailing=None,
             targets_trailing=None,
             target_share_trailing=None,
+            carry_share_by_week=carry_weeks,
+            target_share_by_week=target_weeks,
             reason=(
                 "no trailing red-zone volume recorded for this player through the last "
                 "completed week (no red-zone carries or targets, or a bye week so far)."
@@ -616,6 +643,8 @@ def _red_zone_usage(gsis_id: str | None, red_zone_trailing: pd.DataFrame | None)
         carry_share_trailing=carry_share,
         targets_trailing=targets,
         target_share_trailing=target_share,
+        carry_share_by_week=carry_weeks,
+        target_share_by_week=target_weeks,
         reason=None,
     )
 
@@ -949,6 +978,8 @@ def build_player_detail_record(
     implied_total_by_team: dict[str, float] | None = None,
     ceiling_signals_by_gsis_id: dict[str, CeilingSignal] | None = None,
     receiving_profile_by_gsis_id: dict[str, TrailingReceivingProfile] | None = None,
+    carry_share_by_week_by_gsis_id: dict[str, list[tuple[int, float]]] | None = None,
+    target_share_by_week_by_gsis_id: dict[str, list[tuple[int, float]]] | None = None,
 ) -> PlayerDetailRecord:
     """Join one player's ADR-0022 `PlayerDetailRecord` for one (season, week) out of already-
     computed, week-scoped lookup collections -- see module docstring for the exact join keys used
@@ -999,12 +1030,20 @@ def build_player_detail_record(
     `receiving_profile_by_gsis_id` (new, ADR-0029) is `ingestion.receiving_profile
     .trailing_receiving_profiles`' already-built output for `receiving_profile`. Optional, same
     shape as every other lookup above.
+
+    `carry_share_by_week_by_gsis_id`/`target_share_by_week_by_gsis_id` (new, ADR-0029 addendum)
+    are `ceiling.signals.trailing_red_zone_share_by_week`'s already-built output for `role=ROLE_RB`
+    and `role=ROLE_WR` respectively, for `red_zone.carry_share_by_week`/`target_share_by_week`.
+    Optional, same shape as every other lookup above -- and independent of `red_zone_trailing`
+    (a different, pre-aggregated data source), so these can populate even when that one is absent.
     """
     gsis_id = identity.nflverse_gsis_id
 
     role_share_usage = _role_share_usage(gsis_id, team, position, role_share_results)
     snap_share_usage = _snap_share_usage(gsis_id, snap_shares_by_player)
-    red_zone_usage = _red_zone_usage(gsis_id, red_zone_trailing)
+    red_zone_usage = _red_zone_usage(
+        gsis_id, red_zone_trailing, carry_share_by_week_by_gsis_id, target_share_by_week_by_gsis_id
+    )
     own_scheme_splits = _own_scheme_splits(identity, position, receiving_scheme_grades, gsis_to_pff_id)
     matchup_this_week = _matchup_this_week(
         team, position, opponent_team_this_week, team_coverage_tendency, matchup_facets

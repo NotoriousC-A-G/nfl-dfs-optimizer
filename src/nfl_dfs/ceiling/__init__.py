@@ -12,6 +12,7 @@ from nfl_dfs.ceiling.signals import (
     component_a_multiplier,
     red_zone_ceiling_signals,
     role_share_ceiling_signals,
+    trailing_red_zone_share_by_week,
 )
 
 __all__ = [
@@ -25,4 +26,5 @@ __all__ = [
     "component_a_multiplier",
     "red_zone_ceiling_signals",
     "role_share_ceiling_signals",
+    "trailing_red_zone_share_by_week",
 ]

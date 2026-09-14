@@ -233,6 +233,7 @@ def _fully_populated_player_detail(
             carry_share_trailing=None,
             targets_trailing=9,
             target_share_trailing=0.42,
+            target_share_by_week=[(3, 0.60), (4, 0.0), (5, 0.50)],
             reason=None,
         ),
     )
@@ -432,6 +433,7 @@ def test_normal_case_renders_all_three_tabs_and_real_lineup_data():
     assert "$6,500" in html  # salary
     assert "27.0%" in html  # role_share_blended
     assert "42.0%" in html  # target_share_trailing
+    assert "W3 60.0%" in html and "W4 0.0%" in html and "W5 50.0%" in html  # target_share_by_week trend
     assert "Identified leader" in html
     assert "Bell-cow" in html
     assert "Uncontested prior" in html

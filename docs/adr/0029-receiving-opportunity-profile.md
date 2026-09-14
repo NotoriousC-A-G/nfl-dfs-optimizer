@@ -53,3 +53,33 @@ and surfaced in the Player Detail dashboard's per-row expand, right next to Red 
 - Live-verified: real trailing numbers render correctly for real players once trailing weeks exist;
   honestly shows "no trailing data yet" for week 1, matching every other trailing-stat section's
   behavior this early in a season.
+
+## Addendum: red-zone weekly share sequence (same posture, Component B's data)
+
+Chris's own framing named red-zone targets alongside aDOT/air yards/YAC as this same "what
+opportunity are they getting" category. Red-zone usage already had a single trailing-share number
+(`RedZoneUsage.carry_share_trailing`/`target_share_trailing`, ADR-0022) built from Component B's
+real, bug-fixed weekly data (the zero-fill and QB-exclusion fixes found during the `CeilingMultiplier`
+red-zone backtest, ADR-0028) -- but a single number collapses exactly the consistency-vs-spikiness
+distinction the Fantasy Football Expert's Component B review named directly ("is this a bell-cow
+red-zone back or one spike week carrying the average").
+
+`ceiling.signals.trailing_red_zone_share_by_week(pbp, target_week, role)` returns the real, ordered
+`[(week, share), ...]` sequence behind that number -- same zero-fill/QB-exclusion/no-look-ahead
+treatment `red_zone_ceiling_signals` already uses, just not collapsed into a boom-rate summary.
+Wired onto `RedZoneUsage.carry_share_by_week`/`target_share_by_week` (`PlayerDetailRecord`'s
+existing red-zone section, not a new block -- keeps the dashboard lean, groups it with the number
+it explains) and rendered as a "Trend: W3 60% &middot; W4 0% &middot; W5 50%"-style sub-line under
+each existing carries/targets line in the Red Zone expand block.
+
+Deliberately independent of `red_zone_trailing` (the pre-aggregated summary DataFrame `carries_
+trailing`/`target_share_trailing` are sourced from) -- the weekly sequence is sourced straight from
+`pbp`, so it can populate even on a week the summary DataFrame wasn't supplied. No new backtest, no
+new claim: this is Component B's already-real, already-bug-fixed data, shown as raw facts rather
+than resurrected as a scored signal (Component B still ships no live multiplier, per ADR-0028's
+final verdict -- RB fell short of significance even under a clustered-SE check, and WR's real
+negative finding can't be expressed in `CeilingMultiplier`'s one-sided formula).
+
+Live-verified: runs end-to-end without error against a real slate pull; correctly shows "no
+red-zone trailing data supplied" for week 1 (no trailing weeks exist yet), same expected behavior
+as every other trailing-stat section this early in a season.

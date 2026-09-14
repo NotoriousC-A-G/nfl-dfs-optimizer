@@ -13,6 +13,7 @@ from nfl_dfs.ceiling.signals import (
     component_a_multiplier,
     red_zone_ceiling_signals,
     role_share_ceiling_signals,
+    trailing_red_zone_share_by_week,
 )
 from nfl_dfs.ingestion.usage_share import ROLE_RB, ROLE_WR
 
@@ -242,6 +243,53 @@ def test_red_zone_ceiling_signals_zero_median_still_credits_real_spike_weeks():
     # at zero.
     assert rbh.sample_size == 5
     assert rbh.raw_value == pytest.approx(0.4)
+
+
+# --------------------------------------------------------------------------------------------
+# trailing_red_zone_share_by_week
+# --------------------------------------------------------------------------------------------
+
+
+def test_trailing_red_zone_share_by_week_returns_ordered_real_sequence():
+    # Same shutout-vs-no-redzone-week fixture as the boom-rate test above, but here checking the
+    # raw per-week sequence itself (ADR-0029's "show the real inputs, not a collapsed score"
+    # posture applied to Component B): week 2's real shutout must appear as (2, 0.0), while
+    # week 4 (team never reached the red zone) must be absent entirely, not fabricated as 0.0.
+    rows = (
+        _rush(1, "GB", "RBF", "Runner F", 2, 1, yardline_100=10)
+        + _rush(1, "GB", "RBF", "Runner F", 3, 3, yardline_100=45)
+        + _rush(2, "GB", "RBF", "Runner F", 3, 10, yardline_100=45)
+        + _rush(2, "GB", "RBG", "Runner G", 2, 20, yardline_100=10)
+        + _rush(3, "GB", "RBF", "Runner F", 2, 30, yardline_100=10)
+        + _rush(3, "GB", "RBF", "Runner F", 3, 32, yardline_100=45)
+        + _rush(4, "GB", "RBF", "Runner F", 3, 40, yardline_100=45)
+        + _rush(4, "GB", "RBG", "Runner G", 3, 50, yardline_100=45)
+    )
+    result = trailing_red_zone_share_by_week(pd.DataFrame(rows), target_week=5, role=ROLE_RB)
+    assert result["RBF"] == [(1, pytest.approx(1.0)), (2, pytest.approx(0.0)), (3, pytest.approx(1.0))]
+
+
+def test_trailing_red_zone_share_by_week_excludes_future_weeks_and_trailing_qbs():
+    rows = (
+        _two_rb_share_swing_rows()
+        + _rush(1, "GB", "RBA", "Runner A", 1, 200, yardline_100=10)
+        + _rush(5, "GB", "RBA", "Runner A", 1, 900, yardline_100=10)  # future week, excluded
+        + _pass_attempts(1, "GB", "QB1", "Mobile QB", 30, 500)
+        + _pass_attempts(2, "GB", "QB1", "Mobile QB", 30, 600)
+        + _pass_attempts(3, "GB", "QB1", "Mobile QB", 30, 700)
+        + _rush(1, "GB", "QB1", "Mobile QB", 1, 800, yardline_100=10)
+    )
+    result = trailing_red_zone_share_by_week(pd.DataFrame(rows), target_week=5, role=ROLE_RB)
+    assert "QB1" not in result
+    # The team only reached the red zone (by this fixture's construction) in weeks 1 and 5 --
+    # week 5 is the target week itself and must not leak into the trailing sequence. Week 1's RZ
+    # plays are split between RBA and the excluded QB1 scrambler, so RBA's share is 0.5.
+    assert result["RBA"] == [(1, pytest.approx(0.5))]
+
+
+def test_trailing_red_zone_share_by_week_rejects_unsupported_role():
+    with pytest.raises(ValueError, match="RB.*WR|WR.*RB"):
+        trailing_red_zone_share_by_week(pd.DataFrame([_pbp_row()]), target_week=2, role="TE")
 
 
 # --------------------------------------------------------------------------------------------

@@ -250,6 +250,10 @@ def test_fully_populated_record_joins_every_source_for_the_right_player():
         team_coverage_tendency=coverage_tendency,
         game_environment_by_team=ges_by_team,
         projections_by_canonical_id=projections_by_canonical_id,
+        target_share_by_week_by_gsis_id={
+            wr_gsis: [(1, 0.5), (2, 0.0)],
+            other_wr_gsis: [(1, 0.1), (2, 0.2)],
+        },
     )
 
     # salary -- joined via canonical_id, the right player's row, not the teammate's.
@@ -273,6 +277,11 @@ def test_fully_populated_record_joins_every_source_for_the_right_player():
     assert record.usage.red_zone.target_share_trailing == pytest.approx(0.30)
     assert record.usage.red_zone.carries_trailing is None  # no RB-role row for a WR
     assert record.usage.red_zone.reason is None
+
+    # red zone weekly sequence (ADR-0029 addendum) -- the right player's own list, not the
+    # teammate's, and carry_share_by_week stays empty since no RB-role dict was supplied.
+    assert record.usage.red_zone.target_share_by_week == [(1, 0.5), (2, 0.0)]
+    assert record.usage.red_zone.carry_share_by_week == []
 
     # own scheme splits -- joined via identity.sources["pff"], the right PFF row, not the
     # teammate's "99999" row.
@@ -409,6 +418,28 @@ def test_no_gsis_id_nulls_out_every_nflverse_joined_section_with_a_shared_reason
     # all), not the shared "_NO_GSIS_ID_REASON" every gsis_id-joined section above uses.
     assert record.own_scheme_splits.reason != record.usage.role_share.reason
     assert "no PFF player_id resolved" in record.own_scheme_splits.reason
+
+
+def test_red_zone_weekly_shares_populate_independently_of_red_zone_trailing_frame():
+    # ADR-0029 addendum: carry_share_by_week/target_share_by_week come from a separate, pbp-
+    # derived lookup (ceiling.signals.trailing_red_zone_share_by_week) than red_zone_trailing (the
+    # pre-aggregated summary DataFrame) -- so the weekly sequence must still populate even when
+    # red_zone_trailing itself is entirely absent (the single-number fields correctly stay None).
+    gsis_id = "00-0038557"
+    identity = _identity(canonical_id=gsis_id, name="Change-of-Pace Back", position="RB", team="GB", gsis_id=gsis_id)
+    record = build_player_detail_record(
+        identity,
+        SEASON,
+        WEEK,
+        team="GB",
+        position="RB",
+        opponent_team_this_week="CHI",
+        carry_share_by_week_by_gsis_id={gsis_id: [(1, 1.0), (2, 0.0), (3, 0.5)]},
+    )
+    assert record.usage.red_zone.carries_trailing is None
+    assert record.usage.red_zone.reason is not None
+    assert record.usage.red_zone.carry_share_by_week == [(1, 1.0), (2, 0.0), (3, 0.5)]
+    assert record.usage.red_zone.target_share_by_week == []
 
 
 def test_own_scheme_splits_not_applicable_for_qb():
