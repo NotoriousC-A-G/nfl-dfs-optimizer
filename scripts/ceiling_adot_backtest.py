@@ -93,6 +93,8 @@ def main() -> None:
                             "season": season, "week": target_week, "role": position,
                             "player_id": signal.player_id,
                             "shrunk_z": signal.shrunk_z_score,
+                            "raw_z": signal.z_score,
+                            "trailing_targets": signal.sample_size,
                             "boom": boom,
                             "relative_performance": actual / median,
                             "raw_adot": signal.raw_value,
@@ -135,7 +137,34 @@ def main() -> None:
             f"  Cluster-robust fit (player_id clusters, G={n_clusters}) -- "
             f"slope={clustered_slope:.4f}  SE={clustered_se:.4f}  95% CI=[{clustered_ci[0]:.4f}, {clustered_ci[1]:.4f}]"
         )
-        print(f"  --> clears zero: {clustered_ci[0] > 0 or clustered_ci[1] < 0}\n")
+        print(f"  --> clears zero: {clustered_ci[0] > 0 or clustered_ci[1] < 0}")
+
+        # Model Analytics Expert's required due-diligence rerun: does shrinkage (k=6, borrowed
+        # from a weeks-scale signal, never re-derived for a targets-scale one) mask a real signal
+        # specifically in the low-trailing-target subgroup where it bites hardest? Both already
+        # computed on CeilingSignal, no new data pull -- (a) refit on the UNSHRUNK z_score, (b)
+        # split by trailing-target tercile.
+        raw_z = positive["raw_z"].to_numpy()
+        raw_slope, raw_se, raw_ci, raw_g = _linear_fit_clustered_se(raw_z, log_perf, positive["player_id"].to_numpy())
+        print(f"  Unshrunk-z cluster-robust fit -- slope={raw_slope:.4f}  SE={raw_se:.4f}  95% CI=[{raw_ci[0]:.4f}, {raw_ci[1]:.4f}]")
+
+        tiered = positive.copy()
+        tiered["target_tier"] = pd.qcut(tiered["trailing_targets"], 3, labels=["low", "mid", "high"], duplicates="drop")
+        print("  Trailing-target tercile split (shrunk_z, cluster-robust):")
+        for tier in ["low", "mid", "high"]:
+            tier_df = tiered[tiered["target_tier"] == tier]
+            if len(tier_df) < 30:
+                print(f"    {tier}: n={len(tier_df)} too small to fit")
+                continue
+            t_log_perf = np.log(tier_df["relative_performance"].to_numpy())
+            t_z = tier_df["shrunk_z"].to_numpy()
+            t_slope, t_se, t_ci, t_g = _linear_fit_clustered_se(t_z, t_log_perf, tier_df["player_id"].to_numpy())
+            mean_targets = tier_df["trailing_targets"].mean()
+            print(
+                f"    {tier:>4} (mean trailing targets={mean_targets:.1f}, n={len(tier_df)}, G={t_g}): "
+                f"slope={t_slope:.4f}  SE={t_se:.4f}  95% CI=[{t_ci[0]:.4f}, {t_ci[1]:.4f}]"
+            )
+        print()
 
 
 if __name__ == "__main__":

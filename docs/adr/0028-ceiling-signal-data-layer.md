@@ -324,3 +324,54 @@ benefits any future component built on `_boom_rate_per_player`), a full backtest
 methodology now proven out twice (Component A shipped, Component B honestly didn't), and a named,
 scoped future construct (WR red-zone role-security) with real preliminary evidence already
 gathered rather than starting from nothing.
+
+## Update (2026-09-14): Component C (aDOT) backtested -- a clean, thoroughly-verified null
+
+Completed the three-component set. Component C's design (population split by position label, a
+disclosed degradation from the Fantasy Football Expert's requested true-alignment split; low volume
+floor + shrinkage rather than a hard gate) was already independently reviewed in the original round
+-- this pass was backtest-and-calibrate only, run with the cluster-robust SE check built in from the
+start rather than as a follow-up rerun (`scripts/ceiling_adot_backtest.py`, 5 seasons, same
+player-level `log(relative_performance) ~ shrunk_z` methodology as A/B).
+
+**Result:** WR (n=6,328, G=301): slope=0.0236, cluster-robust CI=[-0.0096, 0.0567] -- positive
+direction, matching the original hypothesis, but doesn't clear zero. TE (n=2,824, G=154):
+slope=-0.0236, CI=[-0.0637, 0.0166] -- flips slightly negative, also doesn't clear zero. Decile-level
+R² is far weaker than anything this project has produced for a real-but-underpowered signal (WR
+0.013, TE 0.030, vs. Component B RB's 0.523 after its own fix) -- the specific pattern this
+project's own track record associates with "no relationship," not "suppressed relationship."
+
+**Both experts signed off on closing this out as a real null, no live multiplier for either
+position.** The Fantasy Football Expert's read: aDOT conflates role (does this player run deep
+routes) with opportunity/quality (does he win them), and is structurally blind to the YAC-driven
+half of DK ceiling that scores identically to a genuine deep completion -- a conceptual mismatch
+between the metric and the mechanism it was meant to proxy, not a data or population problem. They
+explicitly do not think the still-missing true-alignment split would flip the result (it would
+mainly clean up TE noise, not fix the underlying conflation) and named a better-specified future
+candidate instead: **explosive-target rate** (a boom-shaped statistic matching Components A/B's own
+convention, rather than a level stat), possibly combined with a YAC-per-catch signal -- a
+genuinely different hypothesis worth its own future round, not a reason to keep Component C open.
+
+The Model Analytics Expert signed off contingent on one cheap due-diligence rerun (already-computed
+fields, no new data pull, in the spirit of Component B's own required checks): does `CEILING_SHRINKAGE_K
+=6.0` -- borrowed from a weeks-scale signal, never re-derived for aDOT's targets-scale axis --
+mask a real signal specifically in the low-trailing-target subgroup where shrinkage bites hardest
+(worked out by hand: `w(8)=0.57` vs. `w(100)=0.94`, meaning most of the sample is barely shrunk at
+all, but the low end is real)? **Rerun confirms it does not:** refit on the unshrunk `z_score`
+(WR slope=0.0198, CI=[-0.0078,0.0475]; TE slope=-0.0199, CI=[-0.0517,0.0118] -- both still include
+zero, similar magnitude to the shrunk version) and a trailing-target tercile split (six cells
+across both positions, every single one straddles zero, including the low-target tier the original
+"low-target-share deep threat" hypothesis was specifically about). This is exactly what the Model
+Analytics Expert predicted going in ("my expectation... is that it corroborates rather than
+overturns the null") -- confirmed, not just asserted.
+
+**Final state of `CeilingMultiplier`, all three components resolved:** Component A shipped
+(`scale_RB=0.1177`, `scale_WR=0.0798`, live in `component_a_multiplier`). Component B ships nothing
+(RB real but statistically insufficient even under cluster-robust SEs; WR real but architecturally
+inexpressible in the one-sided floor -- named as a future role-security/downside-risk construct).
+Component C ships nothing (a clean, thoroughly-verified null for both WR and TE -- named as a
+future explosive-target-rate candidate, a different hypothesis from what was tested here). Two real
+bugs fixed in shared infrastructure along the way, benefiting any future component. The whole
+investigation -- draft, football correction, backtest, bug-hunting, re-interpretation, final
+statistical sign-off -- is the process this project's review discipline was built for, run in full,
+twice over, on components that ultimately didn't ship as much as the one that did.
