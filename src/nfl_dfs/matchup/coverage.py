@@ -129,13 +129,19 @@ def identify_alignment_defender(
     return AlignmentDefenderMatch(defender=top, alignment=target)
 
 
+MULTIPLIER_SPAN_PER_Z = 0.10
+
+
 def _capped_multiplier(grade_differential: float) -> float:
     """Provisional z-score-to-multiplier mapping (PRD Section 6, draft range).
 
-    Pending Model Analytics Expert sign-off on both the mapping and the cap
-    range before this is treated as final.
+    Matches matchup.context's inline mapping for every other position, so a
+    WR/TE's multiplier magnitude doesn't shift just because alignment data
+    happened to be available for that matchup (see ADR-0022) — only the
+    confidence label changes. Pending Model Analytics Expert sign-off on both
+    the mapping and the cap range before this is treated as final.
     """
-    return max(MULTIPLIER_FLOOR, min(MULTIPLIER_CEILING, 1.0 + 0.05 * grade_differential))
+    return max(MULTIPLIER_FLOOR, min(MULTIPLIER_CEILING, 1.0 + MULTIPLIER_SPAN_PER_Z * grade_differential))
 
 
 def compute_coverage_multiplier(

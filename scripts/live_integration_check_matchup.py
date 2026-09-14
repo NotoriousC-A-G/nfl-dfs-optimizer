@@ -4,13 +4,15 @@
 Pulls real slot-coverage and receiving-alignment data from the PFF Developer
 API for one league-season-week, runs it through build_matchup_context_pool
 (ADR-0022), and reports the coverage_confidence distribution across that
-week's receivers.
+week's WR/TE.
 
 Requires a real PFF Pro API key in the PFF_API_KEY environment variable
-(see www.pff.com/account/api-keys). Grade-differential ingestion isn't wired
-yet (see matchup/coverage.py's "Known ingestion gap"), so every receiver here
-uses a neutral placeholder grade differential of 0.0 — this script validates
-the *confidence* classification, not the multiplier magnitude.
+(see www.pff.com/account/api-keys). Grade-differential ingestion for the six
+MatchupFacetInputs facets isn't wired yet -- this script uses a neutral
+placeholder value (identical across every team, so the z-score differential
+resolves to 0.0 for everyone) for receiving_scheme/defense_coverage_scheme,
+and leaves the other four facets empty. This validates the *confidence*
+classification, not the multiplier magnitude.
 
 Usage:
     PFF_API_KEY=ak_... python scripts/live_integration_check_matchup.py --season 2024 --week 1
@@ -29,9 +31,10 @@ from nfl_dfs.ingestion.pff import (
     PFFClient,
     PFFCredentialsError,
 )
-from nfl_dfs.matchup.context import PassCatcherInput, build_matchup_context_pool
+from nfl_dfs.matchup.context import MatchupFacetInputs, build_matchup_context_pool
+from nfl_dfs.matchup.coverage import CoverageConfidence
 
-NEUTRAL_GRADE_DIFFERENTIAL = 0.0
+NEUTRAL_GRADE = 70.0
 
 
 def _resolve_opponents(client: PFFClient, league: str, season: int, week: int) -> dict[str, str]:
@@ -39,7 +42,7 @@ def _resolve_opponents(client: PFFClient, league: str, season: int, week: int) -
 
     `/v1/games`'s `home_team`/`away_team` are nested team objects
     (`{"abbreviation": "SF", ...}`), not flat strings as the OpenAPI spec's
-    own example suggested — this pulls the abbreviation out of each.
+    own example suggested -- this pulls the abbreviation out of each.
     """
     payload = client.get(GAMES_PATH, {"league": league, "season": season, "week": week})
     opponents = {}
@@ -53,18 +56,22 @@ def _resolve_opponents(client: PFFClient, league: str, season: int, week: int) -
     return opponents
 
 
-def _resolve_receiver_teams(client: PFFClient, league: str, season: int, week: int) -> dict[str, str]:
-    """player_id -> team, from the receiving-summary report's raw rows.
+def _resolve_receiver_team_and_position(
+    client: PFFClient, league: str, season: int, week: int
+) -> dict[str, tuple[str, str]]:
+    """player_id -> (team, position), from the receiving-summary report's raw rows.
 
-    ReceiverAlignmentShare intentionally has no team field, so this script
-    pulls it separately from the same report the typed ingestion consumes.
+    ReceiverAlignmentShare intentionally has no team/position field, so this
+    script pulls them separately from the same report the typed ingestion
+    consumes.
     """
     payload = client.get(RECEIVING_SUMMARY_PATH, {"league": league, "season": season, "week": week})
-    return {
-        str(row["player_id"]): row["team"]
-        for row in payload.get("receiving_summary", [])
-        if row.get("player_id") is not None and row.get("team")
-    }
+    result = {}
+    for row in payload.get("receiving_summary", []):
+        player_id, team, position = row.get("player_id"), row.get("team"), row.get("position")
+        if player_id is not None and team and position:
+            result[str(player_id)] = (team, position)
+    return result
 
 
 def main() -> int:
@@ -88,40 +95,50 @@ def main() -> int:
             args.league, args.season, args.week
         )
         opponents = _resolve_opponents(client, args.league, args.season, args.week)
-        receiver_teams = _resolve_receiver_teams(client, args.league, args.season, args.week)
+        receiver_info = _resolve_receiver_team_and_position(client, args.league, args.season, args.week)
     except PFFAPIError as exc:
         print(f"PFF API request failed: {exc}", file=sys.stderr)
         return 1
 
-    pass_catchers = []
+    teams_seen = {team for team, _position in receiver_info.values()} | set(opponents)
+    neutral_by_team = {team: NEUTRAL_GRADE for team in teams_seen}
+    facets = MatchupFacetInputs(
+        offense_run_blocking={},
+        defense_run={},
+        offense_pass_blocking={},
+        defense_pass_rush={},
+        defense_coverage_scheme=neutral_by_team,
+        receiving_scheme=neutral_by_team,
+    )
+
+    players = []
     for share in receiver_alignment_share:
-        team = receiver_teams.get(share.player_id)
-        opponent = opponents.get(team) if team else None
-        if not team or not opponent:
+        info = receiver_info.get(share.player_id)
+        if info is None:
             continue
-        pass_catchers.append(
-            PassCatcherInput(
-                player_id=share.player_id,
-                team=team,
-                opponent=opponent,
-                team_coverage_grade_differential=NEUTRAL_GRADE_DIFFERENTIAL,
-            )
-        )
+        team, position = info
+        opponent = opponents.get(team)
+        if not opponent:
+            continue
+        players.append((share.player_id, position, team, opponent))
 
-    results = build_matchup_context_pool(pass_catchers, defender_alignment_snaps, receiver_alignment_share)
+    pool = build_matchup_context_pool(players, facets, defender_alignment_snaps, receiver_alignment_share)
 
-    counts = Counter(r.coverage_confidence.value for r in results)
-    print(f"{args.league} {args.season} week {args.week}: {len(results)} receivers checked")
+    counts = Counter(
+        context.coverage_confidence.value if context.coverage_confidence else "not_applicable"
+        for context in pool.values()
+    )
+    print(f"{args.league} {args.season} week {args.week}: {len(pool)} WR/TE checked")
     for confidence, count in counts.most_common():
         print(f"  {confidence}: {count}")
 
-    confident = [r for r in results if r.coverage_confidence.value == "confident"]
+    confident = [c for c in pool.values() if c.coverage_confidence == CoverageConfidence.CONFIDENT]
     if confident:
         print("\nConfident matches:")
-        for r in confident[:10]:
-            print(f"  player {r.player_id} -> defender {r.matched_defender_id}")
+        for context in confident[:10]:
+            print(f"  player {context.player_id} -> defender {context.matched_defender_id}")
     else:
-        print("\nNo confident matches this week (fell back to team_wide/no_data for everyone).")
+        print("\nNo confident matches this week (fell back to team_wide/not_applicable for everyone).")
 
     return 0
 
