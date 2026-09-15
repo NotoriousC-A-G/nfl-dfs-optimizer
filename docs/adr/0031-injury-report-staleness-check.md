@@ -1,7 +1,9 @@
 # ADR-0031: Injury-feed staleness check -- a real, reproducible measurement, and a structural finding neither source alone can fix
 
 **Status:** Accepted (investigation complete, both new modules implemented, unit-tested, and
-live-verified; no dashboard wiring changes made this round -- see "Decision" and "Consequences")
+live-verified; no dashboard wiring changes made this round -- see "Decision" and "Consequences".
+The longitudinal snapshot archive this ADR named as "the real fix, if this is worth pursuing
+further" has since been built -- see `docs/adr/0038-injury-snapshot-archive.md`.)
 **Date:** 2026-09-15
 **Owner:** Chris, per his explicit direction ("injury-feed staleness" investigation)
 **Related:** `src/nfl_dfs/ingestion/rotogrinders_injuries.py` (the only injury source currently
