@@ -54,11 +54,12 @@ from nfl_dfs.normalization.crosswalk import fetch_crosswalk
 from nfl_dfs.normalization.injury_lookup import team_injuries
 from nfl_dfs.normalization.matcher import reconcile_week
 from nfl_dfs.normalization.registry import PlayerRegistry
-from nfl_dfs.optimizer.lineup import LineupGenerationError, generate_dup_risk_aware_lineups
+from nfl_dfs.optimizer.lineup import EXCLUDED_INJURY_STATUSES, LineupGenerationError, generate_dup_risk_aware_lineups
 from nfl_dfs.output.weekly_output import build_weekly_output
 from nfl_dfs.ownership.leverage import build_leverage_assessments
 from nfl_dfs.projection.blend import (
     build_projection_pool,
+    extract_dk_injury_status,
     extract_dk_salary,
     extract_footballguys_points,
     extract_rotogrinders_fpts,
@@ -113,14 +114,19 @@ def main() -> None:
     print(f"\n{len(identities)} DK anchor players reconciled.\n")
 
     dk_salary = extract_dk_salary(dk_payload)
+    dk_injury_status = extract_dk_injury_status(dk_payload)
     rotogrinders_fpts = extract_rotogrinders_fpts(rg_payload) if rg_payload else {}
     footballguys_points = {}
     for html in fbg_html_by_position.values():
         footballguys_points.update(extract_footballguys_points(html))
 
-    pool = build_projection_pool(identities, dk_salary, rotogrinders_fpts, footballguys_points)
+    pool = build_projection_pool(identities, dk_salary, rotogrinders_fpts, footballguys_points, dk_injury_status)
     usable = [p for p in pool if p.blended_projection is not None and p.salary is not None]
-    print(f"Projection pool: {len(pool)} total, {len(usable)} usable by the optimizer.\n")
+    from collections import Counter
+
+    status_counts = Counter(p.dk_injury_status for p in pool if p.dk_injury_status is not None)
+    print(f"Projection pool: {len(pool)} total, {len(usable)} usable by the optimizer.")
+    print(f"  DK injury/roster status (excluded from lineup generation: {sorted(EXCLUDED_INJURY_STATUSES)}): {dict(status_counts)}\n")
 
     projections_by_canonical_id = {p.canonical_id: p for p in pool}
 

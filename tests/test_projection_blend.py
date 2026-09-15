@@ -11,6 +11,7 @@ from nfl_dfs.projection.blend import (
     blend_player_projection,
     build_projection_pool,
     extract_dk_avg_points_per_game,
+    extract_dk_injury_status,
     extract_dk_salary,
     extract_footballguys_points,
     extract_rotogrinders_fpts,
@@ -112,6 +113,31 @@ def test_no_dk_match_means_no_salary_but_projection_still_blends():
     assert result.blended_projection == 11.0
 
 
+def test_dk_injury_status_carried_through_when_present():
+    identity = _identity()
+    result = blend_player_projection(
+        identity, dk_salary={"dk1": 3000}, dk_injury_status={"dk1": "IR"}
+    )
+    assert result.dk_injury_status == "IR"
+    # Carrying the status through is not itself an exclusion -- blend_player_projection has no
+    # opinion on eligibility, only optimizer.lineup._eligible_pool does.
+    assert result.salary == 3000
+
+
+def test_dk_injury_status_none_when_absent_or_no_dk_match():
+    identity = _identity()
+    assert blend_player_projection(identity, dk_salary={"dk1": 3000}).dk_injury_status is None
+    assert (
+        blend_player_projection(identity, dk_salary={"dk1": 3000}, dk_injury_status={"other": "IR"}).dk_injury_status
+        is None
+    )
+    no_dk_identity = _identity(dk_id=None)
+    assert (
+        blend_player_projection(no_dk_identity, dk_salary={}, dk_injury_status={"dk1": "IR"}).dk_injury_status
+        is None
+    )
+
+
 # --- DST baseline -----------------------------------------------------------------------
 
 
@@ -171,6 +197,17 @@ def test_build_projection_pool_keeps_uncovered_players_with_null_projection():
     assert pool[0].blended_projection is None
     assert pool[0].source_count == 0
     assert pool[0].salary == 4200
+
+
+def test_build_projection_pool_carries_dk_injury_status_through_per_player():
+    healthy = _identity(canonical_id="healthy-1", dk_id="dk1")
+    on_ir = _identity(canonical_id="ir-1", dk_id="dk2")
+    pool = build_projection_pool(
+        [healthy, on_ir], dk_salary={"dk1": 7000, "dk2": 3000}, dk_injury_status={"dk2": "IR"}
+    )
+    by_id = {p.canonical_id: p for p in pool}
+    assert by_id["healthy-1"].dk_injury_status is None
+    assert by_id["ir-1"].dk_injury_status == "IR"
 
 
 # --- extraction helpers: RotoGrinders -------------------------------------------------------
@@ -253,6 +290,34 @@ def test_extract_dk_salary_reads_salary_by_player_dk_id():
         ]
     }
     assert extract_dk_salary(payload) == {"485454": 7300, "111111": 5000}
+
+
+def test_extract_dk_injury_status_reads_real_statuses_by_player_dk_id():
+    payload = {
+        "draftables": [
+            {"playerDkId": 19839, "status": "IR"},
+            {"playerDkId": 19839, "status": "IR"},  # duplicate roster-slot row, same status
+            {"playerDkId": 22222, "status": "OUT"},
+            {"playerDkId": 33333, "status": "Q"},
+            {"playerDkId": 44444, "status": "D"},
+        ]
+    }
+    assert extract_dk_injury_status(payload) == {"19839": "IR", "22222": "OUT", "33333": "Q", "44444": "D"}
+
+
+def test_extract_dk_injury_status_never_fabricates_a_status_for_a_healthy_player():
+    # DK sends the literal STRING "None" (not JSON null) for a healthy player -- confirmed live.
+    # That, a real null, and a missing key must all be treated identically: no entry at all.
+    payload = {
+        "draftables": [
+            {"playerDkId": 1, "status": "None"},
+            {"playerDkId": 2, "status": None},
+            {"playerDkId": 3, "status": ""},
+            {"playerDkId": 4},  # key entirely absent
+            {"playerDkId": 5, "status": "IR"},
+        ]
+    }
+    assert extract_dk_injury_status(payload) == {"5": "IR"}
 
 
 def test_extract_dk_avg_points_per_game_reads_id_90_and_ignores_other_attribute_ids():

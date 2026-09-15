@@ -2,6 +2,7 @@ import pytest
 
 from nfl_dfs.analysis.dup_risk_calibration import DupRiskLookupTable
 from nfl_dfs.optimizer.lineup import (
+    EXCLUDED_INJURY_STATUSES,
     FLEX_GROUP_TOTAL,
     LINEUP_2_FALLBACK_BUCKET,
     LINEUP_2_MAX_BUCKET,
@@ -16,6 +17,7 @@ from nfl_dfs.optimizer.lineup import (
     SALARY_CAP,
     Lineup,
     LineupGenerationError,
+    _eligible_pool,
     _select_dup_risk_aware_lineups,
     generate_dup_risk_aware_lineups,
     generate_lineups,
@@ -29,6 +31,8 @@ def _p(
     team: str,
     salary: int,
     projection: float,
+    *,
+    dk_injury_status: str | None = None,
 ) -> PlayerProjection:
     return PlayerProjection(
         canonical_id=canonical_id,
@@ -39,6 +43,7 @@ def _p(
         blended_projection=projection,
         source_count=2,
         source_values={"rotogrinders": projection, "footballguys": projection},
+        dk_injury_status=dk_injury_status,
     )
 
 
@@ -218,6 +223,43 @@ def test_zero_coverage_players_are_excluded_from_the_candidate_pool():
     )
     lineup = generate_lineups(pool + [ghost], n=1)[0]
     assert "ghost" not in {p.canonical_id for p in lineup.players}
+
+
+# --------------------------------------------------------------------------------------------
+# IR/OUT players are excluded from the candidate pool (found live 2026-09-15 -- a confirmed-IR
+# player was reaching the ILP solve; DK's own `status` field had never been read before)
+# --------------------------------------------------------------------------------------------
+
+
+def test_eligible_pool_excludes_players_on_excluded_injury_statuses():
+    pool = [_p(status, "WR", "AAA", 3000, 20.0, dk_injury_status=status) for status in EXCLUDED_INJURY_STATUSES]
+    assert _eligible_pool(pool) == {}
+
+
+def test_eligible_pool_keeps_players_with_no_designation_or_a_playable_status():
+    healthy = _p("healthy", "WR", "AAA", 3000, 20.0, dk_injury_status=None)
+    questionable = _p("questionable", "WR", "AAA", 3000, 20.0, dk_injury_status="Q")
+    doubtful = _p("doubtful", "WR", "AAA", 3000, 20.0, dk_injury_status="D")
+    result = _eligible_pool([healthy, questionable, doubtful])
+    assert set(result.keys()) == {"healthy", "questionable", "doubtful"}
+
+
+def test_generate_lineups_never_drafts_an_ir_player_even_when_it_is_the_best_value():
+    # An IR player priced absurdly cheap relative to its (fabricated-high) projection would
+    # dominate the objective if wrongly included -- same shape as the zero-coverage "ghost"
+    # test above, but exercising the injury-status exclusion instead of the None-projection one.
+    pool = _synthetic_pool()
+    ir_player = _p("ir_star", "WR", "AAA", 100, 99.0, dk_injury_status="IR")
+    lineup = generate_lineups(pool + [ir_player], n=1)[0]
+    assert "ir_star" not in {p.canonical_id for p in lineup.players}
+
+
+def test_generate_lineups_still_drafts_a_questionable_player_when_it_is_the_best_value():
+    # Q/D are real DFS strategic decisions, not a guaranteed non-play -- must stay eligible.
+    pool = _synthetic_pool()
+    questionable_star = _p("q_star", "WR", "AAA", 100, 99.0, dk_injury_status="Q")
+    lineup = generate_lineups(pool + [questionable_star], n=1)[0]
+    assert "q_star" in {p.canonical_id for p in lineup.players}
 
 
 # --------------------------------------------------------------------------------------------
