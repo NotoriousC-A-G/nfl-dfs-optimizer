@@ -1,10 +1,14 @@
 # ADR-0034: Wire dup-risk calibration into the dashboard's Lineups tab
 
-**Status:** Accepted (implemented, unit-tested, live-verified in the browser against a real slate pull)
+**Status:** Accepted (implemented, unit-tested, live-verified in the browser against a real slate pull.
+The natural next step -- acting on this read in lineup generation, not just displaying it -- has since
+been fully designed and validated against real data but deliberately NOT implemented; see
+`docs/adr/0035-dup-risk-aware-lineup-generation-design.md`.)
 **Date:** 2026-09-15
 **Owner:** Chris, direct continuation of ADR-0033's "not yet wired into anything live" note
 **Related:** ADR-0032 (`lineups/` backfill), ADR-0033 (the calibration this reads), ADR-0026 (the live
-projected-ownership source this joins against), `src/nfl_dfs/composition/lineup_dup_risk.py`,
+projected-ownership source this joins against), ADR-0035 (the generation-side follow-up this ADR
+named and that round resolved), `src/nfl_dfs/composition/lineup_dup_risk.py`,
 `src/nfl_dfs/dashboard/renderer.py`
 
 ## Context
