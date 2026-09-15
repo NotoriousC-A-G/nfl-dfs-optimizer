@@ -1,7 +1,11 @@
 import pytest
 
 from nfl_dfs.analysis.dup_risk_calibration import DupRiskLookupTable
-from nfl_dfs.composition.lineup_dup_risk import MIN_PLAYERS_COVERED, assess_lineup_dup_risk
+from nfl_dfs.composition.lineup_dup_risk import (
+    MIN_PLAYERS_COVERED,
+    assess_lineup_dup_risk,
+    build_projected_ownership_by_canonical_id,
+)
 from nfl_dfs.normalization.identity import MatchMethod, PlayerIdentity, SourceMatch
 from nfl_dfs.optimizer.lineup import Lineup
 from nfl_dfs.ownership.leverage import LeverageAssessment
@@ -119,3 +123,33 @@ def test_assess_lineup_dup_risk_handles_none_leverage_dict():
     assessment = assess_lineup_dup_risk(lineup, identities, None, _TABLE)
     assert assessment.players_covered == 0
     assert assessment.reason is not None
+
+
+# --------------------------------------------------------------------------------------------
+# build_projected_ownership_by_canonical_id (ADR-0035/0037's generation-time join)
+# --------------------------------------------------------------------------------------------
+
+
+def test_build_projected_ownership_by_canonical_id_joins_the_full_identity_pool():
+    ids = [f"p{i}" for i in range(3)]
+    identities = [_identity(cid, f"rg-{cid}") for cid in ids]
+    leverage_by_native_id = {f"rg-{cid}": _leverage(f"rg-{cid}", 12.0 + i) for i, cid in enumerate(ids)}
+
+    result = build_projected_ownership_by_canonical_id(identities, leverage_by_native_id)
+    assert result == {"p0": pytest.approx(12.0), "p1": pytest.approx(13.0), "p2": pytest.approx(14.0)}
+
+
+def test_build_projected_ownership_by_canonical_id_omits_unresolved_or_missing_matches():
+    identities = [
+        _identity("has_match", "rg-has_match"),
+        _identity("no_native_id", None),
+        PlayerIdentity(
+            canonical_id="unresolved", display_name="unresolved", position="WR", team="GB",
+            sources={"rotogrinders": SourceMatch(native_id=None, method=MatchMethod.UNRESOLVED)},
+        ),
+        _identity("no_leverage_row", "rg-no_leverage_row"),
+    ]
+    leverage_by_native_id = {"rg-has_match": _leverage("rg-has_match", 20.0)}
+
+    result = build_projected_ownership_by_canonical_id(identities, leverage_by_native_id)
+    assert result == {"has_match": pytest.approx(20.0)}

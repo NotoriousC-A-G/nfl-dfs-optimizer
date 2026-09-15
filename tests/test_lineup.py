@@ -1,15 +1,23 @@
 import pytest
 
+from nfl_dfs.analysis.dup_risk_calibration import DupRiskLookupTable
 from nfl_dfs.optimizer.lineup import (
     FLEX_GROUP_TOTAL,
+    LINEUP_2_FALLBACK_BUCKET,
+    LINEUP_2_MAX_BUCKET,
+    LINEUP_3_MAX_BUCKET,
     MAX_RB,
     MAX_TE,
     MAX_WR,
+    MIN_OWNERSHIP_COVERAGE,
     MIN_RB,
     MIN_TE,
     MIN_WR,
     SALARY_CAP,
+    Lineup,
     LineupGenerationError,
+    _select_dup_risk_aware_lineups,
+    generate_dup_risk_aware_lineups,
     generate_lineups,
 )
 from nfl_dfs.projection.blend import PlayerProjection
@@ -210,3 +218,153 @@ def test_zero_coverage_players_are_excluded_from_the_candidate_pool():
     )
     lineup = generate_lineups(pool + [ghost], n=1)[0]
     assert "ghost" not in {p.canonical_id for p in lineup.players}
+
+
+# --------------------------------------------------------------------------------------------
+# generate_dup_risk_aware_lineups / _select_dup_risk_aware_lineups (ADR-0035/0037)
+# --------------------------------------------------------------------------------------------
+
+
+def _fake_dup_risk_table(bucket_upper_bounds: tuple[float, ...]) -> DupRiskLookupTable:
+    n_buckets = len(bucket_upper_bounds) + 1
+    return DupRiskLookupTable(
+        seasons=(2023, 2024, 2025),
+        n_rows=1000,
+        bucket_upper_bounds=bucket_upper_bounds,
+        bucket_dup_rate={i: 0.01 * i for i in range(n_buckets)},
+        bucket_mean_lineup_ct={i: 1.0 for i in range(n_buckets)},
+    )
+
+
+def _fake_lineup(name: str, total_points: float, *, n_covered_players: int = MIN_OWNERSHIP_COVERAGE) -> Lineup:
+    """A minimal `Lineup` fixture for exercising `_select_dup_risk_aware_lineups` in isolation --
+    `slots`/`total_salary` are irrelevant to that pure selection logic, so left trivial. Each
+    fixture's `core_stack` is a distinct singleton frozenset (all `_select_dup_risk_aware_lineups`
+    needs to tell candidates apart), and its players are named `{name}_p0..N` so a caller can build
+    a matching `projected_ownership_by_canonical_id` covering exactly `n_covered_players` of them.
+    """
+    players = tuple(_p(f"{name}_p{i}", "WR", "AAA", 3000, 1.0) for i in range(9))
+    return Lineup(
+        slots={}, players=players, total_salary=45_000, total_projected_points=total_points,
+        core_stack=frozenset({name}), core_stack_team="AAA",
+    )
+
+
+def _ownership_for(lineup: Lineup, avg_own: float, *, n_covered_players: int) -> dict[str, float]:
+    return {p.canonical_id: avg_own for p in lineup.players[:n_covered_players]}
+
+
+def test_select_dup_risk_aware_lineups_picks_best_points_candidate_within_each_bucket_rule():
+    table = _fake_dup_risk_table((10.0, 20.0, 30.0, 40.0, 50.0, 60.0, 70.0, 80.0, 90.0))
+    best = _fake_lineup("best", 100.0)  # bucket 9 -- lineup 1 only, ownership irrelevant to it.
+    second = _fake_lineup("second", 90.0)  # bucket 7 -- qualifies for lineup 2.
+    third = _fake_lineup("third", 85.0)  # bucket 4 -- also qualifies for lineup 2, but worse points.
+    fourth = _fake_lineup("fourth", 80.0)  # bucket 1 -- qualifies for lineup 3 (and lineup 2, but
+    # lineup 2's slot is already taken by `second` by the time lineup 3 is chosen).
+    fifth = _fake_lineup("fifth", 70.0)  # bucket 0 -- also qualifies for lineup 3, worse points.
+    candidates = [best, second, third, fourth, fifth]
+
+    ownership: dict[str, float] = {}
+    ownership.update(_ownership_for(best, 95.0, n_covered_players=MIN_OWNERSHIP_COVERAGE))
+    ownership.update(_ownership_for(second, 75.0, n_covered_players=MIN_OWNERSHIP_COVERAGE))
+    ownership.update(_ownership_for(third, 45.0, n_covered_players=MIN_OWNERSHIP_COVERAGE))
+    ownership.update(_ownership_for(fourth, 15.0, n_covered_players=MIN_OWNERSHIP_COVERAGE))
+    ownership.update(_ownership_for(fifth, 5.0, n_covered_players=MIN_OWNERSHIP_COVERAGE))
+
+    result = _select_dup_risk_aware_lineups(candidates, ownership, table)
+    assert result == [best, second, fourth]
+
+
+def test_select_dup_risk_aware_lineups_falls_back_to_bucket_8_only_when_nothing_clears_bucket_7():
+    table = _fake_dup_risk_table((10.0, 20.0, 30.0, 40.0, 50.0, 60.0, 70.0, 80.0, 90.0))
+    best = _fake_lineup("best", 100.0)
+    fallback = _fake_lineup("fallback", 90.0)  # bucket 8 only -- nothing else clears bucket 7.
+    candidates = [best, fallback]
+    ownership: dict[str, float] = {}
+    ownership.update(_ownership_for(best, 95.0, n_covered_players=MIN_OWNERSHIP_COVERAGE))
+    ownership.update(_ownership_for(fallback, 85.0, n_covered_players=MIN_OWNERSHIP_COVERAGE))
+
+    result = _select_dup_risk_aware_lineups(candidates, ownership, table)
+    assert result == [best, fallback]  # bucket-8 fallback used for lineup 2; no lineup 3 available.
+
+
+def test_select_dup_risk_aware_lineups_excludes_candidates_below_the_ownership_coverage_floor():
+    table = _fake_dup_risk_table((10.0, 20.0, 30.0, 40.0, 50.0, 60.0, 70.0, 80.0, 90.0))
+    best = _fake_lineup("best", 100.0)
+    thin = _fake_lineup("thin", 90.0)  # would classify into bucket 0 (great for lineup 2/3) but
+    # only has MIN_OWNERSHIP_COVERAGE - 1 real ownership reads -- must never be guessed into a bucket.
+    real = _fake_lineup("real", 80.0)  # worse points than `thin`, but has real, trustworthy coverage.
+    candidates = [best, thin, real]
+    ownership: dict[str, float] = {}
+    ownership.update(_ownership_for(thin, 5.0, n_covered_players=MIN_OWNERSHIP_COVERAGE - 1))
+    ownership.update(_ownership_for(real, 5.0, n_covered_players=MIN_OWNERSHIP_COVERAGE))
+
+    result = _select_dup_risk_aware_lineups(candidates, ownership, table)
+    assert result == [best, real]  # `thin` skipped entirely for lineup 2/3, despite better points.
+
+
+def test_select_dup_risk_aware_lineups_never_reuses_a_core_stack_across_slots():
+    table = _fake_dup_risk_table((10.0, 20.0, 30.0, 40.0, 50.0, 60.0, 70.0, 80.0, 90.0))
+    best = _fake_lineup("best", 100.0)
+    double_qualifier = _fake_lineup("double", 90.0)  # bucket 0 -- the single best candidate for
+    # BOTH lineup 2 (bucket<=7) and lineup 3 (bucket<=2); must only be used once.
+    next_best_low = _fake_lineup("next_low", 80.0)  # bucket 1 -- the real lineup 3 once `double`
+    # has already been claimed for lineup 2.
+    candidates = [best, double_qualifier, next_best_low]
+    ownership: dict[str, float] = {}
+    ownership.update(_ownership_for(double_qualifier, 5.0, n_covered_players=MIN_OWNERSHIP_COVERAGE))
+    ownership.update(_ownership_for(next_best_low, 15.0, n_covered_players=MIN_OWNERSHIP_COVERAGE))
+
+    result = _select_dup_risk_aware_lineups(candidates, ownership, table)
+    assert result == [best, double_qualifier, next_best_low]
+    assert len({lu.core_stack for lu in result}) == 3
+
+
+def test_select_dup_risk_aware_lineups_empty_candidates_returns_empty_list():
+    table = _fake_dup_risk_table((10.0,))
+    assert _select_dup_risk_aware_lineups([], {}, table) == []
+
+
+def test_select_dup_risk_aware_lineups_omits_lineup_2_and_3_when_nothing_qualifies():
+    table = _fake_dup_risk_table(tuple(float(10 * i) for i in range(1, 10)))  # 10 buckets, 0-9.
+    best = _fake_lineup("best", 100.0)
+    chalky = _fake_lineup("chalky", 90.0)
+    candidates = [best, chalky]
+    # Far above every real bound -- clamps to bucket 9, above both LINEUP_2_MAX_BUCKET (7) and
+    # LINEUP_2_FALLBACK_BUCKET (8).
+    ownership = _ownership_for(chalky, 1000.0, n_covered_players=MIN_OWNERSHIP_COVERAGE)
+
+    result = _select_dup_risk_aware_lineups(candidates, ownership, table)
+    assert result == [best]  # neither lineup 2 nor lineup 3 exists this run.
+
+
+def test_generate_dup_risk_aware_lineups_matches_plain_generation_when_every_candidate_is_bucket_zero():
+    # A single-bucket table (empty bucket_upper_bounds) classifies every avg_own into bucket 0 --
+    # bucket 0 clears both LINEUP_2_MAX_BUCKET and LINEUP_3_MAX_BUCKET, so the dup-risk-aware
+    # selection should degenerate to exactly the same 3 lineups plain `generate_lineups` returns.
+    pool = _synthetic_pool()
+    table = DupRiskLookupTable(
+        seasons=(2023, 2024, 2025), n_rows=1000, bucket_upper_bounds=(),
+        bucket_dup_rate={0: 0.01}, bucket_mean_lineup_ct={0: 1.0},
+    )
+    ownership = {p.canonical_id: 10.0 for p in pool}
+
+    plain = generate_lineups(pool, n=3)
+    aware = generate_dup_risk_aware_lineups(pool, ownership, table, oversample_size=3)
+    assert [lu.core_stack for lu in aware] == [lu.core_stack for lu in plain]
+
+
+def test_generate_dup_risk_aware_lineups_raises_on_an_infeasible_pool():
+    tiny_pool = [
+        _p("qb_a", "QB", "AAA", 7500, 22.0),
+        _p("wr_a1", "WR", "AAA", 7000, 18.0),
+    ]
+    table = _fake_dup_risk_table((10.0,))
+    with pytest.raises(LineupGenerationError):
+        generate_dup_risk_aware_lineups(tiny_pool, {}, table)
+
+
+def test_generate_dup_risk_aware_lineups_constants_match_the_adr_resolved_thresholds():
+    assert LINEUP_2_MAX_BUCKET == 7
+    assert LINEUP_2_FALLBACK_BUCKET == 8
+    assert LINEUP_3_MAX_BUCKET == 2

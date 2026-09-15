@@ -42,6 +42,16 @@ NOT forbid any individual player from reappearing (a non-stack RB or the DST can
 across all 3 lineups); it only forbids re-selecting the identical QB+pass-catcher combination
 together. This is the standard no-good-cut technique for enumerating diverse ILP solutions.
 
+## Dup-risk-aware selection (ADR-0035/0037, opt-in via a separate entry point)
+
+`generate_lineups` itself is UNCHANGED -- still plain best-3-by-projection. A separate function,
+`generate_dup_risk_aware_lineups`, reuses the same no-good-cut mechanism to oversample a larger
+candidate pool (15-25 lineups instead of 3), then selects the final lineups by a real, backtested
+rule over each candidate's projected-ownership bucket (post-hoc candidate selection, not a hard
+cap or a linear objective penalty -- both explicitly rejected by ADR-0035's design review). See
+that function's own docstring below for the full mechanism and its disclosed live-proxy
+assumption.
+
 ## Explicitly OUT OF SCOPE this round (named here, not silently skipped -- per the task brief)
 
 - **RB/DST-facing-each-other soft penalty (PRD Section 7):** needs a correlation/matchup score
@@ -73,6 +83,7 @@ from dataclasses import dataclass, field
 
 import pulp
 
+from nfl_dfs.analysis.dup_risk_calibration import DupRiskLookupTable, classify_avg_ownership
 from nfl_dfs.projection.blend import PlayerProjection
 
 SALARY_CAP = 50_000
@@ -90,6 +101,25 @@ ROSTER_POSITIONS = ("QB", "RB", "WR", "TE", "DST")
 # projections are on the order of 5-30 DK points per player; this weight can only ever matter
 # when two candidate rosters are within a small fraction of a point of each other.
 _GAME_ENVIRONMENT_NUDGE_WEIGHT = 1e-4
+
+# ADR-0035/0037: dup-risk-aware lineup generation's real, backtested bucket thresholds -- see
+# `generate_dup_risk_aware_lineups`' own docstring below for the full mechanism and
+# `docs/adr/0037-dup-risk-aware-lineup-generation.md` for the backtest that set these exact
+# numbers. NOT re-derived here -- these are ADR-0035's own final resolved design values, carried
+# forward unchanged into this implementation.
+DEFAULT_OVERSAMPLE_SIZE = 20  # ADR-0035 Decision 1: "15-25 candidates instead of 3."
+LINEUP_2_MAX_BUCKET = 7  # production DupRiskLookupTable bucket, 0=lowest projected ownership.
+LINEUP_2_FALLBACK_BUCKET = 8  # only used if nothing qualifies at <= 7 (ADR-0035: bucket 8 has a
+# real dup-rate cost and an unreliable points benefit -- excluded as the PRIMARY target).
+LINEUP_3_MAX_BUCKET = 2  # buckets 0-2 are statistically tied on dup rate (ADR-0035 section 5,
+# confirmed independently in all 3 backtested seasons) -- take whichever of them scores best,
+# not forced to bucket 0 specifically.
+# Below this many of a candidate lineup's 9 players resolving to a real projected-ownership
+# number, its average is too thin a sample to trust for bucket classification -- same floor and
+# same reasoning as `composition/lineup_dup_risk.py`'s own `MIN_PLAYERS_COVERED`, declared
+# independently here rather than imported so this lower ILP-only module doesn't take on that
+# composition-layer module's own identity/ownership-join dependencies.
+MIN_OWNERSHIP_COVERAGE = 5
 
 
 class LineupGenerationError(RuntimeError):
@@ -323,3 +353,130 @@ def generate_lineups(
         previous_core_stacks.append(lineup.core_stack)
 
     return lineups
+
+
+def _avg_projected_ownership(
+    lineup: Lineup, projected_ownership_by_canonical_id: dict[str, float]
+) -> tuple[float | None, int]:
+    """Mean projected ownership across whatever subset of `lineup.players` resolves in
+    `projected_ownership_by_canonical_id` -- `(None, 0)` if none resolve, never a fabricated
+    average over zero real inputs. Coverage-floor gating (`MIN_OWNERSHIP_COVERAGE`) is the
+    caller's job, same "compute the real number, let the caller decide whether to trust it"
+    split `classify_avg_ownership` itself already uses.
+    """
+    values = [projected_ownership_by_canonical_id[pid] for p in lineup.players if (pid := p.canonical_id) in projected_ownership_by_canonical_id]
+    if not values:
+        return None, 0
+    return sum(values) / len(values), len(values)
+
+
+def _select_dup_risk_aware_lineups(
+    candidates: list[Lineup],
+    projected_ownership_by_canonical_id: dict[str, float],
+    dup_risk_table: DupRiskLookupTable,
+) -> list[Lineup]:
+    """Pure selection logic over an already-generated, already-distinct-core-stack `candidates`
+    list (ADR-0035's final resolved rule) -- separated from `generate_dup_risk_aware_lineups`'
+    own ILP-driving wrapper so this rule can be unit-tested directly against hand-built `Lineup`/
+    `DupRiskLookupTable` fixtures, without an actual `pulp` solve.
+
+    `candidates` is assumed ranked best-to-worst by `total_projected_points`, which
+    `generate_lineups` always produces by construction: each successive no-good cut only adds
+    one more constraint on top of the previous solve's feasible region (it forbids re-selecting
+    one specific core-stack combination, never relaxes anything), so solve `i`'s feasible region
+    is a strict subset of solve `i-1`'s -- solve `i`'s optimum can therefore never exceed solve
+    `i-1`'s. No separate re-sort is needed or performed here.
+    """
+    if not candidates:
+        return []
+
+    lineup_1 = candidates[0]
+    used_core_stacks = {lineup_1.core_stack}
+    result = [lineup_1]
+
+    classified: list[tuple[Lineup, int]] = []
+    for candidate in candidates[1:]:
+        avg_own, covered = _avg_projected_ownership(candidate, projected_ownership_by_canonical_id)
+        if avg_own is None or covered < MIN_OWNERSHIP_COVERAGE:
+            continue  # can't be trusted into a bucket -- never guessed, per this project's
+            # "gate nulls the value, never fabricates one" convention (ceiling/signals.py, etc.).
+        bucket, _, _ = classify_avg_ownership(avg_own, dup_risk_table)
+        classified.append((candidate, bucket))
+
+    lineup_2 = next(
+        (c for c, b in classified if b <= LINEUP_2_MAX_BUCKET and c.core_stack not in used_core_stacks), None
+    )
+    if lineup_2 is None:
+        lineup_2 = next(
+            (c for c, b in classified if b <= LINEUP_2_FALLBACK_BUCKET and c.core_stack not in used_core_stacks), None
+        )
+    if lineup_2 is not None:
+        result.append(lineup_2)
+        used_core_stacks.add(lineup_2.core_stack)
+
+    lineup_3 = next(
+        (c for c, b in classified if b <= LINEUP_3_MAX_BUCKET and c.core_stack not in used_core_stacks), None
+    )
+    if lineup_3 is not None:
+        result.append(lineup_3)
+        used_core_stacks.add(lineup_3.core_stack)
+
+    return result
+
+
+def generate_dup_risk_aware_lineups(
+    pool: list[PlayerProjection],
+    projected_ownership_by_canonical_id: dict[str, float],
+    dup_risk_table: DupRiskLookupTable,
+    *,
+    oversample_size: int = DEFAULT_OVERSAMPLE_SIZE,
+    game_environment_scores: dict[str, float] | None = None,
+) -> list[Lineup]:
+    """ADR-0035's fully-resolved design, built (ADR-0037) -- **post-hoc candidate selection over
+    an oversampled pool, NOT a hard ownership cap and NOT a linear penalty in the ILP objective**
+    (both explicitly rejected by ADR-0035's design review: ownership distributions shift
+    slate-to-slate, and the real relationship is a flat region followed by a sharp cliff, not a
+    smooth gradient a single linear coefficient could represent).
+
+    Generates `oversample_size` distinct-core-stack candidates via `generate_lineups` (the exact
+    same no-good-cut mechanism, just run further -- ADR-0035's own "15-25 candidates instead of
+    3"), classifies each candidate's average projected ownership through `dup_risk_table` (the
+    same production `DupRiskLookupTable` ADR-0034's dashboard read already uses), then selects the
+    final lineups by ADR-0035's real, backtested rule:
+
+    - **Lineup 1**: the single best candidate by `total_projected_points`, no ownership
+      consideration -- identical to `generate_lineups`' own first lineup.
+    - **Lineup 2**: best-`total_projected_points` candidate with ownership bucket
+      `<= LINEUP_2_MAX_BUCKET` (7); falls back to `<= LINEUP_2_FALLBACK_BUCKET` (8) only if
+      nothing qualifies at <= 7 -- bucket 8 is explicitly NOT the primary target (ADR-0035: real
+      dup-rate cost, unreliable points benefit once checked season-by-season).
+    - **Lineup 3**: best-`total_projected_points` candidate with ownership bucket
+      `<= LINEUP_3_MAX_BUCKET` (2) -- buckets 0-2 are statistically tied on dup rate, so this is
+      whichever of them scores best, never forced to the literal ownership floor (PRD Section 7:
+      "none of the 3 should be... a pure max-leverage punt").
+
+    A candidate whose average projected ownership can't be computed (fewer than
+    `MIN_OWNERSHIP_COVERAGE` of its 9 players resolve in `projected_ownership_by_canonical_id`) is
+    excluded from Lineup 2/3 selection entirely -- never guessed into a bucket. Every returned
+    lineup has a distinct core stack from every other (guaranteed by construction: all candidates
+    come from the same no-good-cut-generated, pairwise-distinct pool).
+
+    Raises `LineupGenerationError` under the same conditions `generate_lineups` does (no feasible
+    lineup at all). If the oversampled pool can't produce a bucket-qualifying candidate for
+    Lineup 2 or 3 -- a thin slate, or genuinely no low-ownership build exists -- that lineup is
+    simply omitted from the returned list (`generate_lineups`' own "diversity exhausted, not an
+    error" posture), so this function can return 1, 2, or 3 lineups.
+
+    **A disclosed assumption, not a proven equivalence (ADR-0035 Consequences, precondition 1):**
+    the backtest that resolved the bucket thresholds above defined a "strong" lineup using REAL,
+    SETTLED contest outcomes (top 1% of each contest's own real point distribution) -- no
+    equivalent exists at live selection time, since the optimizer doesn't know final outcomes.
+    This function's live proxy is the Fantasy Football Expert's own named candidate: rank
+    candidates by `total_projected_points` within the oversampled pool itself. This is the same
+    "disclosed, not fabricated" posture `composition/lineup_dup_risk.py` already uses for its own
+    projected-vs-actual ownership comparison -- this project has no period-correct historical
+    vendor projections (ADR-0018/0025) to validate this specific proxy against real historical
+    data the way the bucket thresholds themselves were validated.
+    """
+    candidates = generate_lineups(pool, n=oversample_size, game_environment_scores=game_environment_scores)
+    return _select_dup_risk_aware_lineups(candidates, projected_ownership_by_canonical_id, dup_risk_table)

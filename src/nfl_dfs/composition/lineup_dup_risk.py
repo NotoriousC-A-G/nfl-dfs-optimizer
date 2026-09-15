@@ -11,11 +11,14 @@ chalk/leverage flags (ADR-0026) -- not a new leap of faith this module invents, 
 stating plainly: this read describes "if the field roughly plays out the way it's currently
 projected to," not a guaranteed forecast.
 
-**Deliberately does not change lineup generation or scoring.** This module only ASSESSES an
-already-generated lineup after the fact -- `optimizer/lineup.py`'s actual selection/generation
-logic is untouched. Folding a dup-risk penalty into generation itself would be a real, separate
-design decision (how much projected-points tradeoff is worth how much dup-risk reduction) that
-deserves its own review, not something this descriptive read decides unilaterally.
+**`assess_lineup_dup_risk` itself still only ASSESSES an already-generated lineup after the fact**
+-- the dashboard's own descriptive read (ADR-0034), unchanged by the below. Folding a dup-risk
+consideration into generation itself was, at the time this module was first built, named as its
+own separate design decision deserving its own review -- that review happened (ADR-0035) and was
+built (ADR-0037, `optimizer.lineup.generate_dup_risk_aware_lineups`). `build_projected_ownership_
+by_canonical_id` below is the one piece of real, reusable join logic both that generation-time
+consumer and this module's own per-lineup assessment need (the RotoGrinders-`native_id` join),
+factored out here rather than duplicated.
 """
 
 from __future__ import annotations
@@ -100,3 +103,27 @@ def assess_lineup_dup_risk(
         mean_lineup_ct=mean_lineup_ct,
         reason=None,
     )
+
+
+def build_projected_ownership_by_canonical_id(
+    identities: list[PlayerIdentity], leverage_by_native_id: dict[str, LeverageAssessment]
+) -> dict[str, float]:
+    """The full reconciled identity pool's live projected ownership, keyed by `canonical_id` --
+    joined via `identity.sources["rotogrinders"].native_id`, the same join `assess_lineup_dup_risk`
+    performs per-lineup above, factored out here so a caller that needs to classify MANY candidate
+    lineups (`optimizer.lineup.generate_dup_risk_aware_lineups`, ADR-0035/0037) doesn't re-derive
+    this join once per candidate. A `canonical_id` with no resolved RotoGrinders match, or no live
+    leverage assessment this week, is simply absent from the returned dict -- never a fabricated
+    value (the same "gate nulls/omits, never fabricates" convention `assess_lineup_dup_risk` above
+    already follows for its own per-lineup average).
+    """
+    result: dict[str, float] = {}
+    for identity in identities:
+        rg_match = identity.sources.get("rotogrinders")
+        if rg_match is None or rg_match.method in (MatchMethod.UNRESOLVED, MatchMethod.AMBIGUOUS) or rg_match.native_id is None:
+            continue
+        assessment = leverage_by_native_id.get(rg_match.native_id)
+        if assessment is None:
+            continue
+        result[identity.canonical_id] = assessment.projected_ownership
+    return result

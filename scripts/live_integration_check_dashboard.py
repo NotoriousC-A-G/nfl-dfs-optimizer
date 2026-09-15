@@ -30,7 +30,7 @@ from nfl_dfs.ceiling.signals import (
 )
 from nfl_dfs.ingestion.qb_rushing_profile import trailing_qb_rushing_profiles
 from nfl_dfs.ingestion.receiving_profile import trailing_receiving_profiles
-from nfl_dfs.composition.lineup_dup_risk import assess_lineup_dup_risk
+from nfl_dfs.composition.lineup_dup_risk import assess_lineup_dup_risk, build_projected_ownership_by_canonical_id
 from nfl_dfs.composition.player_detail import build_gsis_to_pff_id_map, build_player_detail_record
 from nfl_dfs.config import config
 from nfl_dfs.dashboard.renderer import SlateGameRow, write_dashboard_html
@@ -54,7 +54,7 @@ from nfl_dfs.normalization.crosswalk import fetch_crosswalk
 from nfl_dfs.normalization.injury_lookup import team_injuries
 from nfl_dfs.normalization.matcher import reconcile_week
 from nfl_dfs.normalization.registry import PlayerRegistry
-from nfl_dfs.optimizer.lineup import LineupGenerationError, generate_lineups
+from nfl_dfs.optimizer.lineup import LineupGenerationError, generate_dup_risk_aware_lineups
 from nfl_dfs.output.weekly_output import build_weekly_output
 from nfl_dfs.ownership.leverage import build_leverage_assessments
 from nfl_dfs.projection.blend import (
@@ -124,9 +124,48 @@ def main() -> None:
 
     projections_by_canonical_id = {p.canonical_id: p for p in pool}
 
-    print("=== Solving for 3 lineups ===")
+    print("Building real chalk/leverage assessments (ADR-0025/0026)...")
+    leverage_by_native_id: dict[str, object] = {}
+    if rg_payload:
+        all_ownership_rows = parse_projected_ownership(rg_payload)
+        main_slate_rows = filter_to_main_slate(all_ownership_rows)
+        print(f"  {len(all_ownership_rows)} players across every slate window, {len(main_slate_rows)} on the main slate")
+        try:
+            calibration_bundle = run_full_calibration()
+            assessments = build_leverage_assessments(main_slate_rows, calibration_bundle.production)
+            leverage_by_native_id = {a.native_id: a for a in assessments}
+            n_chalk = sum(1 for a in assessments if a.is_chalk)
+            n_leverage = sum(1 for a in assessments if a.is_leverage)
+            print(f"  {len(assessments)} assessments built: {n_chalk} chalk, {n_leverage} leverage")
+        except ValueError as exc:
+            print(f"  FAILED to build production calibration: {exc}")
+    else:
+        print("  no RotoGrinders payload this pull -- skipping ownership/leverage")
+
+    print("Building real dup-risk lookup table (ADR-0032/0033) and live ownership join (ADR-0035/0037)...")
+    dup_risk_table = None
     try:
-        lineups = generate_lineups(pool, n=3)
+        # Same recent-window scoping rationale as the (now-removed) post-hoc build below: a real,
+        # already-computed production window (2023-2025), not a re-run of the full leave-one-out
+        # stability test on every dashboard build (that's a periodic/offline analysis,
+        # scripts/dup_risk_calibration_report.py, not something a live per-slate build should redo).
+        dup_risk_table = build_dup_risk_lookup_table(seasons=DEFAULT_RECENT_WINDOW)
+        print(f"  dup-risk table built from {dup_risk_table.n_rows} real lineup row(s), seasons={dup_risk_table.seasons}")
+    except ValueError as exc:
+        print(f"  SKIPPED: {exc}")
+    projected_ownership_by_canonical_id = build_projected_ownership_by_canonical_id(identities, leverage_by_native_id)
+    print(f"  {len(projected_ownership_by_canonical_id)} identit(y/ies) with a live projected-ownership read")
+
+    print("=== Solving for up to 3 dup-risk-aware lineups (ADR-0035/0037) ===")
+    try:
+        if dup_risk_table is not None:
+            lineups = generate_dup_risk_aware_lineups(pool, projected_ownership_by_canonical_id, dup_risk_table)
+        else:
+            # No real dup-risk table this pull -- fall back to plain best-3-by-projection rather
+            # than blocking the whole dashboard build on a table that couldn't be built.
+            from nfl_dfs.optimizer.lineup import generate_lineups
+
+            lineups = generate_lineups(pool, n=3)
     except LineupGenerationError as exc:
         print(f"LineupGenerationError: {exc}")
         return
@@ -292,23 +331,9 @@ def main() -> None:
 
     gsis_to_pff_id = build_gsis_to_pff_id_map(crosswalk)
 
-    print("Building real chalk/leverage assessments (ADR-0025/0026)...")
-    leverage_by_native_id: dict[str, object] = {}
-    if rg_payload:
-        all_ownership_rows = parse_projected_ownership(rg_payload)
-        main_slate_rows = filter_to_main_slate(all_ownership_rows)
-        print(f"  {len(all_ownership_rows)} players across every slate window, {len(main_slate_rows)} on the main slate")
-        try:
-            calibration_bundle = run_full_calibration()
-            assessments = build_leverage_assessments(main_slate_rows, calibration_bundle.production)
-            leverage_by_native_id = {a.native_id: a for a in assessments}
-            n_chalk = sum(1 for a in assessments if a.is_chalk)
-            n_leverage = sum(1 for a in assessments if a.is_leverage)
-            print(f"  {len(assessments)} assessments built: {n_chalk} chalk, {n_leverage} leverage")
-        except ValueError as exc:
-            print(f"  FAILED to build production calibration: {exc}")
-    else:
-        print("  no RotoGrinders payload this pull -- skipping ownership/leverage")
+    # leverage_by_native_id was already built earlier (ADR-0025/0026), before lineup generation --
+    # ADR-0035/0037's dup-risk-aware selection needs it before `generate_dup_risk_aware_lineups`
+    # runs, not after, so that block was moved up rather than duplicated here.
 
     opponent_of: dict[str, str] = {}
     for g in dk_slate.games:
@@ -494,23 +519,19 @@ def main() -> None:
 
     print("Building real dup-risk read for each generated lineup (ADR-0033/0034)...")
     dup_risk_by_lineup: dict[int, object] = {}
-    try:
-        # Scoped to the real, already-computed production window (2023-2025) rather than pooling
-        # all 6 backfilled seasons or re-running the full leave-one-out stability test on every
-        # dashboard build -- that test runs against 12.6M real rows and takes real minutes; it's a
-        # periodic/offline analysis (scripts/dup_risk_calibration_report.py), not something a live
-        # per-slate build should redo every time. 2022/2023 were flagged unstable by that test
-        # (ADR-0033's 2020-2025 addendum), same recent-window fallback ADR-0025's own ownership
-        # calibration landed on for every position.
-        dup_risk_table = build_dup_risk_lookup_table(seasons=DEFAULT_RECENT_WINDOW)
+    if dup_risk_table is not None:
+        # Reuses the same dup-risk table built earlier for ADR-0035/0037's generation-time
+        # selection -- this is a second, independent read (the lineup's REAL selected players,
+        # not the candidate-pool average `generate_dup_risk_aware_lineups` used internally), not
+        # a redundant rebuild of the table itself.
         dup_risk_by_lineup = {
             i: assess_lineup_dup_risk(lineup, identities, leverage_by_native_id, dup_risk_table)
             for i, lineup in enumerate(lineups)
         }
         n_real = sum(1 for a in dup_risk_by_lineup.values() if a.reason is None)
         print(f"  {n_real}/{len(dup_risk_by_lineup)} lineup(s) with a real dup-risk read")
-    except ValueError as exc:
-        print(f"  SKIPPED: {exc}")
+    else:
+        print("  SKIPPED: no dup-risk table available this pull")
 
     out_path = "dashboard_output/weekly_dashboard.html"
     import os
