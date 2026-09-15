@@ -110,6 +110,14 @@ class PlayerProjection:
     # debugging can see exactly what a "thin" (1-of-N-source) blend was built from, rather than a
     # blended number that looks identical whether it came from one source or every source.
     source_values: dict[str, float] = field(default_factory=dict)
+    # DraftKings' own real, authoritative roster/game-status flag for this player (e.g. "IR",
+    # "OUT", "Q", "D") -- `None` when DK has no designation (a healthy player) or this player
+    # wasn't in the DK payload passed to `blend_player_projection`/`build_projection_pool` at all.
+    # Carried through as a real field (not silently folded into `blended_projection=None`) so a
+    # player excluded from the optimizer's candidate pool for being on IR is distinguishable from
+    # one excluded for having zero vendor coverage -- two different reasons, never conflated. See
+    # `extract_dk_injury_status` and `optimizer.lineup.EXCLUDED_INJURY_STATUSES`.
+    dk_injury_status: str | None = None
 
 
 def extract_rotogrinders_fpts(payload: dict) -> dict[str, float]:
@@ -184,6 +192,39 @@ def extract_dk_salary(payload: dict) -> dict[str, int]:
     return result
 
 
+def extract_dk_injury_status(payload: dict) -> dict[str, str]:
+    """Pure parse of a DraftKings `draftables` response's own `status` field into
+    `playerDkId (str) -> status`.
+
+    **A real, previously-dropped field -- found live (2026-09-15, a real week-2 slate pull)** when
+    a player confirmed on IR (`A.J. Brown`, DK native id 19839, `status="IR"`) turned up in the
+    optimizer's candidate pool: `ingestion.draftkings.parse_draftables`'s `SourcePlayer` output
+    intentionally carries only identity fields (ADR-0013's join shape) and never read `status` at
+    all, and nothing else in this pipeline was cross-checking injury/roster status against lineup
+    eligibility before this fix -- RotoGrinders' Situation Room data (`ingestion/
+    rotogrinders_injuries.py`) is fetched but only ever feeds the descriptive Player Detail tab and
+    a team-level `GameEnvironmentScore` uncertainty rollup, never pool eligibility, and it tracks a
+    different concept anyway (weekly game-status tags, not season-ending IR). DK's own `status`
+    field is the more authoritative signal for this specific exclusion: it's co-located with the
+    exact same payload `extract_dk_salary` already reads, so there's no second vendor join or
+    coverage gap to worry about.
+
+    Observed live vocabulary this same pull: `{"IR": 52, "OUT": 10, "Q": 25, "D": 4}` player rows
+    (plus 567 with no designation) -- DK sends the literal STRING `"None"` for a healthy player,
+    not a JSON `null`. That string, an actual `None`, and a missing/absent `status` key are all
+    treated identically here (no entry in the returned dict) -- never a fabricated status for a
+    healthy player. Duplicate rows per player (one per eligible roster slot) carry the same
+    status, same non-concern `extract_dk_salary` already documents.
+    """
+    result: dict[str, str] = {}
+    for d in payload.get("draftables", []):
+        status = d.get("status")
+        if status is None or status == "None" or status == "":
+            continue
+        result[str(d["playerDkId"])] = status
+    return result
+
+
 def extract_dk_avg_points_per_game(payload: dict) -> dict[str, float]:
     """Pure parse of DraftKings `draftables`' `draftStatAttributes` id==90 value, per player.
 
@@ -237,11 +278,19 @@ def _salary_for(identity: PlayerIdentity, dk_salary: dict[str, int]) -> int | No
     return dk_salary.get(dk_match.native_id)
 
 
+def _injury_status_for(identity: PlayerIdentity, dk_injury_status: dict[str, str]) -> str | None:
+    dk_match = identity.sources.get("draftkings")
+    if dk_match is None or dk_match.native_id is None:
+        return None
+    return dk_injury_status.get(dk_match.native_id)
+
+
 def blend_player_projection(
     identity: PlayerIdentity,
     dk_salary: dict[str, int],
     rotogrinders_fpts: dict[str, float] | None = None,
     footballguys_points: dict[str, float] | None = None,
+    dk_injury_status: dict[str, str] | None = None,
 ) -> PlayerProjection:
     """Blend one canonical player's available vendor projections into a `PlayerProjection`.
 
@@ -251,9 +300,15 @@ def blend_player_projection(
     still gets a row back (`blended_projection=None`, `source_count=0`) rather than being
     dropped, with salary/position/team carried through from `identity`/`dk_salary` so the
     optimizer still knows this DK-eligible player exists.
+
+    `dk_injury_status` (from `extract_dk_injury_status`) is carried through onto the returned
+    `PlayerProjection` unchanged -- this function does NOT exclude an IR/OUT player itself (it
+    has no opinion on eligibility, only on blending a number); that exclusion happens in
+    `optimizer.lineup._eligible_pool` against `PlayerProjection.dk_injury_status` directly.
     """
     rotogrinders_fpts = rotogrinders_fpts or {}
     footballguys_points = footballguys_points or {}
+    dk_injury_status = dk_injury_status or {}
 
     source_values = _collect_source_values(identity, rotogrinders_fpts, footballguys_points)
     blended = sum(source_values.values()) / len(source_values) if source_values else None
@@ -267,6 +322,7 @@ def blend_player_projection(
         blended_projection=blended,
         source_count=len(source_values),
         source_values=source_values,
+        dk_injury_status=_injury_status_for(identity, dk_injury_status),
     )
 
 
@@ -275,6 +331,7 @@ def blend_dst_baseline(
     dk_salary: dict[str, int],
     rotogrinders_fpts: dict[str, float] | None = None,
     footballguys_points: dict[str, float] | None = None,
+    dk_injury_status: dict[str, str] | None = None,
 ) -> PlayerProjection:
     """DST roster-slot baseline for the walking skeleton -- a simple equal-weighted vendor blend,
     identical mechanics to `blend_player_projection`.
@@ -287,7 +344,7 @@ def blend_dst_baseline(
     """
     if identity.position != "DST":
         raise ValueError(f"blend_dst_baseline called on a non-DST identity: {identity.position!r}")
-    return blend_player_projection(identity, dk_salary, rotogrinders_fpts, footballguys_points)
+    return blend_player_projection(identity, dk_salary, rotogrinders_fpts, footballguys_points, dk_injury_status)
 
 
 def build_projection_pool(
@@ -295,19 +352,26 @@ def build_projection_pool(
     dk_salary: dict[str, int],
     rotogrinders_fpts: dict[str, float] | None = None,
     footballguys_points: dict[str, float] | None = None,
+    dk_injury_status: dict[str, str] | None = None,
 ) -> list[PlayerProjection]:
     """Blend the full DK-eligible pool (every `PlayerIdentity` from `matcher.reconcile_week`) in
     one pass -- the direct entry point the optimizer (next round) should consume. DST identities
     route through `blend_dst_baseline`, everyone else through `blend_player_projection`; both
     produce the same `PlayerProjection` shape.
+
+    `dk_injury_status` (from `extract_dk_injury_status`) is optional and defaults to no known
+    statuses -- every `PlayerProjection.dk_injury_status` comes back `None` if omitted, same as
+    before this field existed. Pass it (from the same raw DK payload `dk_salary` was extracted
+    from) so `optimizer.lineup._eligible_pool` can exclude IR/OUT players from the candidate pool.
     """
     rotogrinders_fpts = rotogrinders_fpts or {}
     footballguys_points = footballguys_points or {}
+    dk_injury_status = dk_injury_status or {}
 
     projections = []
     for identity in identities:
         blend_fn = blend_dst_baseline if identity.position == "DST" else blend_player_projection
-        projections.append(blend_fn(identity, dk_salary, rotogrinders_fpts, footballguys_points))
+        projections.append(blend_fn(identity, dk_salary, rotogrinders_fpts, footballguys_points, dk_injury_status))
     return projections
 
 

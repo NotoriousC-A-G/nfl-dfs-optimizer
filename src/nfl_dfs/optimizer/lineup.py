@@ -9,6 +9,9 @@ environment via `pulp.listSolvers(onlyAvailable=True)` before this module was wr
 ## What's implemented (hard constraints -- PRD Section 3 + Section 7's first rule)
 
 - Exactly 9 players, salary sum <= $50,000 (PRD Section 3).
+- **IR/OUT players excluded from the candidate pool entirely** (`EXCLUDED_INJURY_STATUSES`,
+  `_eligible_pool`) -- DraftKings' own `status` field, not a soft penalty. Found live 2026-09-15:
+  a confirmed-IR player was reaching the ILP solve before this existed.
 - Roster composition via aggregate position-count constraints, not per-slot assignment
   variables -- verified against DK's actual roster (QB, RB, RB, WR, WR, WR, TE, FLEX(RB/WR/TE),
   DST): `num_QB == 1`, `num_DST == 1`, `num_RB in {2,3}`, `num_WR in {3,4}`, `num_TE in {1,2}`,
@@ -97,6 +100,14 @@ FLEX_GROUP_TOTAL = 7  # RB + WR + TE combined: 2+3+1 base flex-eligible slots + 
 FLEX_ELIGIBLE_POSITIONS = ("RB", "WR", "TE")
 ROSTER_POSITIONS = ("QB", "RB", "WR", "TE", "DST")
 
+# DraftKings' own `status` vocabulary (`PlayerProjection.dk_injury_status`, `projection.blend.
+# extract_dk_injury_status`) observed live: IR, OUT, Q (Questionable), D (Doubtful), or no
+# designation. Only IR/OUT are a guaranteed zero -- excluded from the candidate pool entirely in
+# `_eligible_pool`. Q/D stay eligible: a real, disclosed DFS strategic decision, not a guaranteed
+# non-play, the same "unresolved is not unavailable" treatment this project's own injury-
+# uncertainty-flag machinery already applies elsewhere.
+EXCLUDED_INJURY_STATUSES = frozenset({"IR", "OUT"})
+
 # Deliberately tiny -- see module docstring's "Full game-stack favoring" note. Blended
 # projections are on the order of 5-30 DK points per player; this weight can only ever matter
 # when two candidate rosters are within a small fraction of a point of each other.
@@ -160,12 +171,23 @@ def _eligible_pool(pool: list[PlayerProjection]) -> dict[str, PlayerProjection]:
     DraftKings identity match itself failed -- see `PlayerIdentity`/ADR-0013). Positions outside
     DK's five-position roster vocabulary are also dropped defensively; none should reach this
     module in practice since `projection.blend` only ever sees DK-eligible identities.
+
+    **`EXCLUDED_INJURY_STATUSES` players are also dropped here** -- found live (2026-09-15): a
+    player confirmed `IR` by DraftKings' own `status` field (`A.J. Brown`, real week-2 pull) was
+    reaching the ILP solve and getting drafted into real lineups, because nothing in this pipeline
+    had ever read/acted on that field before (see `projection.blend.extract_dk_injury_status`'s
+    own docstring for the full finding). `Q`/`D` (Questionable/Doubtful) are deliberately NOT
+    excluded -- those are real DFS strategic decisions a player is entitled to make (the same
+    uncertainty this project's own `PlayerInjuryStatus`/injury-uncertainty-flag machinery already
+    treats as "unresolved, not unavailable"), not a guaranteed-zero the way `IR`/`OUT` are.
     """
     result: dict[str, PlayerProjection] = {}
     for p in pool:
         if p.blended_projection is None or p.salary is None:
             continue
         if p.position not in ROSTER_POSITIONS:
+            continue
+        if p.dk_injury_status in EXCLUDED_INJURY_STATUSES:
             continue
         if p.canonical_id in result:
             continue  # defensive de-dupe; canonical_id should already be unique upstream
