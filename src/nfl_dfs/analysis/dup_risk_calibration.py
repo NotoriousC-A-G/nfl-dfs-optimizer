@@ -62,6 +62,25 @@ class SeasonDupCalibration:
     trend_rates: dict[str, TrendDupRate]
 
 
+@dataclass(frozen=True)
+class DupRiskLookupTable:
+    """Absolute-`avg_own`-value -> historical dup-risk lookup, POOLED across every backfilled
+    lineup in `seasons` -- a deliberately different construction from `OwnershipDupCurve` above.
+    That curve decile-RANKS each lineup relative only to its own contest (the right shape for
+    describing "how did this settled historical contest's field actually behave"), which has no
+    meaning for a brand-new candidate lineup that was never part of any historical contest -- there
+    is nothing to rank it against within. This table instead fixes real, absolute `avg_own` VALUE
+    breakpoints (global quantile cutpoints over the whole pooled sample) so ANY lineup's own average
+    ownership number can be classified against real historical experience, in isolation.
+    """
+
+    seasons: tuple[int, ...]
+    n_rows: int
+    bucket_upper_bounds: tuple[float, ...]  # ascending avg_own value edges; len == n_buckets - 1
+    bucket_dup_rate: dict[int, float]  # bucket 0 = lowest avg_own bucket, ascending
+    bucket_mean_lineup_ct: dict[int, float]
+
+
 def _assign_ownership_deciles(df: pd.DataFrame) -> pd.Series:
     """Decile 0 = the highest-average-ownership tenth of that CONTEST's distinct lineups, 9 = lowest
     -- ranked within `(date, contest_id)` only, mirroring `ownership_calibration.py`'s
@@ -155,3 +174,59 @@ def run_dup_risk_calibration(seasons: Sequence[int] | None = None, *, base_dir: 
             raise ValueError("no curated ResultsDB lineups data found -- run the lineups backfill first")
         seasons = sorted(int(s) for s in df["season"].unique())
     return {season: fit_season_dup_calibration(season, base_dir=base_dir) for season in seasons}
+
+
+def build_dup_risk_lookup_table(
+    seasons: Sequence[int] | None = None, *, n_buckets: int = N_DECILES, base_dir: Path | None = None
+) -> DupRiskLookupTable:
+    """Builds the absolute-value lookup table (see `DupRiskLookupTable`'s own docstring for why this
+    is a different construction from the per-contest-relative-rank `OwnershipDupCurve`). Global
+    quantile cutpoints over every pooled lineup's `avg_own`, not re-derived per contest -- bucket 0 =
+    the LOWEST `avg_own` bucket, ascending (the opposite convention from `OwnershipDupCurve`'s
+    decile 0 = highest, a real, disclosed difference driven by `pandas.qcut`'s own natural ascending
+    bin-edge order, not an arbitrary inconsistency)."""
+    df = read_curated_lineups(base_dir=base_dir)
+    if seasons is not None:
+        df = df[df["season"].isin(seasons)]
+    if df.empty:
+        raise ValueError(f"no curated ResultsDB lineups data found for seasons={seasons!r} -- run the lineups backfill first")
+
+    df = df.copy()
+    df["is_duplicated"] = (df["lineup_ct"] > 1).astype(int)
+    bucket, bin_edges = pd.qcut(df["avg_own"], n_buckets, labels=False, duplicates="drop", retbins=True)
+    df["bucket"] = bucket
+
+    dup_rate = df.groupby("bucket")["is_duplicated"].mean()
+    mean_ct = df.groupby("bucket")["lineup_ct"].mean()
+    # bin_edges has n_buckets+1 edges (including the -inf/+inf-equivalent outer bounds pandas uses);
+    # the real, usable classification thresholds are the INNER edges only (drop the first and last).
+    upper_bounds = tuple(float(edge) for edge in bin_edges[1:-1])
+
+    return DupRiskLookupTable(
+        seasons=tuple(sorted(int(s) for s in df["season"].unique())),
+        n_rows=int(len(df)),
+        bucket_upper_bounds=upper_bounds,
+        bucket_dup_rate={int(b): float(v) for b, v in dup_rate.items()},
+        bucket_mean_lineup_ct={int(b): float(v) for b, v in mean_ct.items()},
+    )
+
+
+def classify_avg_ownership(avg_own: float, table: DupRiskLookupTable) -> tuple[int, float | None, float | None]:
+    """Classifies an arbitrary `avg_own` value (e.g. a brand-new candidate lineup's own average
+    projected ownership across its 9 roster spots) against `table`'s real historical bucket
+    breakpoints. Returns `(bucket, dup_rate, mean_lineup_ct)` -- `dup_rate`/`mean_lineup_ct` are
+    `None` only if `table` itself has no rows for the resolved bucket (shouldn't happen for a table
+    built from `build_dup_risk_lookup_table`, which always populates every non-empty bucket, but
+    never assumed here). A value below the lowest bucket's floor or above the highest bucket's
+    ceiling still resolves to bucket 0 or the last bucket respectively (clamped, not rejected) --
+    the real historical experience closest to that value, same "don't refuse to answer" posture
+    `ceiling/signals.py`'s shrinkage-not-hard-gate convention already uses elsewhere in this project.
+    """
+    bucket = 0
+    for bound in table.bucket_upper_bounds:
+        if avg_own <= bound:
+            break
+        bucket += 1
+    max_bucket = len(table.bucket_dup_rate) - 1 if table.bucket_dup_rate else 0
+    bucket = min(bucket, max_bucket)
+    return bucket, table.bucket_dup_rate.get(bucket), table.bucket_mean_lineup_ct.get(bucket)

@@ -142,6 +142,7 @@ from datetime import datetime, timezone
 
 from dataclasses import dataclass
 
+from nfl_dfs.composition.lineup_dup_risk import LineupDupRiskAssessment
 from nfl_dfs.composition.player_detail import (
     MatchupThisWeek,
     OwnSchemeSplits,
@@ -372,7 +373,29 @@ def _render_roster_table(lineup: Lineup) -> str:
     )
 
 
-def _render_lineups_tab(weekly_output: WeeklyOutput) -> str:
+def _render_dup_risk_line(assessment: LineupDupRiskAssessment | None) -> str:
+    """ADR-0034: a real historical dup-risk read for this lineup, joining its players' live
+    projected ownership against ADR-0033's settled-field-data lookup table. `None` (no
+    `dup_risk_by_lineup` supplied to the caller at all) renders nothing, same "absent input, absent
+    section" posture used elsewhere in this module -- never a fabricated placeholder line."""
+    if assessment is None:
+        return ""
+    if assessment.reason is not None:
+        return f'<div class="dup-risk"><span class="dup-risk-label">Dup Risk</span> {_na(assessment.reason)}</div>'
+    # avg_projected_ownership is already on a 0-100 scale (same convention `ownership.
+    # projected_ownership` uses elsewhere in this module, e.g. _render_ownership_cell) --
+    # formatted directly, not via _fmt_pct (which expects a 0-1 fraction).
+    return (
+        '<div class="dup-risk"><span class="dup-risk-label">Dup Risk</span> '
+        f"{_fmt_pct(assessment.dup_rate)} historical field-duplication rate "
+        f"({assessment.avg_projected_ownership:.1f}% avg proj. ownership across "
+        f"{assessment.players_covered}/9 players) -- 2024-2025 field data, ADR-0033</div>"
+    )
+
+
+def _render_lineups_tab(
+    weekly_output: WeeklyOutput, dup_risk_by_lineup: dict[int, LineupDupRiskAssessment] | None = None
+) -> str:
     lineups = weekly_output.lineups
     rationales_by_position: list[LineupRationale | None] = list(weekly_output.rationales)
     # Defensive only -- build_weekly_output always produces one rationale per lineup in the same
@@ -402,6 +425,7 @@ def _render_lineups_tab(weekly_output: WeeklyOutput) -> str:
             else '<div class="rationale"><span class="rationale-label">Rationale</span>'
             "<p><em>No LineupRationale was supplied for this lineup.</em></p></div>"
         )
+        dup_risk_html = _render_dup_risk_line((dup_risk_by_lineup or {}).get(i))
         cards.append(
             f'<div class="lineup-card">'
             f'<div class="lineup-head">Lineup {label} '
@@ -409,6 +433,7 @@ def _render_lineups_tab(weekly_output: WeeklyOutput) -> str:
             f"{_fmt_num(lineup.total_projected_points, 1)} projected pts &middot; "
             f"core stack: {_esc(lineup.core_stack_team)}</span></div>"
             f"{_render_roster_table(lineup)}"
+            f"{dup_risk_html}"
             f"{rationale_html}"
             f"{notes_html}"
             "</div>"
@@ -1421,6 +1446,8 @@ td { padding: 7px 10px; border-bottom: 1px solid var(--border); vertical-align: 
 }
 .rationale-label { font-weight: 700; color: var(--accent); font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.03em; }
 .rationale p { margin: 4px 0 0; line-height: 1.5; }
+.dup-risk { color: var(--fg2); font-size: 0.8rem; margin-top: 8px; }
+.dup-risk-label { font-weight: 700; color: var(--fg2); font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.03em; margin-right: 4px; }
 .lineup-notes { margin-top: 8px; color: var(--fg2); font-size: 0.8rem; }
 .badges { margin-top: 3px; display: flex; flex-wrap: wrap; gap: 4px; }
 .badge {
@@ -1671,6 +1698,7 @@ def render_dashboard_html(
     weekly_output: WeeklyOutput,
     player_details: list[PlayerDetailRecord],
     slate_games: list[SlateGameRow] | None = None,
+    dup_risk_by_lineup: dict[int, LineupDupRiskAssessment] | None = None,
 ) -> str:
     """Render the full weekly dashboard as one self-contained HTML string -- inline CSS, vanilla
     JS for tab-switching and the Player Detail search filter only, no external dependency of any
@@ -1680,10 +1708,16 @@ def render_dashboard_html(
     `slate_games` is new and optional (default `None`, same "unpopulated, not touched" default
     pattern `GameEnvironmentScore.injury_uncertainty_flag` uses) so every existing caller of this
     function keeps working unchanged and just gets an empty Slate Overview tab.
+
+    `dup_risk_by_lineup` (new, ADR-0034) is `composition.lineup_dup_risk.assess_lineup_dup_risk`'s
+    already-built output, keyed by the lineup's own 0-based index into `weekly_output.lineups`
+    (the same index `_render_lineups_tab`'s own `enumerate(lineups)` loop uses to pair each lineup
+    with its `LineupRationale`) -- optional, same "caller has nothing for this source" shape as
+    every other lookup this dashboard consumes.
     """
     lineup_membership = _build_lineup_membership(weekly_output)
 
-    lineups_html = _render_lineups_tab(weekly_output)
+    lineups_html = _render_lineups_tab(weekly_output, dup_risk_by_lineup)
     exposure_html = _render_exposure_tab(weekly_output)
     players_html = _render_player_detail_tab(player_details, lineup_membership)
     slate_html = _render_slate_overview_tab(slate_games or [])
@@ -1715,11 +1749,12 @@ def write_dashboard_html(
     weekly_output: WeeklyOutput,
     player_details: list[PlayerDetailRecord],
     slate_games: list[SlateGameRow] | None = None,
+    dup_risk_by_lineup: dict[int, LineupDupRiskAssessment] | None = None,
 ) -> None:
     """Render and write the dashboard to a real file on disk, ready to open directly in a
     browser -- no server, no build step. Mirrors `output/csv_export.py`'s
     `write_dk_csv_file`'s split between pure render and file I/O, for the same testability reason
     (callers/tests that only need the HTML string never have to touch the filesystem)."""
-    html_out = render_dashboard_html(weekly_output, player_details, slate_games)
+    html_out = render_dashboard_html(weekly_output, player_details, slate_games, dup_risk_by_lineup)
     with open(path, "w", encoding="utf-8") as f:
         f.write(html_out)

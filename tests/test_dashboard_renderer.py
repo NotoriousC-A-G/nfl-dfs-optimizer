@@ -22,6 +22,7 @@ from nfl_dfs.composition.player_detail import (
     SnapShareUsage,
     StackContext,
 )
+from nfl_dfs.composition.lineup_dup_risk import LineupDupRiskAssessment
 from nfl_dfs.dashboard.renderer import SlateGameRow, render_dashboard_html, write_dashboard_html
 from nfl_dfs.game_environment.score import ComponentScore, GameEnvironmentScore
 from nfl_dfs.ingestion.pff import TeamCoverageTendency
@@ -624,6 +625,47 @@ def test_qb_rushing_profile_renders_for_qb_but_not_for_other_positions():
     # The block label itself only appears once -- for the QB row, not the RB row (RB's
     # qb_rushing_profile_reason is the "not applicable" reason, which must not render a block).
     assert html.count(">QB Rushing<") == 1
+
+
+# --------------------------------------------------------------------------------------------
+# ADR-0034: dup_risk_by_lineup -- real historical dup-risk read per generated lineup
+# --------------------------------------------------------------------------------------------
+
+
+def test_dup_risk_renders_real_read_for_the_lineup_it_is_keyed_to():
+    weekly_output, _ = _weekly_output_with_three_lineups()
+    dup_risk_by_lineup = {
+        0: LineupDupRiskAssessment(
+            avg_projected_ownership=27.3, players_covered=9, bucket=8, dup_rate=0.0365,
+            mean_lineup_ct=1.066, reason=None,
+        ),
+    }
+    html = render_dashboard_html(weekly_output, [], dup_risk_by_lineup=dup_risk_by_lineup)
+
+    assert "3.6% historical field-duplication rate" in html
+    assert "27.3% avg proj. ownership across 9/9 players" in html
+    assert "ADR-0033" in html
+    # Only lineup 0 was keyed -- lineups 1/2 must render no Dup Risk block at all (absent input,
+    # absent section, not a fabricated placeholder).
+    assert html.count("Dup Risk") == 1
+
+
+def test_dup_risk_shows_the_real_reason_when_ungated():
+    weekly_output, _ = _weekly_output_with_three_lineups()
+    dup_risk_by_lineup = {
+        0: LineupDupRiskAssessment(
+            avg_projected_ownership=None, players_covered=2, bucket=None, dup_rate=None,
+            mean_lineup_ct=None, reason="only 2/9 of this lineup's players resolved to a live projected-ownership number.",
+        ),
+    }
+    html = render_dashboard_html(weekly_output, [], dup_risk_by_lineup=dup_risk_by_lineup)
+    assert "only 2/9 of this lineup" in html
+
+
+def test_dup_risk_omitted_entirely_when_not_supplied():
+    weekly_output, _ = _weekly_output_with_three_lineups()
+    html = render_dashboard_html(weekly_output, [])
+    assert "Dup Risk" not in html
 
 
 def test_empty_weekly_output_and_empty_player_pool_render_without_crashing():

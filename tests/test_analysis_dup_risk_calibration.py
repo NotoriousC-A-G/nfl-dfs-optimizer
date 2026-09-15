@@ -1,9 +1,12 @@
 import pytest
 
 from nfl_dfs.analysis.dup_risk_calibration import (
+    DupRiskLookupTable,
     OwnershipDupCurve,
     SeasonDupCalibration,
     TrendDupRate,
+    build_dup_risk_lookup_table,
+    classify_avg_ownership,
     compare_two_seasons,
     fit_season_dup_calibration,
     run_dup_risk_calibration,
@@ -154,3 +157,68 @@ def test_run_dup_risk_calibration_defaults_to_every_season_present(tmp_path):
 def test_run_dup_risk_calibration_raises_when_nothing_backfilled(tmp_path):
     with pytest.raises(ValueError, match="lineups backfill"):
         run_dup_risk_calibration(base_dir=tmp_path)
+
+
+# ---------------------------------------------------------------------------
+# DupRiskLookupTable / classify_avg_ownership
+# ---------------------------------------------------------------------------
+
+
+def _write_many(tmp_path, season: int, n: int = 50) -> None:
+    # A real spread of avg_own values, high-own lineups duplicated far more often than low-own --
+    # enough rows (>= n_buckets) for pd.qcut to form real quantile buckets.
+    rows = []
+    for i in range(n):
+        avg_own = 5.0 + i  # 5.0 .. 54.0
+        lineup_ct = 10 if avg_own > 40 else 1
+        rows.append(_lineup_row(f"h{i}", avg_own, lineup_ct))
+    write_curated_lineups(f"{season}-09-08", season, season * 10, rows, base_dir=tmp_path)
+
+
+def test_build_dup_risk_lookup_table_raises_when_no_data(tmp_path):
+    with pytest.raises(ValueError, match="lineups backfill"):
+        build_dup_risk_lookup_table(base_dir=tmp_path)
+
+
+def test_build_dup_risk_lookup_table_higher_ownership_buckets_have_higher_dup_rate(tmp_path):
+    _write_many(tmp_path, 2024)
+    table = build_dup_risk_lookup_table(base_dir=tmp_path, n_buckets=5)
+
+    assert table.seasons == (2024,)
+    assert table.n_rows == 50
+    buckets = sorted(table.bucket_dup_rate)
+    # bucket 0 = LOWEST avg_own (this table's ascending convention, disclosed in its own docstring
+    # -- the opposite of OwnershipDupCurve's decile-0-is-highest convention).
+    assert table.bucket_dup_rate[buckets[0]] <= table.bucket_dup_rate[buckets[-1]]
+    assert table.bucket_dup_rate[buckets[-1]] > 0.5  # the top bucket is mostly the duplicated (>40) rows
+
+
+def test_build_dup_risk_lookup_table_filters_to_requested_seasons(tmp_path):
+    _write_many(tmp_path, 2024)
+    _write_many(tmp_path, 2025)
+    table = build_dup_risk_lookup_table([2024], base_dir=tmp_path)
+    assert table.seasons == (2024,)
+    assert table.n_rows == 50
+
+
+def test_classify_avg_ownership_low_value_falls_in_bucket_zero():
+    table = DupRiskLookupTable(
+        seasons=(2024,), n_rows=100,
+        bucket_upper_bounds=(10.0, 20.0, 30.0),
+        bucket_dup_rate={0: 0.01, 1: 0.02, 2: 0.05, 3: 0.20},
+        bucket_mean_lineup_ct={0: 1.01, 1: 1.02, 2: 1.05, 3: 1.30},
+    )
+    assert classify_avg_ownership(5.0, table) == (0, 0.01, 1.01)
+    assert classify_avg_ownership(10.0, table) == (0, 0.01, 1.01)  # inclusive at the boundary
+    assert classify_avg_ownership(15.0, table) == (1, 0.02, 1.02)
+    assert classify_avg_ownership(25.0, table) == (2, 0.05, 1.05)
+
+
+def test_classify_avg_ownership_clamps_above_the_highest_bucket():
+    table = DupRiskLookupTable(
+        seasons=(2024,), n_rows=100,
+        bucket_upper_bounds=(10.0, 20.0),
+        bucket_dup_rate={0: 0.01, 1: 0.02, 2: 0.05},
+        bucket_mean_lineup_ct={0: 1.01, 1: 1.02, 2: 1.05},
+    )
+    assert classify_avg_ownership(999.0, table) == (2, 0.05, 1.05)

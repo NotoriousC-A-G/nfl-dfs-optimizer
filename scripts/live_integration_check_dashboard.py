@@ -20,10 +20,12 @@ from __future__ import annotations
 
 import warnings
 
+from nfl_dfs.analysis.dup_risk_calibration import build_dup_risk_lookup_table
 from nfl_dfs.analysis.ownership_calibration import run_full_calibration
 from nfl_dfs.ceiling.signals import role_share_ceiling_signals, trailing_red_zone_share_by_week
 from nfl_dfs.ingestion.qb_rushing_profile import trailing_qb_rushing_profiles
 from nfl_dfs.ingestion.receiving_profile import trailing_receiving_profiles
+from nfl_dfs.composition.lineup_dup_risk import assess_lineup_dup_risk
 from nfl_dfs.composition.player_detail import build_gsis_to_pff_id_map, build_player_detail_record
 from nfl_dfs.config import config
 from nfl_dfs.dashboard.renderer import SlateGameRow, write_dashboard_html
@@ -477,11 +479,24 @@ def main() -> None:
             f"weather_indoor={g.weather.is_indoor if g.weather else 'unknown'}"
         )
 
+    print("Building real dup-risk read for each generated lineup (ADR-0033/0034)...")
+    dup_risk_by_lineup: dict[int, object] = {}
+    try:
+        dup_risk_table = build_dup_risk_lookup_table()
+        dup_risk_by_lineup = {
+            i: assess_lineup_dup_risk(lineup, identities, leverage_by_native_id, dup_risk_table)
+            for i, lineup in enumerate(lineups)
+        }
+        n_real = sum(1 for a in dup_risk_by_lineup.values() if a.reason is None)
+        print(f"  {n_real}/{len(dup_risk_by_lineup)} lineup(s) with a real dup-risk read")
+    except ValueError as exc:
+        print(f"  SKIPPED: {exc}")
+
     out_path = "dashboard_output/weekly_dashboard.html"
     import os
 
     os.makedirs("dashboard_output", exist_ok=True)
-    write_dashboard_html(out_path, weekly, player_details, slate_games)
+    write_dashboard_html(out_path, weekly, player_details, slate_games, dup_risk_by_lineup=dup_risk_by_lineup)
     print(f"\nWrote real dashboard HTML to {out_path}")
 
 
