@@ -109,13 +109,10 @@ every other optional section of that script already follows.
 - `optimizer/lineup.py` now depends on `analysis/dup_risk_calibration.py` (a new, one-directional
   import -- no cycle: that module only depends on `storage/resultsdb_store.py`). `generate_lineups`
   itself gained no new dependencies or behavior change.
-- **A real, deliberate design gap remains open, named by ADR-0035 and not addressed by this
-  round**: PRD Section 7's own "none of the 3 should be... a pure max-leverage punt" text is still
-  the only written guidance on where that line sits. ADR-0035's proposed Section 7 amendment
-  language was never adopted as an actual PRD edit -- this implementation round shipped the
-  bucket-2 ceiling in code (`LINEUP_3_MAX_BUCKET`) without also updating the PRD document itself.
-  Flagged here for the record, not silently left inconsistent: the PRD amendment is still
-  outstanding.
+- **PRD Section 7 amended** (same day, following this implementation): "none of the 3 should be...
+  a pure max-leverage punt" now states the actual shipped rule (bucket ≤ 7 falling back to ≤ 8 for
+  Lineup 2, bucket ≤ 2 for Lineup 3) rather than leaving the line undefined -- closing the gap this
+  ADR's first version flagged as still outstanding.
 - Unit-tested: `_select_dup_risk_aware_lineups`'s bucket rule (best-per-slot selection, the
   bucket-8 fallback, the ownership-coverage-floor exclusion, no-core-stack-reuse-across-slots) is
   tested directly against hand-built fixtures, no `pulp` solve required; `generate_dup_risk_aware_
