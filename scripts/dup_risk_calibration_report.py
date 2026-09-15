@@ -1,8 +1,8 @@
 """CLI entry point for the per-season dup-risk calibration (ADR-0033).
 
 Fits every season present in curated ResultsDB lineups storage (ADR-0032), prints the ownership-decile
-dup-rate curve and per-trend dup-rate splits, and a lightweight two-season comparison. Read-only against
-`data/curated/resultsdb/nfl/` -- writes nothing.
+dup-rate curve and per-trend dup-rate splits, the leave-one-out stability test, and the resulting
+production calibration. Read-only against `data/curated/resultsdb/nfl/` -- writes nothing.
 
 Usage:
     .venv/bin/python scripts/dup_risk_calibration_report.py
@@ -10,7 +10,11 @@ Usage:
 
 from __future__ import annotations
 
-from nfl_dfs.analysis.dup_risk_calibration import compare_two_seasons, run_dup_risk_calibration
+from nfl_dfs.analysis.dup_risk_calibration import (
+    compare_season_dup_calibrations,
+    run_dup_risk_calibration,
+    select_production_dup_calibration,
+)
 
 
 def main() -> None:
@@ -36,8 +40,24 @@ def main() -> None:
             false_str = f"{tr.dup_rate_false:.4f}" if tr.dup_rate_false is not None else "n/a"
             print(f"  {name:<38} true(n={tr.n_true:>7})={true_str}   false(n={tr.n_false:>7})={false_str}")
 
-    print("\n=== Two-season comparison (NOT a stability test -- see module docstring) ===")
-    print(compare_two_seasons(list(bundle.values())))
+    calibrations = list(bundle.values())
+    if len(calibrations) >= 3:
+        print("\n=== Leave-one-out stability test (ADR-0025's method, reused) ===")
+        stability = compare_season_dup_calibrations(calibrations)
+        for season in sorted(stability.season_correlations):
+            print(f"  {season}: r={stability.season_correlations[season]:+.4f}")
+        print(f"  mean={stability.mean_correlation:+.4f}  std={stability.std_correlation:.4f}")
+        verdict = "STABLE" if stability.is_stable else f"UNSTABLE (seasons: {stability.unstable_seasons})"
+        print(f"  verdict: {verdict}")
+
+        print("\n=== Production calibration ===")
+        production = select_production_dup_calibration(calibrations, stability)
+        mode = "blended (all seasons)" if production.blended else "recent-window only"
+        print(f"  {mode}  source_seasons={production.source_seasons}  n_rows={production.n_rows}")
+        deciles = "  ".join(f"{d}:{production.decile_dup_rate.get(d, 0.0):.4f}" for d in range(10))
+        print(f"  decile dup-rate (0=highest avg ownership): {deciles}")
+    else:
+        print(f"\n=== Stability test skipped: only {len(calibrations)} season(s) fit, need >= 3 ===")
 
 
 if __name__ == "__main__":

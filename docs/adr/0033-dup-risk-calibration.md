@@ -1,7 +1,8 @@
 # ADR-0033: Dup-risk calibration -- ownership-decile and lineup-trend dup-rate curves
 
 **Status:** Accepted (implemented, unit-tested, run live against the real 2024-2025 `lineups/` backfill --
-see Consequences for real findings and what remains open)
+see Consequences for real findings and what remains open; extended to the full 2020-2025 range and given
+a real leave-one-out stability test in the "Update" section below)
 **Date:** 2026-09-15
 **Owner:** Chris, direct continuation of ADR-0032's "dup-risk calibration is the next phase" plan
 **Related:** ADR-0025 (ownership-propensity calibration, whose salary-decile-curve method this mirrors),
@@ -101,3 +102,37 @@ all) makes both trivially satisfied by construction, not a real duplication-rele
   calibration more seasons to test real stability against (enabling ADR-0025's leave-one-out method
   properly) and let the same U-shape/trend findings above be checked for persistence outside the 2024-2025
   contest-size regime (which ADR-0023 itself flagged as structurally different pre/post ~2022).
+
+## Update (2026-09-15): full 2020-2025 backfill, a real leave-one-out stability test, and dashboard wiring
+
+Chris extended the lineups backfill to the full 2020-2023 range (`run_lineups_backfill([2020, 2021, 2022,
+2023])`, live, zero failures, 10,304,647 additional real lineup rows across 54 contests -- 1.2GB total on
+disk for all 6 seasons now). This closed the two real gaps the original round above left open: not enough
+seasons for ADR-0025's leave-one-out method, and no check on whether the finding holds outside the
+2024-2025 contest-size regime.
+
+`compare_season_dup_calibrations`/`select_production_dup_calibration` were added, reusing ADR-0025's exact
+stability heuristic and selection rule verbatim (1.5x-leave-one-out-std threshold, blend-if-stable /
+recent-window-if-not) -- no position axis here, so a single global test rather than a per-position loop.
+
+**Real result, all 6 seasons, live:** r(avg_own, is_duplicated) by season: 2020 +0.1368, 2021 +0.1432,
+2022 +0.1718, 2023 +0.1268, 2024 +0.1551, 2025 +0.1420 (mean +0.1460, std 0.0143). **This is a genuinely
+tight 6-season spread (0.045 point range) -- tighter, in absolute terms, than most positions in ADR-0025's
+own six-season ownership fit -- confirming the core relationship holds across the entire confirmed
+ResultsDB era, including the pre-2022 contest-size regime the original round couldn't check.** The
+leave-one-out test still flags 2022 and 2023 as unstable by its own tight 1.5x-std bar, the same "real,
+qualitatively consistent, but not 'statistically indistinguishable' by this heuristic" pattern ADR-0025
+found for every one of its own positions -- not a sign the relationship is unreliable, a sign the
+heuristic is tight relative to how consistent real DK field behavior actually is. **Production calibration
+falls back to the 2023-2025 recent window** (`blended=False`), the same fallback destination ADR-0025's
+own production calibration landed on for every position -- an independent cross-check between two
+separate calibration rounds landing on the same production window, not a coincidence forced by shared code.
+
+**Dashboard wiring (ADR-0034) updated to use this real production window.** `live_integration_check_
+dashboard.py` now scopes `build_dup_risk_lookup_table` to `DEFAULT_RECENT_WINDOW=(2023, 2024, 2025)`
+rather than pooling all 6 backfilled seasons unconditionally -- a deliberate difference from ADR-0025's
+own live-script pattern (which re-fits its full calibration fresh on every run): the full leave-one-out
+stability test here runs against 12.6M real rows and takes real minutes, a periodic/offline analysis
+(`scripts/dup_risk_calibration_report.py`) rather than something a live per-slate dashboard build should
+redo on every invocation. The real production window is a stable, already-computed answer, not something
+that needs re-deriving every time a slate is built.

@@ -2,14 +2,17 @@ import pytest
 
 from nfl_dfs.analysis.dup_risk_calibration import (
     DupRiskLookupTable,
+    DupRiskStabilityResult,
     OwnershipDupCurve,
+    ProductionDupCalibration,
     SeasonDupCalibration,
     TrendDupRate,
     build_dup_risk_lookup_table,
     classify_avg_ownership,
-    compare_two_seasons,
+    compare_season_dup_calibrations,
     fit_season_dup_calibration,
     run_dup_risk_calibration,
+    select_production_dup_calibration,
 )
 from nfl_dfs.ingestion.rotogrinders_resultsdb import LineupRow
 from nfl_dfs.storage.resultsdb_store import write_curated_lineups
@@ -19,6 +22,8 @@ from nfl_dfs.storage.resultsdb_store import write_curated_lineups
 # continuous target -- see the correlation test below for the exact expected shape).
 _STANDARD_AVG_OWN = [50.0, 45.0, 40.0, 35.0, 30.0, 25.0, 20.0, 15.0, 10.0, 5.0]
 _STANDARD_LINEUP_CT = [10, 5, 3, 2, 1, 1, 1, 1, 1, 1]  # only the top 4 deciles are ever duplicated
+# Reversed: lowest avg_own -> highest lineup_ct, a real outlier-season pattern for the stability test.
+_OUTLIER_LINEUP_CT = list(reversed(_STANDARD_LINEUP_CT))
 
 
 def _lineup_row(lineup_hash: str, avg_own: float, lineup_ct: int, *, trends: dict | None = None) -> LineupRow:
@@ -133,18 +138,84 @@ def test_trend_dup_rate_none_when_key_never_appears(tmp_path):
 
 
 # ---------------------------------------------------------------------------
-# compare_two_seasons / run_dup_risk_calibration
+# compare_season_dup_calibrations / select_production_dup_calibration
 # ---------------------------------------------------------------------------
 
 
-def test_compare_two_seasons_reports_each_seasons_correlation(tmp_path):
-    _write_season(tmp_path, 2024)
-    _write_season(tmp_path, 2025)
-    bundle = run_dup_risk_calibration([2024, 2025], base_dir=tmp_path)
+def test_compare_season_dup_calibrations_requires_at_least_three_seasons():
+    with pytest.raises(ValueError, match="at least 3"):
+        compare_season_dup_calibrations(
+            [
+                SeasonDupCalibration(season=2024, ownership_curve=OwnershipDupCurve(2024, 1, 10, {}, {}, 0.5), trend_rates={}),
+                SeasonDupCalibration(season=2025, ownership_curve=OwnershipDupCurve(2025, 1, 10, {}, {}, 0.5), trend_rates={}),
+            ]
+        )
 
-    report = compare_two_seasons(list(bundle.values()))
-    assert "season 2024" in report
-    assert "season 2025" in report
+
+def test_compare_season_dup_calibrations_flags_the_one_outlier_season(tmp_path):
+    for season in (2020, 2021, 2023, 2024, 2025):
+        _write_season(tmp_path, season, lineup_cts=_STANDARD_LINEUP_CT)
+    _write_season(tmp_path, 2022, lineup_cts=_OUTLIER_LINEUP_CT)
+
+    calibrations = [fit_season_dup_calibration(season, base_dir=tmp_path) for season in range(2020, 2026)]
+    stability = compare_season_dup_calibrations(calibrations)
+
+    assert stability.season_correlations[2022] < 0  # the reversed pattern -- negative correlation
+    assert stability.season_correlations[2023] > 0
+    assert stability.is_stable is False
+    assert stability.unstable_seasons == (2022,)
+
+
+def test_compare_season_dup_calibrations_stable_when_all_seasons_agree(tmp_path):
+    for season in range(2020, 2026):
+        _write_season(tmp_path, season, lineup_cts=_STANDARD_LINEUP_CT)
+    calibrations = [fit_season_dup_calibration(season, base_dir=tmp_path) for season in range(2020, 2026)]
+    stability = compare_season_dup_calibrations(calibrations)
+    assert stability.is_stable is True
+    assert stability.unstable_seasons == ()
+
+
+def test_select_production_dup_calibration_blends_when_stable(tmp_path):
+    for season in range(2020, 2026):
+        _write_season(tmp_path, season, lineup_cts=_STANDARD_LINEUP_CT)
+    calibrations = [fit_season_dup_calibration(season, base_dir=tmp_path) for season in range(2020, 2026)]
+    stability = compare_season_dup_calibrations(calibrations)
+    production = select_production_dup_calibration(calibrations, stability)
+
+    assert production.blended is True
+    assert production.source_seasons == (2020, 2021, 2022, 2023, 2024, 2025)
+
+
+def test_select_production_dup_calibration_uses_recent_window_when_unstable(tmp_path):
+    for season in (2020, 2021, 2023, 2024, 2025):
+        _write_season(tmp_path, season, lineup_cts=_STANDARD_LINEUP_CT)
+    _write_season(tmp_path, 2022, lineup_cts=_OUTLIER_LINEUP_CT)
+
+    calibrations = [fit_season_dup_calibration(season, base_dir=tmp_path) for season in range(2020, 2026)]
+    stability = compare_season_dup_calibrations(calibrations)
+    production = select_production_dup_calibration(calibrations, stability)
+
+    assert production.blended is False
+    assert production.source_seasons == (2023, 2024, 2025)
+
+
+def test_select_production_dup_calibration_falls_back_when_recent_window_has_no_data():
+    stability = DupRiskStabilityResult(
+        season_correlations={2018: 0.5, 2019: -0.5, 2020: 0.9},
+        mean_correlation=0.3,
+        std_correlation=0.6,
+        is_stable=False,
+        unstable_seasons=(2019,),
+    )
+    curve = OwnershipDupCurve(season=2018, n_contests=1, n_rows=10, decile_dup_rate={0: 0.2}, decile_mean_lineup_ct={0: 1.2}, ownership_dup_rate_correlation=0.5)
+    calibrations = [SeasonDupCalibration(season=2018, ownership_curve=curve, trend_rates={})]
+    production = select_production_dup_calibration(calibrations, stability, recent_window=(2023, 2024, 2025))
+    assert production.source_seasons == (2018,)
+
+
+# ---------------------------------------------------------------------------
+# run_dup_risk_calibration
+# ---------------------------------------------------------------------------
 
 
 def test_run_dup_risk_calibration_defaults_to_every_season_present(tmp_path):

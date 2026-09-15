@@ -20,7 +20,7 @@ from __future__ import annotations
 
 import warnings
 
-from nfl_dfs.analysis.dup_risk_calibration import build_dup_risk_lookup_table
+from nfl_dfs.analysis.dup_risk_calibration import DEFAULT_RECENT_WINDOW, build_dup_risk_lookup_table
 from nfl_dfs.analysis.ownership_calibration import run_full_calibration
 from nfl_dfs.ceiling.signals import role_share_ceiling_signals, trailing_red_zone_share_by_week
 from nfl_dfs.ingestion.qb_rushing_profile import trailing_qb_rushing_profiles
@@ -482,7 +482,14 @@ def main() -> None:
     print("Building real dup-risk read for each generated lineup (ADR-0033/0034)...")
     dup_risk_by_lineup: dict[int, object] = {}
     try:
-        dup_risk_table = build_dup_risk_lookup_table()
+        # Scoped to the real, already-computed production window (2023-2025) rather than pooling
+        # all 6 backfilled seasons or re-running the full leave-one-out stability test on every
+        # dashboard build -- that test runs against 12.6M real rows and takes real minutes; it's a
+        # periodic/offline analysis (scripts/dup_risk_calibration_report.py), not something a live
+        # per-slate build should redo every time. 2022/2023 were flagged unstable by that test
+        # (ADR-0033's 2020-2025 addendum), same recent-window fallback ADR-0025's own ownership
+        # calibration landed on for every position.
+        dup_risk_table = build_dup_risk_lookup_table(seasons=DEFAULT_RECENT_WINDOW)
         dup_risk_by_lineup = {
             i: assess_lineup_dup_risk(lineup, identities, leverage_by_native_id, dup_risk_table)
             for i, lineup in enumerate(lineups)

@@ -7,17 +7,17 @@ average field ownership, decile-ranked within its own contest the same way ADR-0
 within position, and (2) specific structural trends the `lineups/` payload already computes per lineup
 (`lineupTrends` -- e.g. `qbPairedWithPassCatcher`, `minOnePlayerWithLowOwnership`).
 
-**Only 2 seasons of lineup data exist right now (2024-2025, ADR-0032's deliberately scoped-down
-backfill)** -- ADR-0025's leave-one-out stability test explicitly requires at least 3 seasons to be a
-meaningful comparison (`compare_season_calibrations`'s own guard) and this module does not lower that
-bar just because fewer seasons happen to be available; `compare_two_seasons` here is a lighter,
-honestly-labeled side-by-side report, not a stability verdict, and there is no `select_production_
-calibration`-equivalent yet -- extending the backfill to more seasons (ADR-0032's own named follow-up)
-is a real precondition for that, not a decision this module can make with n=2.
+**All 6 confirmed ResultsDB seasons (2020-2025) are now backfilled (ADR-0032, ADR-0033's addendum) --
+`compare_season_dup_calibrations` runs the real leave-one-out stability test ADR-0025 established (a
+season's own ownership-dup-rate correlation flagged unstable if it deviates from the OTHER seasons'
+mean by more than 1.5x their std), the same heuristic, same disclosed "not a formal hypothesis test"
+honesty. No position axis here (a lineup isn't position-specific, unlike ADR-0025's per-position
+salary curves), so this is a single global test, not a per-position loop.
 """
 
 from __future__ import annotations
 
+import statistics
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Sequence
@@ -27,6 +27,13 @@ import pandas as pd
 from nfl_dfs.storage.resultsdb_store import read_curated_lineups
 
 N_DECILES = 10
+
+DEFAULT_RECENT_WINDOW: tuple[int, ...] = (2023, 2024, 2025)
+
+# Multiplier on the leave-one-out standard deviation of the *other* seasons beyond which a season's
+# own correlation is flagged unstable -- reused unchanged from ADR-0025 (`ownership_calibration.py`'s
+# `_UNSTABLE_DEVIATION_MULTIPLIER`), not a new number picked for this module.
+_UNSTABLE_DEVIATION_MULTIPLIER = 1.5
 
 
 @dataclass(frozen=True)
@@ -154,15 +161,106 @@ def fit_season_dup_calibration(season: int, *, base_dir: Path | None = None) -> 
     return SeasonDupCalibration(season=season, ownership_curve=ownership_curve, trend_rates=trend_rates)
 
 
-def compare_two_seasons(calibrations: Sequence[SeasonDupCalibration]) -> str:
-    """A lightweight, honestly-labeled side-by-side report of the ownership-dup correlation across
-    whatever seasons were fit -- explicitly NOT `ownership_calibration.py`'s leave-one-out stability
-    test (that needs >=3 seasons to be a meaningful comparison at all, see module docstring). Returns
-    a human-readable summary string rather than a typed stability verdict, since there's no
-    is_stable/unstable_seasons judgment this module is prepared to make on 2 data points.
+@dataclass(frozen=True)
+class DupRiskStabilityResult:
+    """The leave-one-out stability verdict across every season fit -- single global result, no
+    position axis (see module docstring)."""
+
+    season_correlations: dict[int, float]
+    mean_correlation: float
+    std_correlation: float
+    is_stable: bool
+    unstable_seasons: tuple[int, ...]
+
+
+@dataclass(frozen=True)
+class ProductionDupCalibration:
+    """The resolved production ownership-decile dup-rate curve -- blended across all seasons if the
+    stability test found no outliers, otherwise recent-window-only with older seasons held out as
+    validation (ADR-0025's exact selection rule, `select_production_calibration`)."""
+
+    source_seasons: tuple[int, ...]
+    blended: bool
+    decile_dup_rate: dict[int, float]
+    n_rows: int
+
+
+def compare_season_dup_calibrations(calibrations: Sequence[SeasonDupCalibration]) -> DupRiskStabilityResult:
+    """Leave-one-out stability check (ADR-0025 section 3, reused unchanged): a season is flagged
+    unstable if its own `ownership_dup_rate_correlation` deviates from the mean of every *other*
+    fitted season by more than `_UNSTABLE_DEVIATION_MULTIPLIER` times those other seasons' standard
+    deviation. Needs at least 3 seasons with a defined correlation to run at all -- fewer than that,
+    "leave one out and compare to the rest" isn't a meaningful comparison (same guard
+    `ownership_calibration.py`'s own `compare_season_calibrations` uses).
     """
-    lines = [f"season {c.season}: r(avg_own, is_duplicated)={c.ownership_curve.ownership_dup_rate_correlation!r}" for c in calibrations]
-    return "\n".join(lines)
+    if len(calibrations) < 3:
+        raise ValueError("need at least 3 seasons of calibrations to run a leave-one-out stability test")
+
+    season_correlations = {
+        c.season: c.ownership_curve.ownership_dup_rate_correlation
+        for c in calibrations
+        if c.ownership_curve.ownership_dup_rate_correlation is not None
+    }
+    if len(season_correlations) < 3:
+        raise ValueError("fewer than 3 seasons have a defined ownership_dup_rate_correlation -- cannot run the stability test")
+
+    seasons = sorted(season_correlations)
+    unstable: list[int] = []
+    for season in seasons:
+        others = [season_correlations[s] for s in seasons if s != season]
+        other_mean = statistics.mean(others)
+        other_std = statistics.pstdev(others) if len(others) > 1 else 0.0
+        deviation = abs(season_correlations[season] - other_mean)
+        is_unstable = deviation > (_UNSTABLE_DEVIATION_MULTIPLIER * other_std) if other_std > 0 else deviation > 1e-9
+        if is_unstable:
+            unstable.append(season)
+
+    values = list(season_correlations.values())
+    return DupRiskStabilityResult(
+        season_correlations=season_correlations,
+        mean_correlation=statistics.mean(values),
+        std_correlation=statistics.pstdev(values),
+        is_stable=len(unstable) == 0,
+        unstable_seasons=tuple(sorted(unstable)),
+    )
+
+
+def select_production_dup_calibration(
+    calibrations: Sequence[SeasonDupCalibration],
+    stability: DupRiskStabilityResult,
+    *,
+    recent_window: Sequence[int] = DEFAULT_RECENT_WINDOW,
+) -> ProductionDupCalibration:
+    """Blends all fitted seasons' decile-dup-rate curves (row-count-weighted) if the stability test
+    found no outlier season; otherwise uses only `recent_window` seasons, holding the rest out as
+    validation reference (ADR-0025's exact selection rule, `select_production_calibration`)."""
+    by_season = {c.season: c for c in calibrations}
+
+    if stability.is_stable:
+        source_seasons = tuple(season for season in sorted(stability.season_correlations) if season in by_season)
+    else:
+        source_seasons = tuple(season for season in sorted(recent_window) if season in by_season)
+        if not source_seasons:
+            source_seasons = tuple(season for season in sorted(stability.season_correlations) if season in by_season)
+
+    curves = [by_season[season].ownership_curve for season in source_seasons if season in by_season]
+    decile_dup_rate: dict[int, float] = {}
+    for decile in range(N_DECILES):
+        weighted_sum = 0.0
+        weight_total = 0
+        for curve in curves:
+            if decile in curve.decile_dup_rate:
+                weighted_sum += curve.decile_dup_rate[decile] * curve.n_rows
+                weight_total += curve.n_rows
+        if weight_total > 0:
+            decile_dup_rate[decile] = weighted_sum / weight_total
+
+    return ProductionDupCalibration(
+        source_seasons=source_seasons,
+        blended=stability.is_stable,
+        decile_dup_rate=decile_dup_rate,
+        n_rows=sum(curve.n_rows for curve in curves),
+    )
 
 
 def run_dup_risk_calibration(seasons: Sequence[int] | None = None, *, base_dir: Path | None = None) -> dict[int, SeasonDupCalibration]:

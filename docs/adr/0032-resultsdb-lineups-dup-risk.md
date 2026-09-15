@@ -86,3 +86,15 @@ predicted-vs-actual duplicate-count model needs, with no further ingestion requi
 `run_lineups_backfill([2020, 2021, 2022, 2023])` is a one-line call away given the infrastructure already
 built here; deferred per Chris's explicit "prove it out on 1-2 seasons first" direction, not a technical
 limitation.
+
+## Update (2026-09-15): full 2020-2023 range backfilled -- all 6 confirmed ResultsDB seasons now covered
+
+Chris extended the backfill to the deferred range: `run_lineups_backfill([2020, 2021, 2022, 2023])`, live,
+54 already-resolved contests, zero failures, 10,304,647 additional lineup rows (267MB + 301MB + 252MB +
+146MB across the four seasons). **Real volume finding:** 2020-2023's contests are considerably LARGER than
+2024-2025's (many 150K-400K+ entries vs. 27K-200K) -- the single largest, 2020-11-01, has 384,750 distinct
+lineups. Combined with 2024-2025, all 6 confirmed ResultsDB seasons (the same 2020-2025 window ADR-0023
+established as this data source's real coverage floor) now have real curated lineup data: 12,561,230 total
+rows, 1.2GB on disk. See ADR-0033's own Update section for what the fuller range let the calibration
+confirm (the core dup-risk finding holds across the entire range, including the pre-2022 contest-size
+regime this round's own 2024-2025-only backfill couldn't check).
