@@ -80,15 +80,16 @@ existed, a stale/incorrect citation now corrected.
 | 28–34 Points Allowed | −1 |
 | 35+ Points Allowed | −4 |
 
-**Known gaps against this table, disclosed rather than silently wrong (2026-09-15):**
-`dk_points_row` implements every offensive line above except **Offensive Fumble Recovery TD**
-(+6) -- a genuinely rare event (a player recovering his own team's fumble and returning it for a
-TD), not yet added since the right `import_weekly_data()` column for it hasn't been verified live.
-**The entire Defense/Special Teams side is not implemented anywhere in this codebase as a
-real-points formula** -- `dk_points_row` was built specifically for `CeilingMultiplier`'s WR/RB/QB
-component backtests (ADR-0028), which never needed DST points; a `dk_dst_points_row`-shaped
-companion function is real, named follow-on work whenever a DST-inclusive backtest (e.g. a future
-`DSTProjection` calibration round) needs it -- not built speculatively here.
+**Update (2026-09-15): both gaps closed.** `src/nfl_dfs/ingestion/dst_actual_scoring.py` now
+computes real, settled DK Classic DST points from real pbp (`aggregate_team_week_dst_points`,
+team-week grain) -- every DST line item above, live-verified against real 2024 data (mean 5.9,
+median 5.0 DK points/week, matching the well-known real-world DST average; hand-checked individual
+team-weeks against their real box scores). The same module's `offensive_fumble_recovery_td_bonus`
+covers the one offensive gap (`dk_points_row` itself is UNCHANGED -- this is an additive
+`(player_id, week) -> 6.0` correction a caller can add on top, not a replacement; genuinely rare,
+17 real events across 2022-2024, confirmed live). **Deliberately not retrofitted into any of the
+already-shipped, already-closed `CeilingMultiplier` backtests (Components A-F)** -- the expected
+impact on those closed conclusions is negligible; available for any future backtest that wants it.
 
 ## 4. Data Sources
 
