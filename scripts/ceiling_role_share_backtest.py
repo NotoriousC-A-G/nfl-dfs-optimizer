@@ -50,11 +50,14 @@ def dk_points_row(row: pd.Series) -> float:
     Section 3 before that table actually existed there) computed from one `import_weekly_data()`
     row's real box-score columns.
 
-    **Two disclosed gaps against the real table, not silently assumed away** (see Section 3's own
-    "Known gaps" note for the full detail): Offensive Fumble Recovery TD (+6) is not implemented
-    (a genuinely rare event, no verified data column yet); the entire Defense/Special Teams side
-    is not implemented at all here -- this function has only ever been used for `CeilingMultiplier`
-    WR/RB/QB component backtests (ADR-0028), which never needed DST points.
+    **This function itself is unchanged and still offense-only** (still used only for
+    `CeilingMultiplier` WR/RB/QB component backtests, ADR-0028, which never need DST points) --
+    Offensive Fumble Recovery TD (+6) still is NOT computed here, since it's a rare, additive
+    correction, not a replacement for this function's own output. If a caller needs the fully
+    complete real-points picture (this function's offensive total, the fumble-recovery-TD
+    correction, or real DST points), see `src/nfl_dfs/ingestion/dst_actual_scoring.py`
+    (`offensive_fumble_recovery_td_bonus`, `aggregate_team_week_dst_points`) -- built 2026-09-15,
+    see PRD Section 3's "DK Classic scoring rules" note for the full record.
     """
     pts = 0.0
     pts += row["passing_yards"] * 0.04
