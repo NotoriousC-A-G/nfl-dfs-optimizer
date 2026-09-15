@@ -45,8 +45,17 @@ N_DECILES = 10
 
 
 def dk_points_row(row: pd.Series) -> float:
-    """DK Classic full-scoring formula (PRD Section 3) computed from one `import_weekly_data()`
-    row's real box-score columns."""
+    """DK Classic OFFENSIVE scoring formula (PRD Section 3's "DK Classic scoring rules" table,
+    added 2026-09-15 -- Chris supplied the real table directly; this docstring previously cited
+    Section 3 before that table actually existed there) computed from one `import_weekly_data()`
+    row's real box-score columns.
+
+    **Two disclosed gaps against the real table, not silently assumed away** (see Section 3's own
+    "Known gaps" note for the full detail): Offensive Fumble Recovery TD (+6) is not implemented
+    (a genuinely rare event, no verified data column yet); the entire Defense/Special Teams side
+    is not implemented at all here -- this function has only ever been used for `CeilingMultiplier`
+    WR/RB/QB component backtests (ADR-0028), which never needed DST points.
+    """
     pts = 0.0
     pts += row["passing_yards"] * 0.04
     pts += row["passing_tds"] * 4

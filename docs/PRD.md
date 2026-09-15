@@ -29,6 +29,67 @@ Relevant mechanics the model needs to respect:
 - DST scoring is volatile and swings on defensive/special teams touchdowns and sacks — treat it as a separate projection problem from offensive skill positions, not a scaled-down version of the same model.
 - Late swap is available on DK; the tool should flag players in early games separately from those in the late/Sunday-night window so Chris can hold flexible spots where it makes sense.
 
+### DK Classic scoring rules
+
+Source of truth for `scripts/ceiling_role_share_backtest.py`'s `dk_points_row` (the function that
+computes *actual, real* DK Classic points from settled box-score stats for backtest/calibration
+purposes -- not used for live forward-looking projections, which come from vendor-reported point
+totals instead, see Section 4). Chris supplied this table directly (2026-09-15) -- it was not
+here previously; `dk_points_row`'s own docstring cited this section before the table actually
+existed, a stale/incorrect citation now corrected.
+
+**Offense:**
+
+| Stat | Points |
+|---|---|
+| Passing TD | +4 |
+| 25 Passing Yards | +1 (0.04/yard) |
+| 300+ Yard Passing Game | +3 |
+| Interception (thrown) | −1 |
+| Rushing TD | +6 |
+| 10 Rushing Yards | +1 (0.1/yard) |
+| 100+ Yard Rushing Game | +3 |
+| Receiving TD | +6 |
+| 10 Receiving Yards | +1 (0.1/yard) |
+| 100+ Yard Receiving Game | +3 |
+| Reception (full PPR) | +1 |
+| Punt/Kickoff/FG Return for TD | +6 |
+| Fumble Lost | −1 |
+| 2 Pt Conversion (Pass, Run, or Catch) | +2 |
+| Offensive Fumble Recovery TD | +6 |
+
+**Defense/Special Teams (DST):**
+
+| Stat | Points |
+|---|---|
+| Sack | +1 |
+| Interception | +2 |
+| Fumble Recovery | +2 |
+| Punt/Kickoff/FG Return for TD | +6 |
+| Interception Return TD | +6 |
+| Fumble Recovery TD | +6 |
+| Blocked Punt or FG Return TD | +6 |
+| Safety | +2 |
+| Blocked Kick | +2 |
+| 2 Pt Conversion/Extra Point Return | +2 |
+| 0 Points Allowed | +10 |
+| 1–6 Points Allowed | +7 |
+| 7–13 Points Allowed | +4 |
+| 14–20 Points Allowed | +1 |
+| 21–27 Points Allowed | 0 |
+| 28–34 Points Allowed | −1 |
+| 35+ Points Allowed | −4 |
+
+**Known gaps against this table, disclosed rather than silently wrong (2026-09-15):**
+`dk_points_row` implements every offensive line above except **Offensive Fumble Recovery TD**
+(+6) -- a genuinely rare event (a player recovering his own team's fumble and returning it for a
+TD), not yet added since the right `import_weekly_data()` column for it hasn't been verified live.
+**The entire Defense/Special Teams side is not implemented anywhere in this codebase as a
+real-points formula** -- `dk_points_row` was built specifically for `CeilingMultiplier`'s WR/RB/QB
+component backtests (ADR-0028), which never needed DST points; a `dk_dst_points_row`-shaped
+companion function is real, named follow-on work whenever a DST-inclusive backtest (e.g. a future
+`DSTProjection` calibration round) needs it -- not built speculatively here.
+
 ## 4. Data Sources
 
 | Source | Access method | What it provides |
