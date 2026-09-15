@@ -68,7 +68,7 @@ from scripts.live_integration_check_output import _build_ges, _fetch_real_spread
 from scripts.live_integration_check_projection import fetch_footballguys_raw, fetch_rotogrinders_raw
 
 SEASON = 2026
-WEEK = 1
+WEEK = 2
 
 
 def main() -> None:
