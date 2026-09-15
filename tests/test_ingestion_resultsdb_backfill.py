@@ -12,10 +12,12 @@ from nfl_dfs.ingestion.resultsdb_backfill import (
     DateOutcome,
     enumerate_game_dates,
     process_date,
+    process_lineups_date,
     run_backfill,
+    run_lineups_backfill,
 )
-from nfl_dfs.ingestion.rotogrinders_resultsdb import ContestDataUnavailableError, DraftGroupSource, LiveContest
-from nfl_dfs.storage.resultsdb_store import has_raw_contest_data, read_curated_player_exposures
+from nfl_dfs.ingestion.rotogrinders_resultsdb import ContestDataUnavailableError, DraftGroupSource, LineupRow, LiveContest
+from nfl_dfs.storage.resultsdb_store import has_curated_lineups, has_raw_contest_data, read_curated_lineups, read_curated_player_exposures
 
 FIXTURES = Path(__file__).parent / "fixtures"
 
@@ -410,4 +412,109 @@ def test_run_backfill_reports_progress_lines(tmp_path, monkeypatch):
     run_backfill([2024], dates_by_season={2024: ["2024-07-04"]}, base_dir=tmp_path, sleep_fn=_RecordingSleep(), progress=messages.append)
 
     assert any("2024-07-04" in m for m in messages)
+    assert any("Season 2024" in m for m in messages)
+
+
+# ---------------------------------------------------------------------------
+# lineups backfill (ADR-0032) -- a separate, later pass over already-resolved contests
+# ---------------------------------------------------------------------------
+
+
+def _lineup_row(lineup_ct: int = 1) -> LineupRow:
+    return LineupRow(
+        lineup_hash="1:2:3", lineup_ct=lineup_ct, lineup_user_ct=1,
+        lineup_players={"QB1": 1}, points=200.0, total_salary=50000, total_own=50.0,
+        min_own=5.0, max_own=15.0, avg_own=10.0, lineup_rank=1, is_cashing=True, payout=0.0,
+        lineup_percentile=0.0, favorite_ct=1, underdog_ct=1, home_ct=1, visitor_ct=1,
+        correlated_players=1, team_stacks={}, game_stacks={}, lineup_trends={}, entry_name_list=["x"],
+    )
+
+
+def _contests_df() -> pd.DataFrame:
+    return pd.DataFrame(
+        [
+            {"date": "2024-09-08", "season": 2024, "contest_id": 1},
+            {"date": "2024-09-15", "season": 2024, "contest_id": 2},
+            {"date": "2023-09-10", "season": 2023, "contest_id": 3},
+        ]
+    )
+
+
+def test_process_lineups_date_skips_when_already_captured(tmp_path, monkeypatch):
+    from nfl_dfs.storage import resultsdb_store
+
+    resultsdb_store.write_curated_lineups("2024-09-08", 2024, 1, [_lineup_row()], base_dir=tmp_path)
+
+    def _boom(*a, **k):
+        raise AssertionError("should not make a live call for an already-captured date")
+
+    monkeypatch.setattr("nfl_dfs.ingestion.resultsdb_backfill.fetch_lineups", _boom)
+
+    outcome = process_lineups_date("2024-09-08", 2024, 1, base_dir=tmp_path, sleep_fn=_RecordingSleep())
+    assert outcome.status == "skipped"
+
+
+def test_process_lineups_date_fetches_and_writes_curated(tmp_path, monkeypatch):
+    sleeper = _RecordingSleep()
+    monkeypatch.setattr(
+        "nfl_dfs.ingestion.resultsdb_backfill.fetch_lineups",
+        lambda date, contest_id, session=None: [_lineup_row(), _lineup_row(lineup_ct=3)],
+    )
+
+    outcome = process_lineups_date("2024-09-08", 2024, 1, base_dir=tmp_path, sleep_fn=sleeper)
+
+    assert outcome.status == "fetched"
+    assert outcome.player_count == 2
+    assert has_curated_lineups("2024-09-08", 2024, base_dir=tmp_path) is True
+    df = read_curated_lineups(base_dir=tmp_path)
+    assert len(df) == 2
+    assert sleeper.calls == [REQUEST_DELAY_SECONDS]
+
+
+def test_process_lineups_date_unavailable_writes_no_curated_table(tmp_path, monkeypatch):
+    def _unavailable(date, contest_id, session=None):
+        raise ContestDataUnavailableError(f"status=403 for date={date} contest_id={contest_id}")
+
+    monkeypatch.setattr("nfl_dfs.ingestion.resultsdb_backfill.fetch_lineups", _unavailable)
+
+    outcome = process_lineups_date("2024-09-08", 2024, 1, base_dir=tmp_path, sleep_fn=_RecordingSleep())
+    assert outcome.status == "unavailable"
+    assert has_curated_lineups("2024-09-08", 2024, base_dir=tmp_path) is False
+
+
+def test_run_lineups_backfill_walks_only_the_requested_season_and_skips_captured_dates(tmp_path, monkeypatch):
+    from nfl_dfs.storage import resultsdb_store
+
+    # 2024-09-08 already captured -- must not be re-fetched.
+    resultsdb_store.write_curated_lineups("2024-09-08", 2024, 1, [_lineup_row()], base_dir=tmp_path)
+
+    calls = []
+
+    def _fake_fetch(date, contest_id, session=None):
+        calls.append(date)
+        return [_lineup_row()]
+
+    monkeypatch.setattr("nfl_dfs.ingestion.resultsdb_backfill.fetch_lineups", _fake_fetch)
+
+    stats = run_lineups_backfill(
+        [2024], contests=_contests_df(), base_dir=tmp_path, sleep_fn=_RecordingSleep(), progress=lambda msg: None
+    )
+
+    # Only 2024-09-15 is new -- 2024-09-08 skipped, 2023-09-10 excluded (different season entirely).
+    assert calls == ["2024-09-15"]
+    assert stats.fetched == 1
+    assert stats.skipped == 1
+    assert has_curated_lineups("2024-09-15", 2024, base_dir=tmp_path) is True
+    assert has_curated_lineups("2023-09-10", 2023, base_dir=tmp_path) is False
+
+
+def test_run_lineups_backfill_reports_progress_lines(tmp_path, monkeypatch):
+    monkeypatch.setattr(
+        "nfl_dfs.ingestion.resultsdb_backfill.fetch_lineups", lambda date, contest_id, session=None: [_lineup_row()]
+    )
+    messages = []
+    run_lineups_backfill(
+        [2024], contests=_contests_df(), base_dir=tmp_path, sleep_fn=_RecordingSleep(), progress=messages.append
+    )
+    assert any("2024-09-08" in m for m in messages)
     assert any("Season 2024" in m for m in messages)

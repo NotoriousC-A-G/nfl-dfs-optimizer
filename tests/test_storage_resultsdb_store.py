@@ -3,16 +3,20 @@ import json
 import pandas as pd
 import pytest
 
-from nfl_dfs.ingestion.rotogrinders_resultsdb import ContestSummary, PlayerExposureRow, UserExposureRow
+from nfl_dfs.ingestion.rotogrinders_resultsdb import ContestSummary, LineupRow, PlayerExposureRow, UserExposureRow
 from nfl_dfs.storage.resultsdb_store import (
     STATUS_FETCHED,
     STATUS_NO_PRIMARY_CONTEST,
+    curated_lineups_path,
+    has_curated_lineups,
     has_raw_contest_data,
     read_curated_contests,
+    read_curated_lineups,
     read_curated_player_exposures,
     read_curated_user_exposures,
     read_raw_contest_data,
     write_curated_contest,
+    write_curated_lineups,
     write_raw_contest_data,
 )
 
@@ -183,3 +187,87 @@ def test_read_curated_player_exposures_empty_when_nothing_written(tmp_path):
     df = read_curated_player_exposures(base_dir=tmp_path)
     assert isinstance(df, pd.DataFrame)
     assert df.empty
+
+
+def _lineup_row(lineup_ct: int = 1) -> LineupRow:
+    return LineupRow(
+        lineup_hash="1:2:3:4:5:6:7:8:9",
+        lineup_ct=lineup_ct,
+        lineup_user_ct=1,
+        lineup_players={"QB1": 1, "RB1": 2, "RB2": 3, "WR1": 4, "WR2": 5, "WR3": 6, "TE1": 7, "FLEX1": 8, "DST1": 9},
+        points=200.0,
+        total_salary=50000,
+        total_own=50.0,
+        min_own=5.0,
+        max_own=15.0,
+        avg_own=10.0,
+        lineup_rank=1,
+        is_cashing=True,
+        payout=100.0,
+        lineup_percentile=99.9,
+        favorite_ct=5,
+        underdog_ct=4,
+        home_ct=5,
+        visitor_ct=4,
+        correlated_players=3,
+        team_stacks={"2237": ["1:0", "4:0"]},
+        game_stacks={"9999": [1, 4, 5]},
+        lineup_trends={"qbPairedWithPassCatcher": True, "rbPairedWithDefense": False},
+        entry_name_list=["tester1", "tester2"],
+    )
+
+
+def test_has_curated_lineups_false_when_nothing_written(tmp_path):
+    assert has_curated_lineups("2024-09-08", 2024, base_dir=tmp_path) is False
+
+
+def test_write_curated_lineups_round_trips_nested_fields_as_real_dicts(tmp_path):
+    write_curated_lineups("2024-09-08", 2024, 1, [_lineup_row(), _lineup_row(lineup_ct=3)], base_dir=tmp_path)
+    assert has_curated_lineups("2024-09-08", 2024, base_dir=tmp_path) is True
+
+    df = read_curated_lineups(base_dir=tmp_path)
+    assert len(df) == 2
+    assert set(df["contest_id"]) == {1}
+    assert sorted(df["lineup_ct"]) == [1, 3]
+
+    row = df.iloc[0]
+    # Nested fields are JSON-string-encoded on disk (pyarrow struct-schema-union risk, see module
+    # docstring) but must come back as real Python dicts/lists from read_curated_lineups, not
+    # left as raw JSON strings for every caller to decode themselves.
+    assert isinstance(row["lineup_players"], dict)
+    assert row["lineup_players"] == {
+        "QB1": 1, "RB1": 2, "RB2": 3, "WR1": 4, "WR2": 5, "WR3": 6, "TE1": 7, "FLEX1": 8, "DST1": 9,
+    }
+    assert isinstance(row["team_stacks"], dict)
+    assert row["team_stacks"] == {"2237": ["1:0", "4:0"]}
+    assert isinstance(row["lineup_trends"], dict)
+    assert row["lineup_trends"]["qbPairedWithPassCatcher"] is True
+    assert list(row["entry_name_list"]) == ["tester1", "tester2"]
+
+
+def test_write_curated_lineups_is_idempotent_on_rerun(tmp_path):
+    write_curated_lineups("2024-09-08", 2024, 1, [_lineup_row(), _lineup_row(), _lineup_row()], base_dir=tmp_path)
+    write_curated_lineups("2024-09-08", 2024, 1, [_lineup_row()], base_dir=tmp_path)
+    df = read_curated_lineups(base_dir=tmp_path)
+    assert len(df) == 1
+
+
+def test_read_curated_lineups_concatenates_across_dates_and_filters_by_season(tmp_path):
+    write_curated_lineups("2024-09-08", 2024, 1, [_lineup_row()], base_dir=tmp_path)
+    write_curated_lineups("2023-09-10", 2023, 2, [_lineup_row()], base_dir=tmp_path)
+
+    assert len(read_curated_lineups(base_dir=tmp_path)) == 2
+    only_2024 = read_curated_lineups(season=2024, base_dir=tmp_path)
+    assert len(only_2024) == 1
+    assert only_2024.iloc[0]["date"] == "2024-09-08"
+
+
+def test_read_curated_lineups_empty_when_nothing_written(tmp_path):
+    df = read_curated_lineups(base_dir=tmp_path)
+    assert isinstance(df, pd.DataFrame)
+    assert df.empty
+
+
+def test_curated_lineups_path_shape(tmp_path):
+    path = curated_lineups_path("2024-09-08", 2024, base_dir=tmp_path)
+    assert path == tmp_path / "season=2024" / "lineups" / "2024-09-08.parquet"

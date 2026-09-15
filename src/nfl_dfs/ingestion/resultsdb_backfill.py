@@ -45,6 +45,7 @@ from nfl_dfs.ingestion.rotogrinders_resultsdb import (
     NoPrimaryContestError,
     fetch_contest_data,
     fetch_contest_sources,
+    fetch_lineups,
     fetch_live_contests,
     parse_contest_summary,
     parse_player_exposures,
@@ -57,8 +58,11 @@ from nfl_dfs.storage.resultsdb_store import (
     STATUS_NO_MAIN_SLATE_GROUP,
     STATUS_NO_PRIMARY_CONTEST,
     STATUS_UNAVAILABLE,
+    has_curated_lineups,
     has_raw_contest_data,
+    read_curated_contests,
     write_curated_contest,
+    write_curated_lineups,
     write_raw_contest_data,
 )
 
@@ -380,5 +384,107 @@ def run_backfill(
             f"=== Season {season} done: {stats.fetched} fetched, {stats.skipped} skipped, "
             f"{stats.no_primary_contest} no-primary-contest, {stats.no_main_slate_group} no-main-slate-group, "
             f"{stats.unavailable} unavailable, {stats.failed} failed (running totals across all seasons so far) ==="
+        )
+    return stats
+
+
+# ---------------------------------------------------------------------------
+# Lineups backfill (ADR-0032) -- a SEPARATE, LATER pass over dates already resolved by
+# run_backfill above, not part of the original per-date raw envelope. Scoped this way
+# deliberately: a single contest's lineup table can be 200K+ rows (confirmed live, ADR-0032),
+# so this is opt-in per season/date range rather than folded into the main backfill's blanket
+# 2020-2025 walk.
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class LineupsBackfillStats:
+    fetched: int = 0
+    skipped: int = 0
+    unavailable: int = 0
+    failed: int = 0
+    lineup_rows: int = 0
+    outcomes: list[DateOutcome] = field(default_factory=list)
+
+    def record(self, outcome: DateOutcome) -> None:
+        self.outcomes.append(outcome)
+        if outcome.status == "fetched":
+            self.fetched += 1
+            self.lineup_rows += outcome.player_count  # reused field: count of lineup rows here
+        elif outcome.status == "skipped":
+            self.skipped += 1
+        elif outcome.status == "unavailable":
+            self.unavailable += 1
+        elif outcome.status == "failed":
+            self.failed += 1
+
+
+def process_lineups_date(
+    date: str,
+    season: int,
+    contest_id: int,
+    *,
+    session: requests.Session | None = None,
+    base_dir=None,
+    sleep_fn: Callable[[float], None] = time.sleep,
+) -> DateOutcome:
+    """Resolves the lineups pull for one already-resolved (date, season, contest_id) triple --
+    the contest itself was already discovered by `run_backfill`'s own `process_date`; this
+    function only calls the `lineups/` endpoint and writes the curated table. Same
+    resumability/backoff shape as `process_date`, scoped to this one endpoint.
+    """
+    if has_curated_lineups(date, season, base_dir=base_dir):
+        return DateOutcome(date=date, status="skipped")
+    try:
+        lineups = _call_with_backoff(fetch_lineups, date, contest_id, session=session, sleep_fn=sleep_fn)
+        sleep_fn(REQUEST_DELAY_SECONDS)
+    except _TransientFailure as exc:
+        return DateOutcome(date=date, status="failed", detail=str(exc))
+    except ContestDataUnavailableError as exc:
+        return DateOutcome(date=date, status="unavailable", contest_id=contest_id, detail=str(exc))
+    except Exception as exc:  # noqa: BLE001 -- same outer safety net as process_date
+        return DateOutcome(date=date, status="failed", detail=f"unexpected error: {exc!r}")
+
+    write_curated_lineups(date, season, contest_id, lineups, base_dir=base_dir)
+    return DateOutcome(date=date, status="fetched", contest_id=contest_id, player_count=len(lineups))
+
+
+def run_lineups_backfill(
+    seasons: list[int],
+    *,
+    contests: pd.DataFrame | None = None,
+    session: requests.Session | None = None,
+    base_dir=None,
+    sleep_fn: Callable[[float], None] = time.sleep,
+    progress: Callable[[str], None] = print,
+) -> LineupsBackfillStats:
+    """Walks every already-fetched contest (per `run_backfill`'s own curated `contests` table,
+    ADR-0024) across `seasons`, pulling and writing that date's `lineups/` table. Resumable by
+    construction, same as `run_backfill` -- re-running skips every date already captured.
+
+    `contests` lets a caller (or a test) supply the contest table directly instead of reading it
+    live from `base_dir` via `read_curated_contests` -- when omitted, reads live.
+    """
+    if contests is None:
+        contests = read_curated_contests(base_dir=base_dir)
+    stats = LineupsBackfillStats()
+    for season in seasons:
+        season_contests = contests[contests["season"] == season].sort_values("date")
+        progress(f"=== Season {season}: {len(season_contests)} already-resolved contest(s) to pull lineups for ===")
+        for row in season_contests.itertuples(index=False):
+            outcome = process_lineups_date(row.date, season, row.contest_id, session=session, base_dir=base_dir, sleep_fn=sleep_fn)
+            stats.record(outcome)
+            if outcome.status == "fetched":
+                progress(f"  {row.date}: fetched {outcome.player_count} distinct lineup(s)")
+            elif outcome.status == "skipped":
+                progress(f"  {row.date}: skipped (already captured)")
+            elif outcome.status == "unavailable":
+                progress(f"  {row.date}: lineups data unavailable ({outcome.detail})")
+            else:
+                progress(f"  {row.date}: FAILED -- {outcome.detail}")
+        progress(
+            f"=== Season {season} lineups done: {stats.fetched} fetched, {stats.skipped} skipped, "
+            f"{stats.unavailable} unavailable, {stats.failed} failed, {stats.lineup_rows} total lineup rows "
+            "(running totals across all seasons so far) ==="
         )
     return stats
