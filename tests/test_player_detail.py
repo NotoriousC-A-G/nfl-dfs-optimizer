@@ -1003,6 +1003,76 @@ def test_ceiling_projection_none_when_either_input_missing():
 
 
 # --------------------------------------------------------------------------------------------
+# ADR-0036: red_zone_role_security_discount / ceiling_projection composition
+# --------------------------------------------------------------------------------------------
+
+
+def test_red_zone_role_security_discount_joins_via_gsis_id_for_wr():
+    identity = _identity("00-1", "Some WR", "WR", "GB", gsis_id="00-1")
+    record = build_player_detail_record(
+        identity, SEASON, WEEK, team="GB", position="WR", opponent_team_this_week="CHI",
+        red_zone_signals_by_gsis_id={"00-1": _ceiling_signal(2.0)},
+    )
+    assert record.red_zone_role_security_discount == pytest.approx(0.94)
+    assert record.red_zone_role_security_discount_reason is None
+
+
+def test_red_zone_role_security_discount_not_applicable_for_rb():
+    identity = _identity("00-1", "Some RB", "RB", "GB", gsis_id="00-1")
+    record = build_player_detail_record(
+        identity, SEASON, WEEK, team="GB", position="RB", opponent_team_this_week="CHI",
+        red_zone_signals_by_gsis_id={"00-1": _ceiling_signal(2.0)},
+    )
+    assert record.red_zone_role_security_discount is None
+    assert "WR-only" in record.red_zone_role_security_discount_reason
+
+
+def test_red_zone_role_security_discount_none_with_reason_when_no_pool_supplied():
+    identity = _identity("00-1", "Some WR", "WR", "GB", gsis_id="00-1")
+    record = build_player_detail_record(identity, SEASON, WEEK, team="GB", position="WR", opponent_team_this_week="CHI")
+    assert record.red_zone_role_security_discount is None
+    assert "no WR red-zone role-security signal" in record.red_zone_role_security_discount_reason
+
+
+def test_red_zone_role_security_discount_none_with_reason_when_signal_itself_ungated():
+    identity = _identity("00-1", "Some WR", "WR", "GB", gsis_id="00-1")
+    record = build_player_detail_record(
+        identity, SEASON, WEEK, team="GB", position="WR", opponent_team_this_week="CHI",
+        red_zone_signals_by_gsis_id={"00-1": _ceiling_signal(None)},
+    )
+    assert record.red_zone_role_security_discount is None
+    assert "no WR red-zone role-security signal" in record.red_zone_role_security_discount_reason
+
+
+def test_ceiling_projection_composes_ceiling_multiplier_and_red_zone_discount_together():
+    identity = _identity("00-1", "Some WR", "WR", "GB", gsis_id="00-1")
+    record = build_player_detail_record(
+        identity, SEASON, WEEK, team="GB", position="WR", opponent_team_this_week="CHI",
+        ceiling_signals_by_gsis_id={"00-1": _ceiling_signal(1.0)},
+        red_zone_signals_by_gsis_id={"00-1": _ceiling_signal(2.0)},
+        projections_by_canonical_id={"00-1": _projection("00-1", salary=6000, blended_projection=15.0)},
+    )
+    assert record.ceiling_multiplier is not None
+    assert record.red_zone_role_security_discount == pytest.approx(0.94)
+    assert record.ceiling_projection == pytest.approx(15.0 * record.ceiling_multiplier * 0.94)
+
+
+def test_ceiling_projection_treats_absent_red_zone_discount_as_neutral_not_blocking():
+    # Unlike ceiling_multiplier (a precondition for ceiling_projection at all), a missing/not-
+    # applicable red_zone_role_security_discount (e.g. this player is RB, or no pool was supplied)
+    # must not block ceiling_projection -- it's an additional downward adjustment only when real,
+    # never a second precondition.
+    identity = _identity("00-1", "Some RB", "RB", "GB", gsis_id="00-1")
+    record = build_player_detail_record(
+        identity, SEASON, WEEK, team="GB", position="RB", opponent_team_this_week="CHI",
+        ceiling_signals_by_gsis_id={"00-1": _ceiling_signal(1.0)},
+        projections_by_canonical_id={"00-1": _projection("00-1", salary=6000, blended_projection=15.0)},
+    )
+    assert record.red_zone_role_security_discount is None
+    assert record.ceiling_projection == pytest.approx(15.0 * record.ceiling_multiplier)
+
+
+# --------------------------------------------------------------------------------------------
 # ADR-0029: receiving_profile (descriptive, not a ceiling signal)
 # --------------------------------------------------------------------------------------------
 

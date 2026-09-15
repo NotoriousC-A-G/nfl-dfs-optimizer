@@ -335,6 +335,75 @@ def red_zone_ceiling_signals(
     return _z_score_and_shrink(boom)
 
 
+# --------------------------------------------------------------------------------------------
+# ADR-0036: WR red-zone role-security discount -- a standalone, downside-only construct
+# expressing Component B's real, validated NEGATIVE WR finding above (`red_zone_ceiling_signals`,
+# `role=ROLE_WR`) -- architecturally NOT part of `CeilingMultiplier` (that formula is one-sided,
+# floored at 1.0 FROM BELOW, so a negative `scale_i` just floors back to 1.0 and does nothing;
+# both experts confirmed this at Component B's original closure, ADR-0028). This construct is the
+# floored-from-ABOVE mirror image instead -- can only ever discount a projection or leave it
+# unchanged, never raise it.
+#
+# Design (both experts' joint review, fully signed off, ADR-0036):
+# - Banded discrete tiers, not a continuous exp(scale*z) curve -- mirrors `usage_share.py`'s
+#   `BlowoutVolumeDiscount` shape (this project's only prior downside-discount precedent) rather
+#   than `CeilingMultiplier`'s shape, specifically because a downside construct has no
+#   self-limiting floor the way Component A's upside floor makes an overconfident scale cheap to
+#   be wrong about -- a banded cap bounds the worst-case single-step error.
+# - Damped to roughly HALF the fitted slope (-0.0784 -> -0.04) on first ship, following
+#   `BlowoutVolumeDiscount`'s own "halve and round to a clean number" precedent for a first-of-
+#   its-kind downside construct with no live track record yet -- not the raw backtested effect.
+# - `shrunk_z_score <= 0` gets NO discount (1.00) -- one-sided by construction: this only fires on
+#   the *elevated*-red-zone-share side (the football mechanism, a single-game matchup exploit that
+#   gets scouted and shut down the following week, has no analog for a player at/below baseline).
+# - Both bands anchored to real, actually-occupied z-values (1.0 and 1.5), not arbitrary or
+#   rarely-hit tail values -- `shrunk_z_score >= 1.5` was already established (Component A's own
+#   docstring/backtest) as "structurally hard to reach" given this project's shrinkage math
+#   (`CEILING_SHRINKAGE_K=6.0`, `MIN_TRAILING_WEEKS=3`), so 1.5 is the real practical ceiling, not
+#   an understated extreme.
+# - Required joint-composition check (both signals fit together: `log(relative_performance) ~
+#   a_shrunk_z + b_shrunk_z + a_shrunk_z*b_shrunk_z`, WR only): both components retained ~92-97%
+#   of their univariate effect size and the interaction term did NOT clear zero -- confirms
+#   multiplicative composition with `component_a_multiplier` is statistically safe, no
+#   cross-term correction needed (`composition/player_detail.py`'s `ceiling_projection` property
+#   multiplies both together for exactly this reason).
+# - WR ONLY, explicitly -- never extended to TE by analogy (Component B's own red-zone-share pool
+#   combines WR+TE with no position split, a disclosed limitation `red_zone_ceiling_signals`
+#   already carries; TE was never independently backtested for this specific negative-relationship
+#   claim, and both experts required it stay WR-gated rather than repeat the exact "extended from
+#   a sibling role by analogy, never independently reviewed" shortcut that necessitated Component
+#   B's own original independent review in the first place).
+# --------------------------------------------------------------------------------------------
+
+WR_RED_ZONE_ROLE_SECURITY_DISCOUNT_BANDS: tuple[tuple[float, float], ...] = (
+    (0.0, 1.00),  # shrunk_z_score <= 0 -- no discount at or below a player's own trailing baseline
+    (1.0, 0.96),  # 0 < shrunk_z_score <= 1.0 -- exp(-0.04 * 1.0), a real but mild elevation
+    (float("inf"), 0.94),  # shrunk_z_score > 1.0 -- exp(-0.04 * 1.5), anchored at the practical ceiling
+)
+
+
+def wr_red_zone_role_security_discount(signal: CeilingSignal) -> float | None:
+    """The real, backtested, both-experts-signed-off WR red-zone role-security discount (ADR-0036):
+    a banded, downside-only multiplier on `signal.shrunk_z_score` (from `red_zone_ceiling_signals`,
+    `role=ROLE_WR`) -- see module section docstring above for the full design/calibration record.
+
+    Returns `None`, never a fabricated neutral `1.0`, when `signal.shrunk_z_score is None` (this
+    player didn't clear `MIN_TRAILING_WEEKS`) -- this project's established "unknown is not the
+    same as neutral" discipline, same as `component_a_multiplier`. A negative `shrunk_z_score` is a
+    real, valid, EXPECTED input here (a genuine cross-sectional z-score, never `abs()`-transformed)
+    and correctly resolves to the `1.00` (no-discount) band -- this function does not raise on a
+    negative input the way `blowout_volume_discount` does for its own, differently-shaped `abs_spread`
+    argument.
+    """
+    if signal.shrunk_z_score is None:
+        return None
+    z = signal.shrunk_z_score
+    for upper_bound, discount in WR_RED_ZONE_ROLE_SECURITY_DISCOUNT_BANDS:
+        if z <= upper_bound:
+            return discount
+    raise AssertionError("unreachable -- final band's upper bound is +inf")  # pragma: no cover
+
+
 def trailing_red_zone_share_by_week(
     pbp: pd.DataFrame, target_week: int, role: str, *, season_type: str | None = "REG"
 ) -> dict[str, list[tuple[int, float]]]:

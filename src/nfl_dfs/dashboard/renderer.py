@@ -1057,6 +1057,11 @@ def _render_ceiling_cell(record: PlayerDetailRecord) -> str:
         return _na(record.ceiling_multiplier_reason, fallback="no ceiling read for this player")
     main = f'<span class="num">{record.ceiling_projection:.1f}</span>' if record.ceiling_projection is not None else "&mdash;"
     sub = f'<div class="cell-sub">{record.ceiling_multiplier:.2f}x</div>'
+    # ADR-0036: the WR red-zone role-security discount, when real, is already folded into
+    # ceiling_projection above (composed via PlayerDetailRecord's own property) -- shown here too,
+    # separately, so the discount itself is visible, not just its already-applied end result.
+    if record.red_zone_role_security_discount is not None and record.red_zone_role_security_discount < 1.0:
+        sub += f'<div class="cell-sub">{record.red_zone_role_security_discount:.2f}x red-zone role-security</div>'
     return main + sub
 
 

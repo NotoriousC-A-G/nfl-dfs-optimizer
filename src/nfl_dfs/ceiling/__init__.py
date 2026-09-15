@@ -10,6 +10,7 @@ from nfl_dfs.ceiling.signals import (
     MIN_TRAILING_WEEKS,
     QB_DESIGNED_RUN_MIN_TRAILING_VOLUME,
     QB_EXPLOSIVE_RUSH_MIN_TRAILING_VOLUME,
+    WR_RED_ZONE_ROLE_SECURITY_DISCOUNT_BANDS,
     CeilingSignal,
     adot_ceiling_signals,
     component_a_multiplier,
@@ -18,6 +19,7 @@ from nfl_dfs.ceiling.signals import (
     red_zone_ceiling_signals,
     role_share_ceiling_signals,
     trailing_red_zone_share_by_week,
+    wr_red_zone_role_security_discount,
 )
 
 __all__ = [
@@ -29,6 +31,7 @@ __all__ = [
     "MIN_TRAILING_WEEKS",
     "QB_DESIGNED_RUN_MIN_TRAILING_VOLUME",
     "QB_EXPLOSIVE_RUSH_MIN_TRAILING_VOLUME",
+    "WR_RED_ZONE_ROLE_SECURITY_DISCOUNT_BANDS",
     "CeilingSignal",
     "adot_ceiling_signals",
     "component_a_multiplier",
@@ -37,4 +40,5 @@ __all__ = [
     "red_zone_ceiling_signals",
     "role_share_ceiling_signals",
     "trailing_red_zone_share_by_week",
+    "wr_red_zone_role_security_discount",
 ]

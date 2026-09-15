@@ -45,6 +45,7 @@ import pandas as pd
 
 from nfl_dfs.ceiling.signals import red_zone_ceiling_signals, role_share_ceiling_signals
 from nfl_dfs.ingestion.usage_share import ROLE_RB, ROLE_WR, aggregate_team_week_volume_red_zone
+from scripts.ceiling_qb_explosive_rush_backtest import _linear_fit_multi_clustered_se
 from scripts.ceiling_role_share_backtest import (
     BOOM_OUTCOME_MULTIPLE,
     MAX_TARGET_WEEK,
@@ -99,12 +100,23 @@ def main() -> None:
                 for signal in b_signals:
                     a_signal = a_signals.get(signal.player_id)
                     if a_signal is not None and a_signal.shrunk_z_score is not None and signal.shrunk_z_score is not None:
+                        # ADR-0035's required joint-composition check needs the real outcome
+                        # alongside both z-scores, not just the z-score pair the original A/B
+                        # correlation check used -- computed the same way `all_pairs` does below,
+                        # duplicated here (not shared) since ab_pairs is a distinct, smaller
+                        # population (both signals real, a stricter join than either signal alone).
+                        rel_perf = None
+                        if signal.player_id in trailing_median.index and signal.player_id in actual_points.index:
+                            median = trailing_median[signal.player_id]
+                            if median > 0:
+                                rel_perf = actual_points[signal.player_id] / median
                         ab_pairs.append(
                             {
                                 "season": season, "week": target_week, "role": role,
                                 "player_id": signal.player_id,
                                 "a_shrunk_z": a_signal.shrunk_z_score,
                                 "b_shrunk_z": signal.shrunk_z_score,
+                                "relative_performance": rel_perf,
                             }
                         )
 
@@ -167,21 +179,24 @@ def main() -> None:
         )
         print(f"  --> exp(slope) = {np.exp(log_slope):.4f}")
 
-        # Model Analytics Expert's required final check (RB only -- the borderline result): the
-        # non-clustered SE above assumes independence across a player's own repeated weekly
-        # observations, which understates the true SE whenever those repeats are correlated (they
-        # are -- a player's underlying talent/role/matchup quality doesn't reset every week).
-        # Cluster-robust SEs (Cameron-Miller sandwich, player_id clusters) are the decisive check
-        # for a result this close to the non-clustered significance line.
-        if role == ROLE_RB:
-            clustered_slope, clustered_se, clustered_ci, n_clusters = _linear_fit_clustered_se(
-                player_z, log_perf, positive["player_id"].to_numpy()
-            )
-            print(
-                f"  Cluster-robust fit (player_id clusters, G={n_clusters}) -- "
-                f"slope={clustered_slope:.4f}  SE={clustered_se:.4f}  95% CI=[{clustered_ci[0]:.4f}, {clustered_ci[1]:.4f}]"
-            )
-            print(f"  --> clears zero: {clustered_ci[0] > 0 or clustered_ci[1] < 0}")
+        # Model Analytics Expert's required check: the non-clustered SE above assumes independence
+        # across a player's own repeated weekly observations, which understates the true SE
+        # whenever those repeats are correlated (they are -- a player's underlying talent/role/
+        # matchup quality doesn't reset every week). Cluster-robust SEs (Cameron-Miller sandwich,
+        # player_id clusters) are the decisive check. Originally gated to RB only (the borderline
+        # result at the time this script was first run) -- extended to WR too (ADR-0035's WR
+        # red-zone role-security design review) once the Model Analytics Expert flagged that WR's
+        # own real, negative finding never actually got this same check: the "cluster-robust SEs
+        # mandatory by default" bar was set in this project's methodology only after this script's
+        # original run, never retroactively applied to WR's already-shipped-to-the-ADR numbers.
+        clustered_slope, clustered_se, clustered_ci, n_clusters = _linear_fit_clustered_se(
+            player_z, log_perf, positive["player_id"].to_numpy()
+        )
+        print(
+            f"  Cluster-robust fit (player_id clusters, G={n_clusters}) -- "
+            f"slope={clustered_slope:.4f}  SE={clustered_se:.4f}  95% CI=[{clustered_ci[0]:.4f}, {clustered_ci[1]:.4f}]"
+        )
+        print(f"  --> clears zero: {clustered_ci[0] > 0 or clustered_ci[1] < 0}")
 
         # Model Analytics Expert's required check #2 (WR only, where the negative finding was):
         # split by a tercile of trailing team red-zone play volume -- tests whether the negative
@@ -213,6 +228,29 @@ def main() -> None:
         role_ab = ab_df[ab_df["role"] == role]
         corr = role_ab["a_shrunk_z"].corr(role_ab["b_shrunk_z"])
         print(f"  {role}: Pearson r(Component A, Component B) = {corr:.4f}  (n={len(role_ab)})")
+
+    # ADR-0035's required joint-composition check (WR only, where a live A*B composition is
+    # actually proposed): does Component B's real negative effect survive, and is there a real
+    # interaction, once BOTH signals enter the same regression together -- the univariate A/B
+    # correlation check above only tests whether the two z-scores move together in general, not
+    # whether the log-space effect is still additive (multiplicative in levels) on the subset
+    # where both signals are real and potentially large simultaneously.
+    print("\n=== Joint composition check (WR only): log(relative_performance) ~ a_z + b_z + a_z*b_z ===")
+    wr_ab = ab_df[(ab_df["role"] == ROLE_WR) & ab_df["relative_performance"].notna() & (ab_df["relative_performance"] > 0)]
+    if len(wr_ab) >= 30:
+        X = np.column_stack(
+            [wr_ab["a_shrunk_z"].to_numpy(), wr_ab["b_shrunk_z"].to_numpy(), (wr_ab["a_shrunk_z"] * wr_ab["b_shrunk_z"]).to_numpy()]
+        )
+        y = np.log(wr_ab["relative_performance"].to_numpy())
+        slopes, ses, cis, n_clusters = _linear_fit_multi_clustered_se(X, y, wr_ab["player_id"].to_numpy())
+        labels = ["a_shrunk_z (Component A, controlling for B + interaction)",
+                  "b_shrunk_z (Component B, controlling for A + interaction)",
+                  "a_z*b_z (interaction)"]
+        print(f"  n={len(wr_ab)}, G={n_clusters} clusters")
+        for label, slope, se, ci in zip(labels, slopes, ses, cis):
+            print(f"  {label:<55} slope={slope:.4f}  SE={se:.4f}  95% CI=[{ci[0]:.4f}, {ci[1]:.4f}]")
+    else:
+        print(f"  n={len(wr_ab)} too small to fit")
 
 
 if __name__ == "__main__":

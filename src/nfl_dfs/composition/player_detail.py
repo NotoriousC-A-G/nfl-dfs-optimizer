@@ -97,7 +97,12 @@ from datetime import datetime
 
 import pandas as pd
 
-from nfl_dfs.ceiling.signals import COMPONENT_A_SCALE, CeilingSignal, component_a_multiplier
+from nfl_dfs.ceiling.signals import (
+    COMPONENT_A_SCALE,
+    CeilingSignal,
+    component_a_multiplier,
+    wr_red_zone_role_security_discount,
+)
 from nfl_dfs.correlation.stack_profile import StackProfile
 from nfl_dfs.game_environment.score import GameEnvironmentScore
 from nfl_dfs.ingestion.pff import PffFacetGrades, ResolvedGrade, TeamCoverageTendency, resolve_grade
@@ -163,6 +168,17 @@ _NO_CEILING_SIGNAL_REASON = (
 _CEILING_NOT_APPLICABLE_REASON = (
     "Component A ceiling is only calibrated for RB/WR (ADR-0028) -- TE/QB/DST have no live "
     "ceiling multiplier yet, a scope gap for the position, not a data gap for this player."
+)
+
+_NO_RED_ZONE_ROLE_SECURITY_REASON = (
+    "no WR red-zone role-security signal for this player -- either "
+    "red_zone_signals_by_gsis_id wasn't supplied to this composer call, this player has no "
+    "resolvable gsis_id, or their trailing red-zone-share boom-rate didn't clear "
+    "MIN_TRAILING_WEEKS this week (ceiling/signals.py, ADR-0036)."
+)
+_RED_ZONE_ROLE_SECURITY_NOT_APPLICABLE_REASON = (
+    "the WR red-zone role-security discount is WR-only (ADR-0036 -- never independently "
+    "backtested for TE, deliberately not extended by analogy) -- not a data gap for this position."
 )
 
 _NO_RECEIVING_PROFILE_REASON = (
@@ -466,6 +482,9 @@ class PlayerDetailRecord:
     ceiling_multiplier: float | None
     ceiling_multiplier_reason: str | None
 
+    red_zone_role_security_discount: float | None
+    red_zone_role_security_discount_reason: str | None
+
     receiving_profile: TrailingReceivingProfile | None
     receiving_profile_reason: str | None
 
@@ -483,12 +502,22 @@ class PlayerDetailRecord:
 
     @property
     def ceiling_projection(self) -> float | None:
-        """`projection * ceiling_multiplier` -- Component A only (ADR-0028), not the full
-        eventual `CeilingMultiplier` (Components B/C are uncalibrated), so this is a real but
-        partial ceiling read, not the final number. `None` whenever either input is."""
+        """`projection * ceiling_multiplier * red_zone_role_security_discount` -- Component A's
+        upside multiplier (ADR-0028) and, for WR, the red-zone role-security downside discount
+        (ADR-0036) composed together, per both experts' required joint-composition check
+        confirming the two signals retain their independent effect sizes with no significant
+        interaction. Still a real but PARTIAL ceiling read, not the eventual full
+        `CeilingMultiplier` (Components C/D/E all closed as nulls; this discount is a standalone
+        construct, not a `CeilingMultiplier` component at all -- see ADR-0036).
+        `red_zone_role_security_discount` defaults to a neutral 1.0 when absent (RB/TE/QB/DST, or
+        no red-zone signal this week) -- unlike `ceiling_multiplier`, whose absence blocks this
+        property entirely, since Component A's signal is the one this property has always
+        required; the discount is only ever an additional downward adjustment when present, never
+        a precondition for computing a ceiling read at all."""
         if self.projection is None or self.ceiling_multiplier is None:
             return None
-        return self.projection * self.ceiling_multiplier
+        discount = self.red_zone_role_security_discount if self.red_zone_role_security_discount is not None else 1.0
+        return self.projection * self.ceiling_multiplier * discount
 
 
 # --------------------------------------------------------------------------------------------
@@ -949,6 +978,27 @@ def _ceiling_multiplier(
     return multiplier, None
 
 
+def _red_zone_role_security_discount(
+    gsis_id: str | None, position: str, red_zone_signals_by_gsis_id: dict[str, CeilingSignal] | None
+) -> tuple[float | None, str | None]:
+    """Joined via `identity.nflverse_gsis_id`, same gsis_id-space key `_ceiling_multiplier` above
+    already uses -- `red_zone_signals_by_gsis_id` is `ceiling.signals.red_zone_ceiling_signals`'s
+    already-built `role=ROLE_WR` output (ADR-0036), a DIFFERENT signal pool from Component A's
+    `ceiling_signals_by_gsis_id` (role-share, not red-zone-share) even though both are keyed the
+    same way -- a caller must not pass the same dict for both."""
+    if position != "WR":
+        return None, _RED_ZONE_ROLE_SECURITY_NOT_APPLICABLE_REASON
+    if gsis_id is None:
+        return None, _NO_RED_ZONE_ROLE_SECURITY_REASON
+    signal = (red_zone_signals_by_gsis_id or {}).get(gsis_id)
+    if signal is None:
+        return None, _NO_RED_ZONE_ROLE_SECURITY_REASON
+    discount = wr_red_zone_role_security_discount(signal)
+    if discount is None:
+        return None, _NO_RED_ZONE_ROLE_SECURITY_REASON
+    return discount, None
+
+
 def _receiving_profile(
     gsis_id: str | None, position: str, receiving_profile_by_gsis_id: dict[str, TrailingReceivingProfile] | None
 ) -> tuple[TrailingReceivingProfile | None, str | None]:
@@ -1009,6 +1059,7 @@ def build_player_detail_record(
     kickoff_utc_by_team: dict[str, str] | None = None,
     implied_total_by_team: dict[str, float] | None = None,
     ceiling_signals_by_gsis_id: dict[str, CeilingSignal] | None = None,
+    red_zone_signals_by_gsis_id: dict[str, CeilingSignal] | None = None,
     receiving_profile_by_gsis_id: dict[str, TrailingReceivingProfile] | None = None,
     carry_share_by_week_by_gsis_id: dict[str, list[tuple[int, float]]] | None = None,
     target_share_by_week_by_gsis_id: dict[str, list[tuple[int, float]]] | None = None,
@@ -1060,6 +1111,12 @@ def build_player_detail_record(
     caller into one `{signal.player_id: signal}` dict) for `ceiling_multiplier`. Optional, same
     "caller has nothing for this source" shape as every other lookup above.
 
+    `red_zone_signals_by_gsis_id` (new, ADR-0036) is `ceiling.signals.red_zone_ceiling_signals`'s
+    already-built `role=ROLE_WR` output (a DIFFERENT signal from `ceiling_signals_by_gsis_id`
+    above, even though both happen to be `{player_id: CeilingSignal}`-shaped and gsis_id-keyed --
+    role-share vs. red-zone-share) for `red_zone_role_security_discount`. Optional, same shape as
+    every other lookup above.
+
     `receiving_profile_by_gsis_id` (new, ADR-0029) is `ingestion.receiving_profile
     .trailing_receiving_profiles`' already-built output for `receiving_profile`. Optional, same
     shape as every other lookup above.
@@ -1094,6 +1151,9 @@ def build_player_detail_record(
     slate_window, slate_window_reason = _slate_window(team, kickoff_utc_by_team)
     implied_total, implied_total_reason = _implied_total(team, implied_total_by_team)
     ceiling_multiplier, ceiling_multiplier_reason = _ceiling_multiplier(gsis_id, position, ceiling_signals_by_gsis_id)
+    red_zone_role_security_discount, red_zone_role_security_discount_reason = _red_zone_role_security_discount(
+        gsis_id, position, red_zone_signals_by_gsis_id
+    )
     receiving_profile, receiving_profile_reason = _receiving_profile(gsis_id, position, receiving_profile_by_gsis_id)
     qb_rushing_profile, qb_rushing_profile_reason = _qb_rushing_profile(
         gsis_id, position, qb_rushing_profile_by_gsis_id
@@ -1141,6 +1201,8 @@ def build_player_detail_record(
         implied_total_reason=implied_total_reason,
         ceiling_multiplier=ceiling_multiplier,
         ceiling_multiplier_reason=ceiling_multiplier_reason,
+        red_zone_role_security_discount=red_zone_role_security_discount,
+        red_zone_role_security_discount_reason=red_zone_role_security_discount_reason,
         receiving_profile=receiving_profile,
         receiving_profile_reason=receiving_profile_reason,
         qb_rushing_profile=qb_rushing_profile,

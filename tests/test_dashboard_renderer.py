@@ -309,6 +309,8 @@ def _fully_populated_player_detail(
         implied_total_reason=None,
         ceiling_multiplier=1.09,
         ceiling_multiplier_reason=None,
+        red_zone_role_security_discount=None,
+        red_zone_role_security_discount_reason="no WR red-zone role-security signal for this player.",
         receiving_profile=TrailingReceivingProfile(
             player_id="rz-1", player_name=name, team=team,
             trailing_targets=30, trailing_receptions=22, trailing_air_yards=270,
@@ -389,6 +391,8 @@ def _rb_with_tier_and_uncontested_prior(canonical_id: str, name: str, team: str)
         implied_total_reason="no implied point total for this player's team.",
         ceiling_multiplier=None,
         ceiling_multiplier_reason="no Component A ceiling signal for this player.",
+        red_zone_role_security_discount=None,
+        red_zone_role_security_discount_reason="the WR red-zone role-security discount is WR-only.",
         receiving_profile=None,
         receiving_profile_reason="no trailing receiving-opportunity profile for this player.",
         qb_rushing_profile=None,
@@ -444,6 +448,8 @@ def _qb_with_rushing_profile(canonical_id: str, name: str, team: str) -> PlayerD
         implied_total_reason="no implied point total for this player's team.",
         ceiling_multiplier=None,
         ceiling_multiplier_reason="Component A ceiling is only calibrated for RB/WR.",
+        red_zone_role_security_discount=None,
+        red_zone_role_security_discount_reason="the WR red-zone role-security discount is WR-only.",
         receiving_profile=None,
         receiving_profile_reason="trailing receiving-opportunity profile only applies to pass-catchers.",
         qb_rushing_profile=TrailingQbRushingProfile(
@@ -666,6 +672,29 @@ def test_dup_risk_omitted_entirely_when_not_supplied():
     weekly_output, _ = _weekly_output_with_three_lineups()
     html = render_dashboard_html(weekly_output, [])
     assert "Dup Risk" not in html
+
+
+# --------------------------------------------------------------------------------------------
+# ADR-0036: red_zone_role_security_discount rendered as a sub-line in the Ceiling cell
+# --------------------------------------------------------------------------------------------
+
+
+def test_red_zone_role_security_discount_renders_as_a_ceiling_sub_line_when_real():
+    import dataclasses
+
+    weekly_output, _ = _weekly_output_with_three_lineups()
+    wr = _fully_populated_player_detail("wr_star", "Star Wideout", "AAA")
+    wr = dataclasses.replace(wr, red_zone_role_security_discount=0.94, red_zone_role_security_discount_reason=None)
+
+    html = render_dashboard_html(weekly_output, [wr])
+    assert "0.94x red-zone role-security" in html
+
+
+def test_red_zone_role_security_discount_no_sub_line_when_neutral_or_absent():
+    weekly_output, _ = _weekly_output_with_three_lineups()
+    wr = _fully_populated_player_detail("wr_star", "Star Wideout", "AAA")  # discount is None by default
+    html = render_dashboard_html(weekly_output, [wr])
+    assert "red-zone role-security" not in html
 
 
 def test_empty_weekly_output_and_empty_player_pool_render_without_crashing():

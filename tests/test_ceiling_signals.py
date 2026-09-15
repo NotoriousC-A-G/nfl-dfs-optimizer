@@ -19,6 +19,7 @@ from nfl_dfs.ceiling.signals import (
     red_zone_ceiling_signals,
     role_share_ceiling_signals,
     trailing_red_zone_share_by_week,
+    wr_red_zone_role_security_discount,
 )
 from nfl_dfs.ingestion.usage_share import ROLE_RB, ROLE_WR
 
@@ -586,3 +587,33 @@ def test_component_a_multiplier_none_when_signal_ungated_not_fabricated_neutral(
 def test_component_a_multiplier_rejects_unsupported_role():
     with pytest.raises(ValueError, match="RB.*WR|WR.*RB"):
         component_a_multiplier(_signal(1.0), "TE")
+
+
+# --------------------------------------------------------------------------------------------
+# wr_red_zone_role_security_discount (ADR-0036)
+# --------------------------------------------------------------------------------------------
+
+
+def test_wr_red_zone_role_security_discount_matches_the_signed_off_bands():
+    assert wr_red_zone_role_security_discount(_signal(0.5)) == pytest.approx(0.96)
+    assert wr_red_zone_role_security_discount(_signal(1.0)) == pytest.approx(0.96)  # inclusive at the boundary
+    assert wr_red_zone_role_security_discount(_signal(1.01)) == pytest.approx(0.94)
+    assert wr_red_zone_role_security_discount(_signal(5.0)) == pytest.approx(0.94)
+
+
+def test_wr_red_zone_role_security_discount_no_discount_at_or_below_baseline():
+    # One-sided by design (ADR-0036) -- a negative or zero z (at/below the player's own trailing
+    # baseline) never lowers the read below 1.0, the mirror-image floor from component_a_multiplier's
+    # own one-sided upside floor.
+    assert wr_red_zone_role_security_discount(_signal(0.0)) == pytest.approx(1.0)
+    assert wr_red_zone_role_security_discount(_signal(-0.01)) == pytest.approx(1.0)
+    assert wr_red_zone_role_security_discount(_signal(-3.0)) == pytest.approx(1.0)
+
+
+def test_wr_red_zone_role_security_discount_never_raises_above_one():
+    for z in (-5.0, -1.0, 0.0, 0.5, 1.0, 1.5, 3.0, 10.0):
+        assert wr_red_zone_role_security_discount(_signal(z)) <= 1.0
+
+
+def test_wr_red_zone_role_security_discount_none_when_signal_ungated_not_fabricated_neutral():
+    assert wr_red_zone_role_security_discount(_signal(None)) is None

@@ -22,7 +22,12 @@ import warnings
 
 from nfl_dfs.analysis.dup_risk_calibration import DEFAULT_RECENT_WINDOW, build_dup_risk_lookup_table
 from nfl_dfs.analysis.ownership_calibration import run_full_calibration
-from nfl_dfs.ceiling.signals import role_share_ceiling_signals, trailing_red_zone_share_by_week
+from nfl_dfs.ceiling.signals import (
+    red_zone_ceiling_signals,
+    role_share_ceiling_signals,
+    trailing_red_zone_share_by_week,
+    wr_red_zone_role_security_discount,
+)
 from nfl_dfs.ingestion.qb_rushing_profile import trailing_qb_rushing_profiles
 from nfl_dfs.ingestion.receiving_profile import trailing_receiving_profiles
 from nfl_dfs.composition.lineup_dup_risk import assess_lineup_dup_risk
@@ -252,6 +257,13 @@ def main() -> None:
     n_with_real_z = sum(1 for s in ceiling_signals_by_gsis_id.values() if s.shrunk_z_score is not None)
     print(f"  {len(ceiling_signals_by_gsis_id)} player(s) with a Component A signal, {n_with_real_z} with a real (gated-in) shrunk_z_score")
 
+    print("Building real WR red-zone role-security signals (ADR-0036)...")
+    red_zone_signals_by_gsis_id = {s.player_id: s for s in red_zone_ceiling_signals(pbp, WEEK, ROLE_WR)}
+    n_with_real_discount = sum(
+        1 for s in red_zone_signals_by_gsis_id.values() if wr_red_zone_role_security_discount(s) is not None
+    )
+    print(f"  {len(red_zone_signals_by_gsis_id)} player(s) with a red-zone-share signal, {n_with_real_discount} with a real (gated-in) discount read")
+
     print("Building real trailing receiving-opportunity profiles (ADR-0029, descriptive only)...")
     receiving_profile_by_gsis_id = trailing_receiving_profiles(pbp, WEEK)
     print(f"  {len(receiving_profile_by_gsis_id)} player(s) with a trailing receiving profile")
@@ -336,6 +348,7 @@ def main() -> None:
             kickoff_utc_by_team=kickoff_utc_by_team,
             implied_total_by_team=implied_total_by_team,
             ceiling_signals_by_gsis_id=ceiling_signals_by_gsis_id,
+            red_zone_signals_by_gsis_id=red_zone_signals_by_gsis_id,
             receiving_profile_by_gsis_id=receiving_profile_by_gsis_id,
             carry_share_by_week_by_gsis_id=carry_share_by_week_by_gsis_id,
             target_share_by_week_by_gsis_id=target_share_by_week_by_gsis_id,
