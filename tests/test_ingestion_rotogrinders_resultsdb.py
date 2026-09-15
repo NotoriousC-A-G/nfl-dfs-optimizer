@@ -236,12 +236,12 @@ def test_fetch_contest_data_reshapes_date_to_yyyymmdd_path_and_raises_on_non_200
 
 
 # ---------------------------------------------------------------------------
-# lineups (ADR-0031) -- one row per DISTINCT roster, the real dup-count data
+# lineups (ADR-0032) -- one row per DISTINCT roster, the real dup-count data
 # ---------------------------------------------------------------------------
 
 
 def test_parse_lineups_extracts_real_fields_from_the_dict_keyed_payload():
-    # Real, live-confirmed shape (ADR-0031): payload["lineups"] is a DICT keyed by lineupHash, not
+    # Real, live-confirmed shape (ADR-0032): payload["lineups"] is a DICT keyed by lineupHash, not
     # a flat list -- this fixture is a real sample pulled from a live 2020-09-20 contest.
     payload = _load("resultsdb_lineups.json")
     rows = parse_lineups(payload)

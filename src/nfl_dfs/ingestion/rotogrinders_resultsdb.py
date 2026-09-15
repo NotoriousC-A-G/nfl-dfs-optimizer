@@ -29,7 +29,7 @@ through today; every 2017-2019 contest tried 403s. Six real seasons (2020-2025, 
 `live-contests` -> pick the `is_primary` flagship contest, e.g. the Millionaire/MEGA Millionaire PRD Section 2
 already names) and the player-exposure/actuals + user-exposure halves of the `data/` payload.
 
-**`lineups/` endpoint (ADR-0031, added this pass):** per-distinct-roster dup counts, `lineupTrends`,
+**`lineups/` endpoint (ADR-0032, added this pass):** per-distinct-roster dup counts, `lineupTrends`,
 team/game-stack tiers -- the literal dup-risk data the earlier ADR-0023/0025/0026 rounds all deliberately
 scoped out as follow-up. Confirmed live shape (2020-09-20, contest 91962454, 244,757 distinct lineups):
 `{"lineups": {<lineupHash>: {...}}}` -- a DICT keyed by `lineupHash`, not a list (ADR-0023's original section
@@ -371,7 +371,7 @@ def fetch_contest_data(date: str, contest_id: int, *, session: requests.Session 
 
 
 # ---------------------------------------------------------------------------
-# lineups: one row per DISTINCT roster (not per entry) -- the real dup-count data, ADR-0031
+# lineups: one row per DISTINCT roster (not per entry) -- the real dup-count data, ADR-0032
 # ---------------------------------------------------------------------------
 
 
@@ -415,7 +415,7 @@ class LineupRow:
 
 
 def parse_lineups(payload: dict) -> list[LineupRow]:
-    """Pure parse of a `lineups/` response. **Real shape, confirmed live (ADR-0031) --
+    """Pure parse of a `lineups/` response. **Real shape, confirmed live (ADR-0032) --
     NOT a flat list**: `payload["lineups"]` is a DICT keyed by `lineupHash`, one entry per
     distinct roster. `lineupHash` itself is redundant with the dict key (both carry the same
     value in every row observed live) -- kept as its own field anyway rather than reconstructed
