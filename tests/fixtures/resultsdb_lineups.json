@@ -1,0 +1,1183 @@
+{
+  "lineups": {
+    "26479:33090:51748:75693:8590:54073:4377:6165:8476": {
+      "lineupHash": "26479:33090:51748:75693:8590:54073:4377:6165:8476",
+      "lineupCt": 1,
+      "lineupUserCt": 1,
+      "lineupPlayers": {
+        "QB1": 26479,
+        "RB1": 33090,
+        "RB2": 51748,
+        "WR1": 75693,
+        "WR2": 8590,
+        "WR3": 54073,
+        "TE1": 4377,
+        "FLEX1": 6165,
+        "DST1": 8476
+      },
+      "points": 248.9,
+      "totalSalary": 49800,
+      "totalOwn": 92.08,
+      "minOwn": 3.01,
+      "maxOwn": 17.52,
+      "avgOwn": 10.23,
+      "lineupRank": 1,
+      "isCashing": true,
+      "favoriteCt": 8,
+      "underdogCt": 1,
+      "homeCt": 6,
+      "visitorCt": 3,
+      "payout": 0.0,
+      "lineupPercentile": 0.0,
+      "correlatedPlayers": 4,
+      "teamStacks": {
+        "2237": [
+          "26479:0",
+          "8590:0",
+          "54073:0"
+        ]
+      },
+      "gameStacks": {
+        "4680800": [
+          26479,
+          75693,
+          8590,
+          54073
+        ]
+      },
+      "lineupTrends": {
+        "qbPairedWithPassCatcher": true,
+        "qbStackPairedWithOpponent": true,
+        "rbPairedWithDefense": false,
+        "noPlayersAgainstDEF": true,
+        "maxOneRBPerGame": true,
+        "minOnePlayerWithLowOwnership": true,
+        "cptQBPairedWithMultiplePassCatchers": false,
+        "cptPassCatcherPairedWithQB": false,
+        "maxOneDEFPerGame": true,
+        "maxOneKickerPerGame": true
+      },
+      "entryNameList": [
+        "goners"
+      ]
+    },
+    "26479:26266:33090:75693:8590:40496:44721:6165:8492": {
+      "lineupHash": "26479:26266:33090:75693:8590:40496:44721:6165:8492",
+      "lineupCt": 1,
+      "lineupUserCt": 1,
+      "lineupPlayers": {
+        "QB1": 26479,
+        "RB1": 26266,
+        "RB2": 33090,
+        "WR1": 75693,
+        "WR2": 8590,
+        "WR3": 40496,
+        "FLEX1": 44721,
+        "TE1": 6165,
+        "DST1": 8492
+      },
+      "points": 245.3,
+      "totalSalary": 50000,
+      "totalOwn": 109.72,
+      "minOwn": 5.03,
+      "maxOwn": 25.98,
+      "avgOwn": 12.19,
+      "lineupRank": 2,
+      "isCashing": true,
+      "favoriteCt": 7,
+      "underdogCt": 2,
+      "homeCt": 6,
+      "visitorCt": 3,
+      "payout": 150000.0,
+      "lineupPercentile": 0.0,
+      "correlatedPlayers": 5,
+      "teamStacks": {
+        "2237": [
+          "26479:0",
+          "26266:0",
+          "8590:0"
+        ],
+        "2149": [
+          "75693:0",
+          "40496:0"
+        ]
+      },
+      "gameStacks": {
+        "4680800": [
+          26479,
+          26266,
+          75693,
+          8590,
+          40496
+        ]
+      },
+      "lineupTrends": {
+        "qbPairedWithPassCatcher": true,
+        "qbStackPairedWithOpponent": true,
+        "rbPairedWithDefense": false,
+        "noPlayersAgainstDEF": true,
+        "maxOneRBPerGame": true,
+        "minOnePlayerWithLowOwnership": false,
+        "cptQBPairedWithMultiplePassCatchers": false,
+        "cptPassCatcherPairedWithQB": false,
+        "maxOneDEFPerGame": true,
+        "maxOneKickerPerGame": true
+      },
+      "entryNameList": [
+        "4Japan"
+      ]
+    },
+    "26479:26266:33090:49574:75693:54073:49559:75263:8492": {
+      "lineupHash": "26479:26266:33090:49574:75693:54073:49559:75263:8492",
+      "lineupCt": 1,
+      "lineupUserCt": 1,
+      "lineupPlayers": {
+        "QB1": 26479,
+        "RB1": 26266,
+        "RB2": 33090,
+        "FLEX1": 49574,
+        "WR1": 75693,
+        "WR2": 54073,
+        "WR3": 49559,
+        "TE1": 75263,
+        "DST1": 8492
+      },
+      "points": 243.4,
+      "totalSalary": 50000,
+      "totalOwn": 105.85,
+      "minOwn": 1.21,
+      "maxOwn": 25.98,
+      "avgOwn": 11.76,
+      "lineupRank": 3,
+      "isCashing": true,
+      "favoriteCt": 6,
+      "underdogCt": 3,
+      "homeCt": 7,
+      "visitorCt": 2,
+      "payout": 100000.0,
+      "lineupPercentile": 0.0,
+      "correlatedPlayers": 6,
+      "teamStacks": {
+        "2237": [
+          "26479:0",
+          "26266:0",
+          "54073:0"
+        ]
+      },
+      "gameStacks": {
+        "4680800": [
+          26479,
+          26266,
+          75693,
+          54073
+        ],
+        "4680710": [
+          33090,
+          49559
+        ]
+      },
+      "lineupTrends": {
+        "qbPairedWithPassCatcher": true,
+        "qbStackPairedWithOpponent": true,
+        "rbPairedWithDefense": false,
+        "noPlayersAgainstDEF": true,
+        "maxOneRBPerGame": true,
+        "minOnePlayerWithLowOwnership": true,
+        "cptQBPairedWithMultiplePassCatchers": false,
+        "cptPassCatcherPairedWithQB": false,
+        "maxOneDEFPerGame": true,
+        "maxOneKickerPerGame": true
+      },
+      "entryNameList": [
+        "schill26"
+      ]
+    },
+    "26479:26266:33090:75693:2823:26002:54073:6165:8479": {
+      "lineupHash": "26479:26266:33090:75693:2823:26002:54073:6165:8479",
+      "lineupCt": 1,
+      "lineupUserCt": 1,
+      "lineupPlayers": {
+        "QB1": 26479,
+        "RB1": 26266,
+        "RB2": 33090,
+        "WR1": 75693,
+        "FLEX1": 2823,
+        "WR2": 26002,
+        "WR3": 54073,
+        "TE1": 6165,
+        "DST1": 8479
+      },
+      "points": 243.3,
+      "totalSalary": 49900,
+      "totalOwn": 107.1,
+      "minOwn": 4.36,
+      "maxOwn": 25.98,
+      "avgOwn": 11.9,
+      "lineupRank": 4,
+      "isCashing": true,
+      "favoriteCt": 6,
+      "underdogCt": 3,
+      "homeCt": 6,
+      "visitorCt": 3,
+      "payout": 50000.0,
+      "lineupPercentile": 0.0,
+      "correlatedPlayers": 6,
+      "teamStacks": {
+        "2237": [
+          "26479:0",
+          "26266:0",
+          "54073:0"
+        ]
+      },
+      "gameStacks": {
+        "4680800": [
+          26479,
+          26266,
+          75693,
+          54073
+        ],
+        "4680720": [
+          2823,
+          26002
+        ]
+      },
+      "lineupTrends": {
+        "qbPairedWithPassCatcher": true,
+        "qbStackPairedWithOpponent": true,
+        "rbPairedWithDefense": false,
+        "noPlayersAgainstDEF": true,
+        "maxOneRBPerGame": true,
+        "minOnePlayerWithLowOwnership": true,
+        "cptQBPairedWithMultiplePassCatchers": false,
+        "cptPassCatcherPairedWithQB": false,
+        "maxOneDEFPerGame": true,
+        "maxOneKickerPerGame": true
+      },
+      "entryNameList": [
+        "CraigMackMB843"
+      ]
+    },
+    "58465:33090:51748:75693:8606:8590:44721:33588:8463": {
+      "lineupHash": "58465:33090:51748:75693:8606:8590:44721:33588:8463",
+      "lineupCt": 1,
+      "lineupUserCt": 1,
+      "lineupPlayers": {
+        "QB1": 58465,
+        "RB1": 33090,
+        "RB2": 51748,
+        "FLEX1": 75693,
+        "WR1": 8606,
+        "WR2": 8590,
+        "WR3": 44721,
+        "TE1": 33588,
+        "DST1": 8463
+      },
+      "points": 240.68,
+      "totalSalary": 49900,
+      "totalOwn": 83.56,
+      "minOwn": 3.49,
+      "maxOwn": 17.52,
+      "avgOwn": 9.28,
+      "lineupRank": 14,
+      "isCashing": true,
+      "favoriteCt": 8,
+      "underdogCt": 1,
+      "homeCt": 6,
+      "visitorCt": 3,
+      "payout": 7000.0,
+      "lineupPercentile": 0.01,
+      "correlatedPlayers": 4,
+      "teamStacks": {
+        "2207": [
+          "58465:0",
+          "8606:0"
+        ]
+      },
+      "gameStacks": {
+        "4680800": [
+          75693,
+          8590
+        ]
+      },
+      "lineupTrends": {
+        "qbPairedWithPassCatcher": true,
+        "qbStackPairedWithOpponent": false,
+        "rbPairedWithDefense": false,
+        "noPlayersAgainstDEF": true,
+        "maxOneRBPerGame": true,
+        "minOnePlayerWithLowOwnership": true,
+        "cptQBPairedWithMultiplePassCatchers": false,
+        "cptPassCatcherPairedWithQB": false,
+        "maxOneDEFPerGame": true,
+        "maxOneKickerPerGame": true
+      },
+      "entryNameList": [
+        "mrcpuguru"
+      ]
+    },
+    "26479:33090:49574:75693:47334:40361:54073:33456:8492": {
+      "lineupHash": "26479:33090:49574:75693:47334:40361:54073:33456:8492",
+      "lineupCt": 1,
+      "lineupUserCt": 1,
+      "lineupPlayers": {
+        "QB1": 26479,
+        "RB1": 33090,
+        "RB2": 49574,
+        "WR1": 75693,
+        "WR2": 47334,
+        "WR3": 40361,
+        "FLEX1": 54073,
+        "TE1": 33456,
+        "DST1": 8492
+      },
+      "points": 242.5,
+      "totalSalary": 49700,
+      "totalOwn": 98.51,
+      "minOwn": 4.36,
+      "maxOwn": 22.41,
+      "avgOwn": 10.95,
+      "lineupRank": 5,
+      "isCashing": true,
+      "favoriteCt": 7,
+      "underdogCt": 2,
+      "homeCt": 7,
+      "visitorCt": 2,
+      "payout": 30000.0,
+      "lineupPercentile": 0.0,
+      "correlatedPlayers": 4,
+      "teamStacks": {
+        "2237": [
+          "26479:0",
+          "40361:0",
+          "54073:0"
+        ]
+      },
+      "gameStacks": {
+        "4680800": [
+          26479,
+          75693,
+          40361,
+          54073
+        ]
+      },
+      "lineupTrends": {
+        "qbPairedWithPassCatcher": true,
+        "qbStackPairedWithOpponent": true,
+        "rbPairedWithDefense": false,
+        "noPlayersAgainstDEF": true,
+        "maxOneRBPerGame": true,
+        "minOnePlayerWithLowOwnership": true,
+        "cptQBPairedWithMultiplePassCatchers": false,
+        "cptPassCatcherPairedWithQB": false,
+        "maxOneDEFPerGame": true,
+        "maxOneKickerPerGame": true
+      },
+      "entryNameList": [
+        "khb33"
+      ]
+    },
+    "26479:33090:49574:75693:2823:8590:44721:33456:8479": {
+      "lineupHash": "26479:33090:49574:75693:2823:8590:44721:33456:8479",
+      "lineupCt": 1,
+      "lineupUserCt": 1,
+      "lineupPlayers": {
+        "QB1": 26479,
+        "RB1": 33090,
+        "RB2": 49574,
+        "FLEX1": 75693,
+        "WR1": 2823,
+        "WR2": 8590,
+        "WR3": 44721,
+        "TE1": 33456,
+        "DST1": 8479
+      },
+      "points": 242.3,
+      "totalSalary": 49900,
+      "totalOwn": 109.61,
+      "minOwn": 7.64,
+      "maxOwn": 22.41,
+      "avgOwn": 12.18,
+      "lineupRank": 6,
+      "isCashing": true,
+      "favoriteCt": 7,
+      "underdogCt": 2,
+      "homeCt": 8,
+      "visitorCt": 1,
+      "payout": 20000.0,
+      "lineupPercentile": 0.0,
+      "correlatedPlayers": 3,
+      "teamStacks": {
+        "2237": [
+          "26479:0",
+          "8590:0"
+        ]
+      },
+      "gameStacks": {
+        "4680800": [
+          26479,
+          75693,
+          8590
+        ]
+      },
+      "lineupTrends": {
+        "qbPairedWithPassCatcher": true,
+        "qbStackPairedWithOpponent": true,
+        "rbPairedWithDefense": false,
+        "noPlayersAgainstDEF": true,
+        "maxOneRBPerGame": true,
+        "minOnePlayerWithLowOwnership": false,
+        "cptQBPairedWithMultiplePassCatchers": false,
+        "cptPassCatcherPairedWithQB": false,
+        "maxOneDEFPerGame": true,
+        "maxOneKickerPerGame": true
+      },
+      "entryNameList": [
+        "RobKaufman"
+      ]
+    },
+    "58465:33090:49574:75229:8606:1697:47334:75263:8492": {
+      "lineupHash": "58465:33090:49574:75229:8606:1697:47334:75263:8492",
+      "lineupCt": 1,
+      "lineupUserCt": 1,
+      "lineupPlayers": {
+        "QB1": 58465,
+        "FLEX1": 33090,
+        "RB1": 49574,
+        "RB2": 75229,
+        "WR1": 8606,
+        "WR2": 1697,
+        "WR3": 47334,
+        "TE1": 75263,
+        "DST1": 8492
+      },
+      "points": 241.78,
+      "totalSalary": 50000,
+      "totalOwn": 74.72,
+      "minOwn": 1.21,
+      "maxOwn": 22.41,
+      "avgOwn": 8.3,
+      "lineupRank": 7,
+      "isCashing": true,
+      "favoriteCt": 7,
+      "underdogCt": 2,
+      "homeCt": 5,
+      "visitorCt": 4,
+      "payout": 15000.0,
+      "lineupPercentile": 0.0,
+      "correlatedPlayers": 6,
+      "teamStacks": {
+        "2207": [
+          "58465:0",
+          "8606:0",
+          "1697:0"
+        ],
+        "2083": [
+          "75229:0",
+          "8492:0"
+        ]
+      },
+      "gameStacks": {
+        "4680730": [
+          58465,
+          8606,
+          1697,
+          75263
+        ]
+      },
+      "lineupTrends": {
+        "qbPairedWithPassCatcher": true,
+        "qbStackPairedWithOpponent": true,
+        "rbPairedWithDefense": true,
+        "noPlayersAgainstDEF": true,
+        "maxOneRBPerGame": true,
+        "minOnePlayerWithLowOwnership": true,
+        "cptQBPairedWithMultiplePassCatchers": false,
+        "cptPassCatcherPairedWithQB": false,
+        "maxOneDEFPerGame": true,
+        "maxOneKickerPerGame": true
+      },
+      "entryNameList": [
+        "crclngthdrn"
+      ]
+    },
+    "26479:33090:49574:75693:2823:8590:54073:33456:8484": {
+      "lineupHash": "26479:33090:49574:75693:2823:8590:54073:33456:8484",
+      "lineupCt": 1,
+      "lineupUserCt": 1,
+      "lineupPlayers": {
+        "QB1": 26479,
+        "RB1": 33090,
+        "RB2": 49574,
+        "FLEX1": 75693,
+        "WR1": 2823,
+        "WR2": 8590,
+        "WR3": 54073,
+        "TE1": 33456,
+        "DST1": 8484
+      },
+      "points": 241.6,
+      "totalSalary": 50000,
+      "totalOwn": 117.03,
+      "minOwn": 8.42,
+      "maxOwn": 22.41,
+      "avgOwn": 13.0,
+      "lineupRank": 8,
+      "isCashing": true,
+      "favoriteCt": 7,
+      "underdogCt": 2,
+      "homeCt": 8,
+      "visitorCt": 1,
+      "payout": 15000.0,
+      "lineupPercentile": 0.0,
+      "correlatedPlayers": 4,
+      "teamStacks": {
+        "2237": [
+          "26479:0",
+          "8590:0",
+          "54073:0"
+        ]
+      },
+      "gameStacks": {
+        "4680800": [
+          26479,
+          75693,
+          8590,
+          54073
+        ]
+      },
+      "lineupTrends": {
+        "qbPairedWithPassCatcher": true,
+        "qbStackPairedWithOpponent": true,
+        "rbPairedWithDefense": false,
+        "noPlayersAgainstDEF": true,
+        "maxOneRBPerGame": true,
+        "minOnePlayerWithLowOwnership": false,
+        "cptQBPairedWithMultiplePassCatchers": false,
+        "cptPassCatcherPairedWithQB": false,
+        "maxOneDEFPerGame": true,
+        "maxOneKickerPerGame": true
+      },
+      "entryNameList": [
+        "awilson002"
+      ]
+    },
+    "26479:33090:51748:49574:75693:8590:54073:33456:8483": {
+      "lineupHash": "26479:33090:51748:49574:75693:8590:54073:33456:8483",
+      "lineupCt": 5,
+      "lineupUserCt": 5,
+      "lineupPlayers": {
+        "QB1": 26479,
+        "RB1": 33090,
+        "RB2": 51748,
+        "FLEX1": 49574,
+        "WR1": 75693,
+        "WR2": 8590,
+        "WR3": 54073,
+        "TE1": 33456,
+        "DST1": 8483
+      },
+      "points": 241.3,
+      "totalSalary": 50000,
+      "totalOwn": 107.84,
+      "minOwn": 4.88,
+      "maxOwn": 22.41,
+      "avgOwn": 11.98,
+      "lineupRank": 9,
+      "isCashing": true,
+      "favoriteCt": 7,
+      "underdogCt": 2,
+      "homeCt": 7,
+      "visitorCt": 2,
+      "payout": 10000.0,
+      "lineupPercentile": 0.0,
+      "correlatedPlayers": 4,
+      "teamStacks": {
+        "2237": [
+          "26479:0",
+          "8590:0",
+          "54073:0"
+        ]
+      },
+      "gameStacks": {
+        "4680800": [
+          26479,
+          75693,
+          8590,
+          54073
+        ]
+      },
+      "lineupTrends": {
+        "qbPairedWithPassCatcher": true,
+        "qbStackPairedWithOpponent": true,
+        "rbPairedWithDefense": false,
+        "noPlayersAgainstDEF": true,
+        "maxOneRBPerGame": true,
+        "minOnePlayerWithLowOwnership": true,
+        "cptQBPairedWithMultiplePassCatchers": false,
+        "cptPassCatcherPairedWithQB": false,
+        "maxOneDEFPerGame": true,
+        "maxOneKickerPerGame": true
+      },
+      "entryNameList": [
+        "bsquare81",
+        "goducks1986",
+        "PrimeTimeRonnie",
+        "PodDaddy",
+        "chansen8895"
+      ]
+    },
+    "26479:26266:33090:49574:75693:8590:8657:33588:8476": {
+      "lineupHash": "26479:26266:33090:49574:75693:8590:8657:33588:8476",
+      "lineupCt": 1,
+      "lineupUserCt": 1,
+      "lineupPlayers": {
+        "QB1": 26479,
+        "FLEX1": 26266,
+        "RB1": 33090,
+        "RB2": 49574,
+        "WR1": 75693,
+        "WR2": 8590,
+        "WR3": 8657,
+        "TE1": 33588,
+        "DST1": 8476
+      },
+      "points": 239.4,
+      "totalSalary": 49800,
+      "totalOwn": 108.64,
+      "minOwn": 3.01,
+      "maxOwn": 25.98,
+      "avgOwn": 12.07,
+      "lineupRank": 15,
+      "isCashing": true,
+      "favoriteCt": 8,
+      "underdogCt": 1,
+      "homeCt": 8,
+      "visitorCt": 1,
+      "payout": 7000.0,
+      "lineupPercentile": 0.01,
+      "correlatedPlayers": 7,
+      "teamStacks": {
+        "2237": [
+          "26479:0",
+          "26266:0",
+          "8590:0"
+        ],
+        "1928": [
+          "49574:0",
+          "33588:0",
+          "8476:0"
+        ]
+      },
+      "gameStacks": {
+        "4680800": [
+          26479,
+          26266,
+          75693,
+          8590
+        ]
+      },
+      "lineupTrends": {
+        "qbPairedWithPassCatcher": true,
+        "qbStackPairedWithOpponent": true,
+        "rbPairedWithDefense": true,
+        "noPlayersAgainstDEF": true,
+        "maxOneRBPerGame": true,
+        "minOnePlayerWithLowOwnership": true,
+        "cptQBPairedWithMultiplePassCatchers": false,
+        "cptPassCatcherPairedWithQB": false,
+        "maxOneDEFPerGame": true,
+        "maxOneKickerPerGame": true
+      },
+      "entryNameList": [
+        "moods"
+      ]
+    },
+    "26479:33090:8709:49574:75693:40361:54073:75263:8492": {
+      "lineupHash": "26479:33090:8709:49574:75693:40361:54073:75263:8492",
+      "lineupCt": 1,
+      "lineupUserCt": 1,
+      "lineupPlayers": {
+        "QB1": 26479,
+        "RB1": 33090,
+        "RB2": 8709,
+        "FLEX1": 49574,
+        "WR1": 75693,
+        "WR2": 40361,
+        "WR3": 54073,
+        "TE1": 75263,
+        "DST1": 8492
+      },
+      "points": 238.3,
+      "totalSalary": 50000,
+      "totalOwn": 100.14,
+      "minOwn": 1.21,
+      "maxOwn": 22.41,
+      "avgOwn": 11.13,
+      "lineupRank": 16,
+      "isCashing": true,
+      "favoriteCt": 7,
+      "underdogCt": 2,
+      "homeCt": 7,
+      "visitorCt": 2,
+      "payout": 5000.0,
+      "lineupPercentile": 0.01,
+      "correlatedPlayers": 4,
+      "teamStacks": {
+        "2237": [
+          "26479:0",
+          "40361:0",
+          "54073:0"
+        ]
+      },
+      "gameStacks": {
+        "4680800": [
+          26479,
+          75693,
+          40361,
+          54073
+        ]
+      },
+      "lineupTrends": {
+        "qbPairedWithPassCatcher": true,
+        "qbStackPairedWithOpponent": true,
+        "rbPairedWithDefense": false,
+        "noPlayersAgainstDEF": true,
+        "maxOneRBPerGame": true,
+        "minOnePlayerWithLowOwnership": true,
+        "cptQBPairedWithMultiplePassCatchers": false,
+        "cptPassCatcherPairedWithQB": false,
+        "maxOneDEFPerGame": true,
+        "maxOneKickerPerGame": true
+      },
+      "entryNameList": [
+        "CorpralBadass"
+      ]
+    },
+    "6475:33090:49574:75693:2823:75269:54073:6165:8468": {
+      "lineupHash": "6475:33090:49574:75693:2823:75269:54073:6165:8468",
+      "lineupCt": 1,
+      "lineupUserCt": 1,
+      "lineupPlayers": {
+        "QB1": 6475,
+        "RB1": 33090,
+        "RB2": 49574,
+        "WR1": 75693,
+        "WR2": 2823,
+        "WR3": 75269,
+        "FLEX1": 54073,
+        "TE1": 6165,
+        "DST1": 8468
+      },
+      "points": 237.92,
+      "totalSalary": 49900,
+      "totalOwn": 90.41,
+      "minOwn": 1.99,
+      "maxOwn": 22.41,
+      "avgOwn": 10.05,
+      "lineupRank": 17,
+      "isCashing": true,
+      "favoriteCt": 6,
+      "underdogCt": 3,
+      "homeCt": 5,
+      "visitorCt": 4,
+      "payout": 5000.0,
+      "lineupPercentile": 0.01,
+      "correlatedPlayers": 5,
+      "teamStacks": {
+        "2149": [
+          "6475:0",
+          "75693:0"
+        ]
+      },
+      "gameStacks": {
+        "4680800": [
+          6475,
+          75693,
+          54073
+        ],
+        "4680720": [
+          2823,
+          75269
+        ]
+      },
+      "lineupTrends": {
+        "qbPairedWithPassCatcher": true,
+        "qbStackPairedWithOpponent": true,
+        "rbPairedWithDefense": false,
+        "noPlayersAgainstDEF": true,
+        "maxOneRBPerGame": true,
+        "minOnePlayerWithLowOwnership": true,
+        "cptQBPairedWithMultiplePassCatchers": false,
+        "cptPassCatcherPairedWithQB": false,
+        "maxOneDEFPerGame": true,
+        "maxOneKickerPerGame": true
+      },
+      "entryNameList": [
+        "scottuga44"
+      ]
+    },
+    "26479:33090:8709:33543:75693:40361:26002:51175:8476": {
+      "lineupHash": "26479:33090:8709:33543:75693:40361:26002:51175:8476",
+      "lineupCt": 1,
+      "lineupUserCt": 1,
+      "lineupPlayers": {
+        "QB1": 26479,
+        "RB1": 33090,
+        "FLEX1": 8709,
+        "RB2": 33543,
+        "WR1": 75693,
+        "WR2": 40361,
+        "WR3": 26002,
+        "TE1": 51175,
+        "DST1": 8476
+      },
+      "points": 237.0,
+      "totalSalary": 49600,
+      "totalOwn": 69.05,
+      "minOwn": 1.5,
+      "maxOwn": 13.2,
+      "avgOwn": 7.67,
+      "lineupRank": 18,
+      "isCashing": true,
+      "favoriteCt": 6,
+      "underdogCt": 3,
+      "homeCt": 5,
+      "visitorCt": 4,
+      "payout": 5000.0,
+      "lineupPercentile": 0.01,
+      "correlatedPlayers": 5,
+      "teamStacks": {
+        "2237": [
+          "26479:0",
+          "40361:0"
+        ]
+      },
+      "gameStacks": {
+        "4680800": [
+          26479,
+          75693,
+          40361
+        ],
+        "4680720": [
+          33543,
+          26002
+        ]
+      },
+      "lineupTrends": {
+        "qbPairedWithPassCatcher": true,
+        "qbStackPairedWithOpponent": true,
+        "rbPairedWithDefense": false,
+        "noPlayersAgainstDEF": true,
+        "maxOneRBPerGame": true,
+        "minOnePlayerWithLowOwnership": true,
+        "cptQBPairedWithMultiplePassCatchers": false,
+        "cptPassCatcherPairedWithQB": false,
+        "maxOneDEFPerGame": true,
+        "maxOneKickerPerGame": true
+      },
+      "entryNameList": [
+        "jaxsonmarquis"
+      ]
+    },
+    "58465:33090:51748:8606:2823:8590:44721:33456:8484": {
+      "lineupHash": "58465:33090:51748:8606:2823:8590:44721:33456:8484",
+      "lineupCt": 1,
+      "lineupUserCt": 1,
+      "lineupPlayers": {
+        "QB1": 58465,
+        "RB1": 33090,
+        "RB2": 51748,
+        "FLEX1": 8606,
+        "WR1": 2823,
+        "WR2": 8590,
+        "WR3": 44721,
+        "TE1": 33456,
+        "DST1": 8484
+      },
+      "points": 236.48,
+      "totalSalary": 49700,
+      "totalOwn": 90.97,
+      "minOwn": 4.41,
+      "maxOwn": 17.52,
+      "avgOwn": 10.11,
+      "lineupRank": 19,
+      "isCashing": true,
+      "favoriteCt": 8,
+      "underdogCt": 1,
+      "homeCt": 7,
+      "visitorCt": 2,
+      "payout": 5000.0,
+      "lineupPercentile": 0.01,
+      "correlatedPlayers": 2,
+      "teamStacks": {
+        "2207": [
+          "58465:0",
+          "8606:0"
+        ]
+      },
+      "gameStacks": {},
+      "lineupTrends": {
+        "qbPairedWithPassCatcher": true,
+        "qbStackPairedWithOpponent": false,
+        "rbPairedWithDefense": false,
+        "noPlayersAgainstDEF": true,
+        "maxOneRBPerGame": true,
+        "minOnePlayerWithLowOwnership": true,
+        "cptQBPairedWithMultiplePassCatchers": false,
+        "cptPassCatcherPairedWithQB": false,
+        "maxOneDEFPerGame": true,
+        "maxOneKickerPerGame": true
+      },
+      "entryNameList": [
+        "awilson002"
+      ]
+    },
+    "58465:26360:33090:63253:8606:47334:54073:33588:8476": {
+      "lineupHash": "58465:26360:33090:63253:8606:47334:54073:33588:8476",
+      "lineupCt": 3,
+      "lineupUserCt": 1,
+      "lineupPlayers": {
+        "QB1": 58465,
+        "RB1": 26360,
+        "FLEX1": 33090,
+        "RB2": 63253,
+        "WR1": 8606,
+        "WR2": 47334,
+        "WR3": 54073,
+        "TE1": 33588,
+        "DST1": 8476
+      },
+      "points": 231.58,
+      "totalSalary": 49900,
+      "totalOwn": 83.87,
+      "minOwn": 1.76,
+      "maxOwn": 35.01,
+      "avgOwn": 9.32,
+      "lineupRank": 35,
+      "isCashing": true,
+      "favoriteCt": 8,
+      "underdogCt": 1,
+      "homeCt": 6,
+      "visitorCt": 3,
+      "payout": 2500.0,
+      "lineupPercentile": 0.01,
+      "correlatedPlayers": 4,
+      "teamStacks": {
+        "2207": [
+          "58465:0",
+          "8606:0"
+        ],
+        "1928": [
+          "33588:0",
+          "8476:0"
+        ]
+      },
+      "gameStacks": {},
+      "lineupTrends": {
+        "qbPairedWithPassCatcher": true,
+        "qbStackPairedWithOpponent": false,
+        "rbPairedWithDefense": false,
+        "noPlayersAgainstDEF": true,
+        "maxOneRBPerGame": true,
+        "minOnePlayerWithLowOwnership": true,
+        "cptQBPairedWithMultiplePassCatchers": false,
+        "cptPassCatcherPairedWithQB": false,
+        "maxOneDEFPerGame": true,
+        "maxOneKickerPerGame": true
+      },
+      "entryNameList": [
+        "RamboJohny"
+      ]
+    },
+    "26479:26266:33090:49574:25839:54073:8657:33456:8483": {
+      "lineupHash": "26479:26266:33090:49574:25839:54073:8657:33456:8483",
+      "lineupCt": 3,
+      "lineupUserCt": 1,
+      "lineupPlayers": {
+        "QB1": 26479,
+        "RB1": 26266,
+        "RB2": 33090,
+        "FLEX1": 49574,
+        "WR1": 25839,
+        "WR2": 54073,
+        "WR3": 8657,
+        "TE1": 33456,
+        "DST1": 8483
+      },
+      "points": 229.1,
+      "totalSalary": 50000,
+      "totalOwn": 103.86,
+      "minOwn": 4.17,
+      "maxOwn": 25.98,
+      "avgOwn": 11.54,
+      "lineupRank": 47,
+      "isCashing": true,
+      "favoriteCt": 8,
+      "underdogCt": 1,
+      "homeCt": 7,
+      "visitorCt": 2,
+      "payout": 1500.0,
+      "lineupPercentile": 0.02,
+      "correlatedPlayers": 5,
+      "teamStacks": {
+        "2237": [
+          "26479:0",
+          "26266:0",
+          "54073:0"
+        ],
+        "1965": [
+          "8657:0",
+          "33456:0"
+        ]
+      },
+      "gameStacks": {},
+      "lineupTrends": {
+        "qbPairedWithPassCatcher": true,
+        "qbStackPairedWithOpponent": false,
+        "rbPairedWithDefense": false,
+        "noPlayersAgainstDEF": true,
+        "maxOneRBPerGame": true,
+        "minOnePlayerWithLowOwnership": true,
+        "cptQBPairedWithMultiplePassCatchers": false,
+        "cptPassCatcherPairedWithQB": false,
+        "maxOneDEFPerGame": true,
+        "maxOneKickerPerGame": true
+      },
+      "entryNameList": [
+        "032383justin"
+      ]
+    },
+    "26479:26266:33090:26033:2823:44721:33234:33456:8492": {
+      "lineupHash": "26479:26266:33090:26033:2823:44721:33234:33456:8492",
+      "lineupCt": 7,
+      "lineupUserCt": 6,
+      "lineupPlayers": {
+        "QB1": 26479,
+        "RB1": 26266,
+        "FLEX1": 33090,
+        "RB2": 26033,
+        "WR1": 2823,
+        "WR2": 44721,
+        "WR3": 33234,
+        "TE1": 33456,
+        "DST1": 8492
+      },
+      "points": 227.7,
+      "totalSalary": 50000,
+      "totalOwn": 109.96,
+      "minOwn": 7.49,
+      "maxOwn": 25.98,
+      "avgOwn": 12.22,
+      "lineupRank": 63,
+      "isCashing": true,
+      "favoriteCt": 9,
+      "underdogCt": 0,
+      "homeCt": 9,
+      "visitorCt": 0,
+      "payout": 1500.0,
+      "lineupPercentile": 0.02,
+      "correlatedPlayers": 6,
+      "teamStacks": {
+        "2237": [
+          "26479:0",
+          "26266:0"
+        ],
+        "2083": [
+          "2823:0",
+          "8492:0"
+        ],
+        "1965": [
+          "33234:0",
+          "33456:0"
+        ]
+      },
+      "gameStacks": {},
+      "lineupTrends": {
+        "qbPairedWithPassCatcher": false,
+        "qbStackPairedWithOpponent": false,
+        "rbPairedWithDefense": false,
+        "noPlayersAgainstDEF": true,
+        "maxOneRBPerGame": true,
+        "minOnePlayerWithLowOwnership": false,
+        "cptQBPairedWithMultiplePassCatchers": false,
+        "cptPassCatcherPairedWithQB": false,
+        "maxOneDEFPerGame": true,
+        "maxOneKickerPerGame": true
+      },
+      "entryNameList": [
+        "fizzarley",
+        "BabyGotDak4",
+        "jferguson2221",
+        "ja881",
+        "txfight",
+        "Kmsport13"
+      ]
+    },
+    "26479:26266:33090:4286:75693:54073:8657:6165:8492": {
+      "lineupHash": "26479:26266:33090:4286:75693:54073:8657:6165:8492",
+      "lineupCt": 2,
+      "lineupUserCt": 1,
+      "lineupPlayers": {
+        "QB1": 26479,
+        "RB1": 26266,
+        "RB2": 33090,
+        "FLEX1": 4286,
+        "WR1": 75693,
+        "WR2": 54073,
+        "WR3": 8657,
+        "TE1": 6165,
+        "DST1": 8492
+      },
+      "points": 227.2,
+      "totalSalary": 49900,
+      "totalOwn": 108.5,
+      "minOwn": 4.17,
+      "maxOwn": 25.98,
+      "avgOwn": 12.06,
+      "lineupRank": 74,
+      "isCashing": true,
+      "favoriteCt": 7,
+      "underdogCt": 2,
+      "homeCt": 6,
+      "visitorCt": 3,
+      "payout": 1500.0,
+      "lineupPercentile": 0.03,
+      "correlatedPlayers": 5,
+      "teamStacks": {
+        "2237": [
+          "26479:0",
+          "26266:0",
+          "54073:0"
+        ],
+        "2149": [
+          "4286:0",
+          "75693:0"
+        ]
+      },
+      "gameStacks": {
+        "4680800": [
+          26479,
+          26266,
+          4286,
+          75693,
+          54073
+        ]
+      },
+      "lineupTrends": {
+        "qbPairedWithPassCatcher": true,
+        "qbStackPairedWithOpponent": true,
+        "rbPairedWithDefense": false,
+        "noPlayersAgainstDEF": true,
+        "maxOneRBPerGame": true,
+        "minOnePlayerWithLowOwnership": true,
+        "cptQBPairedWithMultiplePassCatchers": false,
+        "cptPassCatcherPairedWithQB": false,
+        "maxOneDEFPerGame": true,
+        "maxOneKickerPerGame": true
+      },
+      "entryNameList": [
+        "jinxsy"
+      ]
+    }
+  }
+}

@@ -6,14 +6,17 @@ import pytest
 from nfl_dfs.ingestion.rotogrinders_resultsdb import (
     CONTEST_DATA_URL_TEMPLATE,
     CONTEST_SOURCES_URL,
+    LINEUPS_URL_TEMPLATE,
     LIVE_CONTESTS_URL,
     ContestDataUnavailableError,
     NoPrimaryContestError,
     fetch_contest_data,
     fetch_contest_sources,
+    fetch_lineups,
     fetch_live_contests,
     parse_contest_summary,
     parse_dk_draft_groups,
+    parse_lineups,
     parse_live_contests,
     parse_player_exposures,
     parse_user_exposures,
@@ -230,3 +233,60 @@ def test_fetch_contest_data_reshapes_date_to_yyyymmdd_path_and_raises_on_non_200
     fake_missing = _FakeSession({}, status_code=403)
     with pytest.raises(ContestDataUnavailableError, match="date=2018-09-09"):
         fetch_contest_data("2018-09-09", 1, session=fake_missing)
+
+
+# ---------------------------------------------------------------------------
+# lineups (ADR-0031) -- one row per DISTINCT roster, the real dup-count data
+# ---------------------------------------------------------------------------
+
+
+def test_parse_lineups_extracts_real_fields_from_the_dict_keyed_payload():
+    # Real, live-confirmed shape (ADR-0031): payload["lineups"] is a DICT keyed by lineupHash, not
+    # a flat list -- this fixture is a real sample pulled from a live 2020-09-20 contest.
+    payload = _load("resultsdb_lineups.json")
+    rows = parse_lineups(payload)
+    assert len(rows) == 19
+
+    by_hash = {r.lineup_hash: r for r in rows}
+    top = by_hash["26479:33090:51748:75693:8590:54073:4377:6165:8476"]
+    assert top.lineup_ct == 1
+    assert top.lineup_user_ct == 1
+    assert top.points == 248.9
+    assert top.total_salary == 49800
+    assert top.lineup_rank == 1
+    assert top.is_cashing is True
+    assert top.lineup_players == {
+        "QB1": 26479, "RB1": 33090, "RB2": 51748, "WR1": 75693, "WR2": 8590,
+        "WR3": 54073, "TE1": 4377, "FLEX1": 6165, "DST1": 8476,
+    }
+    assert top.entry_name_list == ["goners"]
+    assert isinstance(top.lineup_trends, dict)
+    assert "qbPairedWithPassCatcher" in top.lineup_trends
+
+
+def test_parse_lineups_includes_real_duplicate_groups():
+    # The fixture was deliberately sampled to include some lineupCt > 1 rows (real dup groups),
+    # not just the lineupCt == 1 majority -- confirm at least one survived the parse with its real
+    # count intact.
+    payload = _load("resultsdb_lineups.json")
+    rows = parse_lineups(payload)
+    duplicated = [r for r in rows if r.lineup_ct > 1]
+    assert len(duplicated) > 0
+    assert all(r.lineup_ct >= r.lineup_user_ct for r in duplicated)  # same user can multi-enter the same roster
+
+
+def test_parse_lineups_raises_on_missing_lineups_key():
+    with pytest.raises(ValueError, match="lineups"):
+        parse_lineups({"contest": {}})
+
+
+def test_fetch_lineups_reshapes_date_to_yyyymmdd_path_and_raises_on_non_200():
+    payload = _load("resultsdb_lineups.json")
+    fake_ok = _FakeSession(payload)
+    fetch_lineups("2020-09-20", 91962454, session=fake_ok)
+    call = fake_ok.calls[0]
+    assert call["url"] == LINEUPS_URL_TEMPLATE.format(yyyymmdd="20200920", contest_id=91962454)
+
+    fake_missing = _FakeSession({}, status_code=403)
+    with pytest.raises(ContestDataUnavailableError, match="date=2018-09-09"):
+        fetch_lineups("2018-09-09", 1, session=fake_missing)

@@ -27,10 +27,20 @@ through today; every 2017-2019 contest tried 403s. Six real seasons (2020-2025, 
 
 **Scope of this module (ADR-0023 "What was built this pass"):** contest discovery (`contest-sources` ->
 `live-contests` -> pick the `is_primary` flagship contest, e.g. the Millionaire/MEGA Millionaire PRD Section 2
-already names) and the player-exposure/actuals + user-exposure halves of the `data/` payload. The `lineups/`
-endpoint (per-distinct-roster dup counts, `lineupTrends`, team/game-stack tiers) is confirmed available and
-shaped (ADR-0023 section 2) but deliberately **not** parsed here -- a real, separate scope, flagged as
-follow-up rather than half-built in the same pass.
+already names) and the player-exposure/actuals + user-exposure halves of the `data/` payload.
+
+**`lineups/` endpoint (ADR-0031, added this pass):** per-distinct-roster dup counts, `lineupTrends`,
+team/game-stack tiers -- the literal dup-risk data the earlier ADR-0023/0025/0026 rounds all deliberately
+scoped out as follow-up. Confirmed live shape (2020-09-20, contest 91962454, 244,757 distinct lineups):
+`{"lineups": {<lineupHash>: {...}}}` -- a DICT keyed by `lineupHash`, not a list (ADR-0023's original section
+2 description implied a flat row list; the real payload nests one level deeper). Real fields beyond what
+ADR-0023 originally named: `favoriteCt`, `underdogCt`, `homeCt`, `visitorCt`, `correlatedPlayers` (all real,
+confirmed live, not previously documented). **Real volume finding, not a guess:** this single contest alone
+has 244,757 distinct lineups (97.8% with `lineupCt == 1`, a long tail up to `lineupCt == 161`) -- a full
+71-contest historical backfill of every lineup row would be a genuinely large pull (plausibly several million
+rows total), a real storage/scope decision this pass deliberately did NOT make unilaterally -- see
+`docs/adr/0031-injury-report-staleness-check.md`'s sibling ADR for the lineups-specific one,
+`docs/adr/0032-resultsdb-lineups-dup-risk.md`, for how that was resolved.
 """
 
 from __future__ import annotations
@@ -42,6 +52,7 @@ import requests
 CONTEST_SOURCES_URL = "https://service.fantasylabs.com/contest-sources/"
 LIVE_CONTESTS_URL = "https://service.fantasylabs.com/live-contests/"
 CONTEST_DATA_URL_TEMPLATE = "https://dh5nxc6yx3kwy.cloudfront.net/contests/nfl/{yyyymmdd}/{contest_id}/data/"
+LINEUPS_URL_TEMPLATE = "https://dh5nxc6yx3kwy.cloudfront.net/contests/nfl/{yyyymmdd}/{contest_id}/lineups/"
 
 SPORT_ID_NFL = 1
 
@@ -357,3 +368,108 @@ def fetch_contest_data(date: str, contest_id: int, *, session: requests.Session 
             f"ADR-0023) or an unknown contest_id; this endpoint doesn't distinguish the two cases."
         )
     return response.json()
+
+
+# ---------------------------------------------------------------------------
+# lineups: one row per DISTINCT roster (not per entry) -- the real dup-count data, ADR-0031
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class LineupRow:
+    """One distinct roster actually built by the field in one real DK contest. `lineup_ct` is the
+    literal number of contest entries that used this exact roster -- the raw dup-risk observation
+    this whole endpoint exists for; `lineup_ct == 1` means a genuinely unique roster, anything
+    higher is a real, confirmed duplicate group. `lineup_user_ct` is the number of distinct
+    entrants who used it at least once (can be lower than `lineup_ct` -- the same single user
+    multi-entering the same roster more than once, common under a high `multi_entry_max`).
+
+    `team_stacks`/`game_stacks` are kept as the raw payload's own nested shape (team-id/game-id ->
+    list of `"<playerId>:<rosterSlot>"` strings) rather than reshaped here -- this is a pure-parse
+    ingestion layer, same posture as `parse_player_exposures`/`parse_user_exposures` above.
+    """
+
+    lineup_hash: str
+    lineup_ct: int
+    lineup_user_ct: int
+    lineup_players: dict[str, int]  # roster slot -> playerId, e.g. {"QB1": 26479, "RB1": 33090, ...}
+    points: float
+    total_salary: int
+    total_own: float
+    min_own: float
+    max_own: float
+    avg_own: float
+    lineup_rank: int
+    is_cashing: bool
+    payout: float
+    lineup_percentile: float
+    favorite_ct: int
+    underdog_ct: int
+    home_ct: int
+    visitor_ct: int
+    correlated_players: int
+    team_stacks: dict
+    game_stacks: dict
+    lineup_trends: dict[str, bool]
+    entry_name_list: list[str]
+
+
+def parse_lineups(payload: dict) -> list[LineupRow]:
+    """Pure parse of a `lineups/` response. **Real shape, confirmed live (ADR-0031) --
+    NOT a flat list**: `payload["lineups"]` is a DICT keyed by `lineupHash`, one entry per
+    distinct roster. `lineupHash` itself is redundant with the dict key (both carry the same
+    value in every row observed live) -- kept as its own field anyway rather than reconstructed
+    from the key, so a `LineupRow` is a complete, self-describing record on its own.
+    """
+    lineups = payload.get("lineups")
+    if lineups is None:
+        raise ValueError(f"lineups response missing expected key 'lineups': {sorted(payload)}")
+    rows = []
+    for row in lineups.values():
+        rows.append(
+            LineupRow(
+                lineup_hash=row["lineupHash"],
+                lineup_ct=row["lineupCt"],
+                lineup_user_ct=row["lineupUserCt"],
+                lineup_players=row["lineupPlayers"],
+                points=row["points"],
+                total_salary=row["totalSalary"],
+                total_own=row["totalOwn"],
+                min_own=row["minOwn"],
+                max_own=row["maxOwn"],
+                avg_own=row["avgOwn"],
+                lineup_rank=row["lineupRank"],
+                is_cashing=row["isCashing"],
+                payout=row["payout"],
+                lineup_percentile=row["lineupPercentile"],
+                favorite_ct=row.get("favoriteCt", 0),
+                underdog_ct=row.get("underdogCt", 0),
+                home_ct=row.get("homeCt", 0),
+                visitor_ct=row.get("visitorCt", 0),
+                correlated_players=row.get("correlatedPlayers", 0),
+                team_stacks=row.get("teamStacks", {}),
+                game_stacks=row.get("gameStacks", {}),
+                lineup_trends=row.get("lineupTrends", {}),
+                entry_name_list=row.get("entryNameList", []),
+            )
+        )
+    return rows
+
+
+def fetch_lineups(date: str, contest_id: int, *, session: requests.Session | None = None) -> list[LineupRow]:
+    """Live call. Same URL/auth/error shape as `fetch_contest_data` -- no cookie needed, gzip
+    handled transparently, a non-200 raises `ContestDataUnavailableError` (shared with
+    `fetch_contest_data` rather than a parallel error type, since the failure semantics -- "either
+    genuinely uncovered or an unknown contest_id, indistinguishably" -- are identical for both
+    CloudFront endpoints)."""
+    http = session or requests
+    yyyymmdd = date.replace("-", "")
+    url = LINEUPS_URL_TEMPLATE.format(yyyymmdd=yyyymmdd, contest_id=contest_id)
+    response = http.get(url, headers=_HEADERS, timeout=_TIMEOUT)
+    if response.status_code != 200:
+        raise ContestDataUnavailableError(
+            f"ResultsDB lineups data unavailable for date={date} contest_id={contest_id} "
+            f"(status={response.status_code}) -- either genuinely uncovered (pre-2020 season, per "
+            f"ADR-0023) or an unknown contest_id; this endpoint doesn't distinguish the two cases."
+        )
+    return parse_lineups(response.json())
