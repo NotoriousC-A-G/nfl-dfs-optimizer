@@ -8,12 +8,14 @@ from nfl_dfs.ceiling.signals import (
     CEILING_SHRINKAGE_K,
     COMPONENT_A_SCALE,
     EXPLOSIVE_RUSH_YARDS_THRESHOLD,
+    EXPLOSIVE_TARGET_MIN_TRAILING_TARGETS,
     MIN_TRAILING_WEEKS,
     QB_DESIGNED_RUN_MIN_TRAILING_VOLUME,
     QB_EXPLOSIVE_RUSH_MIN_TRAILING_VOLUME,
     CeilingSignal,
     adot_ceiling_signals,
     component_a_multiplier,
+    explosive_target_rate_ceiling_signals,
     qb_explosive_rush_rate_signals,
     qb_rushing_ceiling_signals,
     red_zone_ceiling_signals,
@@ -43,6 +45,7 @@ def _pbp_row(**kwargs) -> dict:
         "passer_player_id": None,
         "passer_player_name": None,
         "air_yards": None,
+        "yards_gained": None,
         "yardline_100": 50,
         "qb_scramble": 0,
         "play_id": 1,
@@ -63,14 +66,29 @@ def _rush(week: int, team: str, player_id: str, name: str, n: int, play_id_start
 
 def _target(
     week: int, team: str, player_id: str, name: str, n: int, play_id_start: int, *,
-    air_yards: float | None = None, yardline_100: int = 50,
+    air_yards: float | None = None, yards_gained: float | None = None, yardline_100: int = 50,
 ) -> list[dict]:
     return [
         _pbp_row(
             week=week, posteam=team, play_type="pass", receiver_player_id=player_id, receiver_player_name=name,
-            play_id=play_id_start + i, air_yards=air_yards, yardline_100=yardline_100,
+            play_id=play_id_start + i, air_yards=air_yards, yards_gained=yards_gained, yardline_100=yardline_100,
         )
         for i in range(n)
+    ]
+
+
+def _targets_with_yards(
+    week: int, team: str, player_id: str, name: str, yards: list[float], play_id_start: int,
+) -> list[dict]:
+    """One target row per entry in `yards` (each row's `yards_gained` set individually) -- used by
+    `explosive_target_rate_ceiling_signals` tests, which need a per-target yardage mix rather than a
+    single uniform value across all `n` targets the way `_target` above is built for."""
+    return [
+        _pbp_row(
+            week=week, posteam=team, play_type="pass", receiver_player_id=player_id, receiver_player_name=name,
+            play_id=play_id_start + i, yards_gained=y,
+        )
+        for i, y in enumerate(yards)
     ]
 
 
@@ -617,3 +635,91 @@ def test_wr_red_zone_role_security_discount_never_raises_above_one():
 
 def test_wr_red_zone_role_security_discount_none_when_signal_ungated_not_fabricated_neutral():
     assert wr_red_zone_role_security_discount(_signal(None)) is None
+
+
+# --------------------------------------------------------------------------------------------
+# explosive_target_rate_ceiling_signals (ADR-0028 Component F -- design-complete, backtest phase)
+# --------------------------------------------------------------------------------------------
+
+
+def test_explosive_target_rate_ceiling_signals_computes_trailing_rate_and_splits_by_position():
+    wr_floor = EXPLOSIVE_TARGET_MIN_TRAILING_TARGETS["WR"]
+    te_floor = EXPLOSIVE_TARGET_MIN_TRAILING_TARGETS["TE"]
+    wr_yards = [20.0] * 11 + [5.0] * (wr_floor - 11)
+    te_yards = [20.0] * 10 + [5.0] * (te_floor - 10)
+    rows = _targets_with_yards(1, "GB", "WR1", "Explosive WR", wr_yards, 1) + _targets_with_yards(
+        1, "GB", "TE1", "Explosive TE", te_yards, 1000
+    )
+    result = explosive_target_rate_ceiling_signals(
+        pd.DataFrame(rows), target_week=2, position_by_player_id={"WR1": "WR", "TE1": "TE"}
+    )
+
+    assert {s.player_id for s in result["WR"]} == {"WR1"}
+    assert {s.player_id for s in result["TE"]} == {"TE1"}
+    assert result["WR"][0].raw_value == pytest.approx(11 / wr_floor)
+    assert result["TE"][0].raw_value == pytest.approx(10 / te_floor)
+    assert result["WR"][0].sample_size == wr_floor
+    assert result["TE"][0].sample_size == te_floor
+
+
+def test_explosive_target_rate_ceiling_signals_gates_below_position_specific_floor_without_dropping_the_row():
+    wr_floor = EXPLOSIVE_TARGET_MIN_TRAILING_TARGETS["WR"]
+    rows = _targets_with_yards(1, "GB", "WR2", "Thin Sample", [20.0] * (wr_floor - 1), 1)
+    result = explosive_target_rate_ceiling_signals(pd.DataFrame(rows), target_week=2, position_by_player_id={"WR2": "WR"})
+    assert len(result["WR"]) == 1
+    assert result["WR"][0].sample_size == wr_floor - 1
+    assert result["WR"][0].raw_value is None
+
+
+def test_explosive_target_rate_ceiling_signals_counts_incompletions_in_denominator_never_as_explosive():
+    # An incompletion is a real target (real opportunity) with `yards_gained=0.0` -- must count in
+    # the denominator (targets-denominator design, ADR-0028 Component F) without ever qualifying as
+    # explosive itself.
+    wr_floor = EXPLOSIVE_TARGET_MIN_TRAILING_TARGETS["WR"]
+    yards = [20.0] * 5 + [0.0] * (wr_floor - 5)
+    rows = _targets_with_yards(1, "GB", "WR3", "Mixed", yards, 1)
+    result = explosive_target_rate_ceiling_signals(pd.DataFrame(rows), target_week=2, position_by_player_id={"WR3": "WR"})
+    assert result["WR"][0].raw_value == pytest.approx(5 / wr_floor)
+    assert result["WR"][0].sample_size == wr_floor
+
+
+def test_explosive_target_rate_ceiling_signals_ignores_targets_with_no_yards_gained_recorded():
+    wr_floor = EXPLOSIVE_TARGET_MIN_TRAILING_TARGETS["WR"]
+    rows = _target(1, "GB", "WR4", "No Yards Recorded", wr_floor, 1, yards_gained=None)
+    result = explosive_target_rate_ceiling_signals(pd.DataFrame(rows), target_week=2, position_by_player_id={"WR4": "WR"})
+    assert result["WR"] == []
+
+
+def test_explosive_target_rate_ceiling_signals_excludes_future_weeks():
+    wr_floor = EXPLOSIVE_TARGET_MIN_TRAILING_TARGETS["WR"]
+    week1 = _targets_with_yards(1, "GB", "WR5", "Trailing", [20.0] * wr_floor, 1)
+    week2 = _targets_with_yards(2, "GB", "WR5", "Trailing", [0.0] * wr_floor, 1000)
+    result = explosive_target_rate_ceiling_signals(
+        pd.DataFrame(week1 + week2), target_week=2, position_by_player_id={"WR5": "WR"}
+    )
+    assert result["WR"][0].raw_value == pytest.approx(1.0)  # week 2 (all non-explosive) excluded
+
+
+def test_explosive_target_rate_ceiling_signals_respects_custom_yards_threshold():
+    wr_floor = EXPLOSIVE_TARGET_MIN_TRAILING_TARGETS["WR"]
+    yards = [12.0] * 5 + [3.0] * (wr_floor - 5)
+    rows = _targets_with_yards(1, "GB", "WR6", "Threshold", yards, 1)
+    default_result = explosive_target_rate_ceiling_signals(pd.DataFrame(rows), target_week=2, position_by_player_id={"WR6": "WR"})
+    loose_result = explosive_target_rate_ceiling_signals(
+        pd.DataFrame(rows), target_week=2, position_by_player_id={"WR6": "WR"}, yards_threshold=10
+    )
+    assert default_result["WR"][0].raw_value == pytest.approx(0.0)  # none clear the default 15
+    assert loose_result["WR"][0].raw_value == pytest.approx(5 / wr_floor)  # the 12s clear a 10 threshold
+
+
+def test_explosive_target_rate_ceiling_signals_min_trailing_targets_override_lets_sensitivity_checks_use_their_own_floor():
+    # Exposed specifically so the backtest script's 10+/20+ sensitivity checks can pass a
+    # separately-derived floor per threshold rather than reusing the 15yd production floor.
+    rows = _targets_with_yards(1, "GB", "WR7", "Override", [20.0] * 10, 1)
+    default_result = explosive_target_rate_ceiling_signals(pd.DataFrame(rows), target_week=2, position_by_player_id={"WR7": "WR"})
+    assert default_result["WR"][0].raw_value is None  # 10 < the default WR floor
+
+    overridden_result = explosive_target_rate_ceiling_signals(
+        pd.DataFrame(rows), target_week=2, position_by_player_id={"WR7": "WR"}, min_trailing_targets={"WR": 5, "TE": 5}
+    )
+    assert overridden_result["WR"][0].raw_value == pytest.approx(1.0)

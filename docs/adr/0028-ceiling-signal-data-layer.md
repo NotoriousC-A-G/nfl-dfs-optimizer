@@ -587,3 +587,138 @@ inexpressibility (WR's real negative effect), C/D/E for clean, thoroughly-verifi
 future candidates remain open for a possible future round outside QB rushing: WR red-zone role-
 security (Component B) and explosive-target rate (Component C) -- QB rushing itself is closed, not
 open-ended, per both experts' explicit recommendation above.
+
+**Update (2026-09-15):** WR red-zone role-security shipped as its own standalone downside construct
+-- see `docs/adr/0036-wr-red-zone-role-security-discount.md`, not a `CeilingMultiplier` leg
+(architecturally impossible, see that ADR's Context). Explosive-target rate was backtested next --
+see the following Update section.
+
+## Update (2026-09-15): Component F (explosive-target rate) -- closed as a null
+
+Component C's closure named explosive-target rate as its own better-specified successor. Chris
+directed pursuing this next, after WR red-zone role-security (ADR-0036) shipped, following the same
+design-review-before-backtest discipline every prior component used.
+
+### Design review (both experts, before any code) -- a real, substantive correction mid-review
+
+The Fantasy Football Expert's original framing (named at Component C's own closure) was a
+**boom-shaped** statistic, matching Components A/B's own convention. The Model Analytics Expert
+challenged this directly, before any code was written: a receiver's weekly target count is often
+small enough that a per-week boom-rate on an already-rare threshold event (a 15+ yard target) would
+compound thresholding on thresholding -- the identical quantization failure that forced Component
+D/E's own construction as pooled-window LEVEL signals rather than boom-rates on the QB-rushing
+axis. **The Fantasy Football Expert explicitly conceded the point** ("I think my original
+'boom-shaped, matching A/B's convention' framing was importing the wrong analogy... I should have
+drawn the same distinction Component D/E eventually forced onto QB rushing before being told to")
+and supplied fresh, real football-informed base-rate estimates in its place. Both experts converged
+on a pooled-trailing-window LEVEL signal instead -- the same shape as Component C/E.
+
+Final signed-off spec: `raw_value` is TARGETS-denominated (`(trailing targets with `yards_gained >=
+threshold`) / (total trailing targets)`), never receptions-denominated -- both experts agreed a
+receptions-denominator smuggles catch-success outcome noise back in as if it were receiver-
+controlled opportunity, the same objection that killed Component D's rejected "rushing points"
+candidate. Primary threshold `EXPLOSIVE_TARGET_YARDS_THRESHOLD=15` (matching Component E's own cut
+for consistency), with required BIDIRECTIONAL 10+/20+ sensitivity checks (unlike Component E, which
+only checked one direction). Population split WR/TE by position label, the same disclosed
+true-alignment-degradation Component C already carries -- confirmed by the Fantasy Football Expert
+as an INHERITED limitation, not a new one. `EXPLOSIVE_TARGET_MIN_TRAILING_TARGETS` DERIVED (not
+asserted by analogy) via `n = p*(1-p)/SE**2` at a target SE of 0.05 against the Fantasy Football
+Expert's real base-rate estimates (WR 12-20%, central ~16%; TE 8-14%, central ~11%): WR floor=55,
+TE floor=40 (full derivation in `ceiling/signals.py`'s own constant comment). One explicit scope
+disclosure, the Fantasy Football Expert's condition: this construct was never designed to capture a
+single-game matchup-driven explosive-target spike (`MatchupContext`'s job) -- a deliberate
+level-signal scope limitation, disclosed up front rather than found after the fact.
+
+### Backtest (`scripts/ceiling_explosive_target_backtest.py`, `explosive_target_rate_ceiling_signals`
+in `ceiling/signals.py`) ran every required check up front on 5 real seasons (2020-2024; 2025's
+`import_weekly_data()` pull 404'd live and was skipped, same live-data caveat every prior backtest
+in this project has carried):
+
+- **Primary test (15yd threshold)**: WR TRAIN (n=1,158, G=106) cluster-robust 95%
+  CI=[-0.1045, 0.0012], slope=-0.0517 -- barely misses clearing zero. WR HOLDOUT (n=752, G=86)
+  CI=[-0.0751, 0.0504], slope=-0.0124 -- comfortably includes zero, magnitude collapsed to ~24% of
+  the already-borderline train estimate. This is the specific "borderline in-sample, evaporates in
+  holdout" pattern this project's train/holdout discipline exists to catch (Component D's own
+  precedent) -- not the clean, decisively-clearing effect Component B's WR red-zone finding had
+  (CI=[-0.1153,-0.0415], nowhere close to zero in either split) before it shipped as ADR-0036. TE
+  TRAIN (n=516) slope=+0.0162 [-0.0690, 0.1014]; TE HOLDOUT (n=338) slope=-0.0615 [-0.1448, 0.0218]
+  -- sign flips, neither clears zero, no real signal.
+- **Required 10+/20+ BIDIRECTIONAL sensitivity checks, each with its own separately-derived floor**
+  (computed live from an unfloored first pass at that threshold, via the same `n=p(1-p)/SE**2`
+  method as the production constants -- WR/TE floors of 88/83 at 10yd, 41/31 at 20yd; the
+  meaningfully different floors at each threshold confirm per-threshold derivation was the right
+  call, not an unnecessary complication). 10yd: WR train/holdout both small and non-clearing
+  (-0.0239/-0.0142); TE train non-clearing, TE holdout clears (-0.2127, CI=[-0.3776,-0.0479]) but on
+  n=46/G=12 -- too small and too far from the primary spec to trust over noise. **20yd is the most
+  internally consistent result of the whole backtest**: WR TRAIN clears zero (slope=-0.0577,
+  CI=[-0.1027,-0.0127]) and WR HOLDOUT is the same sign and similar magnitude (slope=-0.0494,
+  CI=[-0.1039, 0.0051]) -- consistent direction AND consistent magnitude across splits, unlike the
+  15yd primary's magnitude collapse -- but the holdout CI still, narrowly, does not clear zero
+  (misses by 0.0051). TE 20yd: train slightly positive (n.s.), holdout negative (n.s.) -- no signal.
+- **Quantization check**: WR n=1,910 qualifying (player, week) observations, sample_size
+  (trailing targets) distribution mean=82.3, median=77, min=55 (the floor); TE n=850, mean=61.3,
+  median=56, min=40 -- fine-grained axes (1/55≈0.018, 1/40≈0.025 per step at the floor), no
+  quantization concern.
+- **Up-front `CEILING_SHRINKAGE_K=6.0` due-diligence rerun** (Model Analytics Expert's required
+  check, run proactively rather than reactively this time): unshrunk-z WR slope=-0.0327
+  [-0.0705,0.0050] -- essentially the same as the shrunk version, shrinkage isn't masking anything.
+  Trailing-target tercile split is inconsistent (WR mid-volume tier clears zero at -0.0676
+  [-0.1319,-0.0034], low and high tiers don't) -- not the clean monotonic story a real level signal
+  would produce. TE unshrunk and all three terciles straddle zero throughout.
+- **YAC-per-reception residualized regression** (Fantasy Football Expert's specific condition --
+  report magnitude retention, not just significance): WR univariate slope=-0.0352; controlling for
+  `trailing_yac_per_reception`, slope=-0.0451 [-0.0880,-0.0022] -- **128% magnitude retention, and
+  the CI now clears zero**. This rules out the obvious confound (that the raw effect is just
+  double-counting weak-after-the-catch receivers who get schemed deep targets) -- net of YAC
+  ability, the negative lean is if anything slightly stronger. But it is still a single non-primary
+  diagnostic clearing zero, not the primary spec itself, and the direction remains the "wrong" one
+  for a ceiling-multiplier candidate (more explosive-target rate predicting WORSE, not better,
+  subsequent performance). TE: univariate slope=-0.0136, residualized slope=-0.0027 -- only 19.6%
+  retention, not significant either way, no real relationship.
+- **Correlation check against Component C's own (null) aDOT signal**: WR r=0.428 (n=1,910), TE
+  r=0.446 (n=854) -- a real, moderate positive correlation (football-sensible: targets thrown
+  deeper are mechanically more likely to gain 15+ yards even before YAC), meaningfully higher than
+  this project's other joint-composition checks (e.g. ADR-0036's WR A/B correlation of -0.0175).
+  Both signals measure real, overlapping ground, and Component C is itself a confirmed null.
+
+### Both experts signed off on closing this out as a null, no live multiplier for either position
+
+The Model Analytics Expert's read: no spec produces a clean, HOLDOUT-CONFIRMED effect in either
+direction for either position. The one place a CI clears zero in the primary population (the
+YAC-residualized regression) is a secondary diagnostic, not the primary spec, and the WR 20yd
+sensitivity result -- the most internally consistent of everything tested -- still narrowly misses
+its own holdout bar. The decile-level fit for WR (R²=0.397) is uncharacteristically high for a
+construct this weak at the player level -- read as this project's own repeated decile-aggregation-
+inflates-apparent-signal finding (Component B's original un-clustered RB result, Component E's
+R²=0.252 decile fit against a near-zero player-level slope), not a masked real effect, and ranked
+below the cluster-robust player-level train/holdout result in this project's diagnostic hierarchy,
+same as every prior component.
+
+The Fantasy Football Expert's read: the consistent (if weak, non-clearing) NEGATIVE sign for WR
+across every threshold and diagnostic is at least football-plausible as a real, distinct phenomenon
+-- a receiver whose trailing rate of long completions is unusually high may be riding scheme/QB-
+arm-talent variance that mean-reverts, or drawing more attention from a defense the more it shows
+up (a flavor of the same "gets scouted and defended" mechanism ADR-0036's WR red-zone finding
+named) -- but unlike that finding, this one never clears this project's holdout-robust bar in its
+own primary spec, so it does not earn a standalone construct the way WR red-zone role-security did.
+TE's clean null (sign flips, no diagnostic clears reliably, weak YAC retention) matches priors:
+explosive TE targets are far more matchup/broken-play-driven (busted coverage, checkdowns turned
+upfield) than a stable, scheme-driven role trait. The r≈0.43 aDOT correlation is football-sensible
+but is one more reason not to treat this as a genuinely independent axis worth further investment,
+given Component C is itself already a confirmed null.
+
+**Both experts recommend treating this as the closing chapter of the receiving-side "explosive-
+rate" hypothesis**, the same way Component E closed out the QB-rushing side -- named for the record
+only, not pursued further: the WR negative lean, if it is real at all, would need meaningfully more
+data or a tighter (matchup-conditioned, not pooled-level) construction to clear this project's bar,
+and that matchup-conditioned version was explicitly out of scope for this design from the start (a
+`MatchupContext`-shaped construct, not a `CeilingMultiplier` leg).
+
+**Final state of `CeilingMultiplier`, all six named components resolved:** Component A shipped
+(live). WR red-zone role-security (Component B's real finding) shipped as its own standalone
+downside construct (ADR-0036), not a `CeilingMultiplier` leg. Components B (RB leg), C, D, E, and F
+all ship nothing live -- clean, thoroughly-verified nulls (C, D, E) or a null with a named,
+disclosed, non-clearing lean (F), consistent with this project's discipline of only shipping an
+effect that clears its own holdout bar in the primary specification, not a directionally-suggestive
+but statistically inconclusive one. No further named candidate remains open on either the
+QB-rushing or WR/TE receiving-ceiling axes at this time.

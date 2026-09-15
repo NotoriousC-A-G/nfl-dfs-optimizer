@@ -17,7 +17,7 @@ line of work at Component E** -- three independent hypotheses (D's two legs, E) 
 this project's strongest available methodology; `ingestion/qb_rushing_profile.py`'s descriptive
 dashboard data (ADR-0030) is the permanent, final answer for that axis, not a placeholder.
 
-Five signal-producing functions, one per ADR-0028 component:
+Six signal-producing functions, one per ADR-0028 component:
 
 - `role_share_ceiling_signals` -- Component A, RB/WR role-share "boom rate" (fraction of trailing
   weeks a player's share spiked above their own trailing median). Built as a boom-rate, not raw
@@ -50,6 +50,17 @@ Five signal-producing functions, one per ADR-0028 component:
   closed as a clean null -- see `docs/adr/0028-ceiling-signal-data-layer.md`'s Component E Update
   section. **Both experts explicitly recommend stopping the QB-rushing CeilingMultiplier line of
   work here** -- kept in this module for traceability only.
+- `explosive_target_rate_ceiling_signals` -- Component F (ADR-0028), the Fantasy Football Expert's
+  named successor to Component C's own null, a LEVEL signal on trailing (targets-denominator, not
+  receptions) explosive-target rate -- rides the same WR/TE position-label-split population as
+  Component C. Design jointly reviewed by both experts before any code, INCLUDING a real
+  substantive correction: the Fantasy Football Expert's original "boom-shaped" framing was conceded
+  wrong once shown the Model Analytics Expert's QB-rushing-volume quantization argument (Component
+  D/E's own precedent), and the construct was built as a pooled-trailing-window level signal
+  instead. **Backtested and closed as a null** -- WR shows a weak, inconsistently-significant
+  NEGATIVE lean that never clears zero in its own primary (15yd) holdout spec; TE shows no
+  consistent signal at any threshold or diagnostic. See this function's own section docstring below
+  and `docs/adr/0028-ceiling-signal-data-layer.md`'s Component F Update section for the full record.
 
 Every constant below (`BOOM_THRESHOLD`, `MIN_TRAILING_WEEKS`, `CEILING_SHRINKAGE_K`,
 `ADOT_MIN_TARGETS`) is an explicit, unvalidated starting placeholder -- named as such in both
@@ -105,6 +116,26 @@ QB_DESIGNED_RUN_MIN_TRAILING_VOLUME = 8
 # range) gives `n = 0.08*0.92/0.05**2 ≈ 29.4`, rounded up to 30.
 EXPLOSIVE_RUSH_YARDS_THRESHOLD = 15
 QB_EXPLOSIVE_RUSH_MIN_TRAILING_VOLUME = 30
+
+# ADR-0028 Component F (explosive-target rate) -- BACKTESTED AND CLOSED AS A NULL (see
+# `docs/adr/0028-ceiling-signal-data-layer.md`'s Component F Update section for the full record),
+# the Fantasy Football Expert's named successor to Component C's own null, design jointly reviewed
+# by both experts (see explosive_target_rate_ceiling_signals' section docstring below for the full
+# rationale, including the Fantasy Football Expert's explicit concession that their original
+# "boom-shaped" framing was the wrong analogy). EXPLOSIVE_TARGET_YARDS_THRESHOLD=15 matches
+# Component E's own primary cut for consistency; scripts/ceiling_explosive_target_backtest.py ran
+# required 10+/20+ BIDIRECTIONAL sensitivity checks, each with its own separately-derived floor
+# (empirically derived live: WR/TE floors of 88/83 at 10yd, 41/31 at 20yd -- base rates really do
+# differ meaningfully by threshold, confirming this was the right call) -- not shipped as second
+# production constants here.
+#
+# EXPLOSIVE_TARGET_MIN_TRAILING_TARGETS is DERIVED per position, not asserted by analogy, via the
+# same `n = p*(1-p)/SE**2` method as QB_EXPLOSIVE_RUSH_MIN_TRAILING_VOLUME -- solved at a target SE
+# of 0.05 (5 percentage points) against the Fantasy Football Expert's real football-informed
+# base-rate estimates: WR 12-20% (central ~16%) gives `n = 0.16*0.84/0.05**2 = 53.76`, rounded up
+# to 55; TE 8-14% (central ~11%) gives `n = 0.11*0.89/0.05**2 = 39.16`, rounded up to 40.
+EXPLOSIVE_TARGET_YARDS_THRESHOLD = 15
+EXPLOSIVE_TARGET_MIN_TRAILING_TARGETS: dict[str, int] = {"WR": 55, "TE": 40}
 
 # Component A's real, backtested, both-experts-signed-off scale constants (ADR-0028 Update) --
 # fitted via a player-level log-space regression on 5 real seasons / 20,376 real player-weeks,
@@ -689,3 +720,142 @@ def qb_explosive_rush_rate_signals(
     trailing.loc[trailing["sample_size"] < QB_EXPLOSIVE_RUSH_MIN_TRAILING_VOLUME, "raw_value"] = None
     pool = trailing[["player_id", "player_name", "team", "sample_size", "raw_value"]]
     return _z_score_and_shrink(pool)
+
+
+# ADR-0028 Component F (explosive-target rate) -- the Fantasy Football Expert's named successor to
+# Component C's own null (aDOT). Design jointly reviewed by both experts BEFORE this was written,
+# per this project's standing design-before-backtest discipline. **BACKTESTED AND CLOSED AS A
+# NULL** (`scripts/ceiling_explosive_target_backtest.py`, 5 real seasons -- see
+# `docs/adr/0028-ceiling-signal-data-layer.md`'s Component F Update section for the full record):
+# WR shows a weak, negatively-signed lean, consistent in direction across every threshold and
+# diagnostic, but it never clears zero in its own primary (15yd) holdout spec -- the exact
+# "borderline in-sample, evaporates in holdout" pattern this project's train/holdout discipline
+# exists to catch, not the clean, decisively-clearing effect Component B's WR red-zone finding
+# (ADR-0036) had before it shipped. TE shows no consistent signal at any threshold or diagnostic.
+# This section docstring is kept for design-rationale traceability, same posture as Components C/D/E.
+#
+# - A LEVEL signal (pooled trailing-window explosive-TARGET rate, z-scored + shrunk the same shape
+#   as Component C/E), explicitly NOT a per-week boom-rate. The Fantasy Football Expert originally
+#   requested a boom-shaped construct (matching Components A/B's own convention) but explicitly
+#   conceded that framing was wrong once shown the Model Analytics Expert's counter-argument: it
+#   imports the same quantization failure Component D/E were built to avoid on the QB-rushing axis
+#   -- a receiver's weekly target count is itself often small enough that a per-week boom-rate on an
+#   already-rare threshold event (a 15+ yard target) would compound thresholding on thresholding,
+#   not measure anything real. Pooling the whole trailing window into one rate is what makes this
+#   axis usable, the same reasoning Component E already applied to QB rushing.
+# - `raw_value` is TARGETS-denominated, never receptions-denominated: `(trailing targets with
+#   `yards_gained >= yards_threshold`) / (total trailing targets)`. Both experts agreed a
+#   receptions-denominator smuggles catch-success outcome noise back in as if it were receiver-
+#   controlled opportunity -- the same objection that killed Component D's rejected "rushing
+#   points" `raw_value` candidate. A receptions-denominator view is a secondary diagnostic only, run
+#   by the backtest script, never a production candidate.
+# - `EXPLOSIVE_TARGET_YARDS_THRESHOLD=15` (matching Component E's own primary cut, for consistency
+#   across this project's two explosive-rate constructs) -- `scripts/ceiling_explosive_target_
+#   backtest.py` runs required 10+ AND 20+ BIDIRECTIONAL sensitivity checks (unlike Component E,
+#   which only checked one direction), each needing its OWN separately-derived volume floor since
+#   the achievable base rate shifts with the threshold.
+# - Population: WR and TE split by position label, the same disclosed true-alignment-vs-position-
+#   label degradation Component C already carries (confirmed by the Fantasy Football Expert as an
+#   INHERITED limitation, not a new one -- see `adot_ceiling_signals`' own docstring for why a true
+#   alignment split isn't available in this pipeline).
+# - `EXPLOSIVE_TARGET_MIN_TRAILING_TARGETS` is DERIVED per position (see the constant's own comment
+#   above) from the Fantasy Football Expert's real football-informed base-rate estimates -- WR
+#   12-20% (central ~16%), TE 8-14% (central ~11%) -- not asserted by analogy to an unrelated axis.
+# - **Explicit scope disclosure (Fantasy Football Expert's condition):** this construct is NOT
+#   designed to capture a single-game matchup-driven explosive-target spike (a favorable coverage
+#   matchup this week) -- that's `MatchupContext`'s job. A pooled-trailing-window level signal
+#   measures a player's persistent role/profile, by deliberate design, not a one-off exploit.
+# - Required diagnostics (both experts, run by the backtest script, not this function): cluster-
+#   robust SEs and a train/holdout split from the first run (no reactive reruns, matching Component
+#   E's stricter-from-the-start bar); a quantization check; an up-front (not reactive)
+#   `CEILING_SHRINKAGE_K=6.0` due-diligence rerun (unshrunk-z refit + trailing-volume tercile
+#   split); a residualized regression against `trailing_yac_per_reception`
+#   (`ingestion/receiving_profile.py`, already computed, no new data) reporting BOTH statistical
+#   significance AND magnitude retention, not just whether the CI clears zero (the Fantasy Football
+#   Expert's specific condition -- a real but small residual effect still matters differently than a
+#   real large one); a correlation check against Component C's own (null) aDOT signal.
+# --------------------------------------------------------------------------------------------
+
+
+def _aggregate_trailing_explosive_target_rate(
+    pbp: pd.DataFrame, target_week: int, *, season_type: str | None = "REG", yards_threshold: int = EXPLOSIVE_TARGET_YARDS_THRESHOLD
+) -> pd.DataFrame:
+    """Trailing (`week < target_week`) explosive-TARGET rate, one row per (team, player_id) for
+    every receiver with a trailing target -- `sample_size` is the trailing TARGET count (never
+    receptions, per this construct's targets-denominator design, see the module section docstring
+    above), `raw_value` is the fraction of those targets whose `yards_gained` cleared
+    `yards_threshold`. `yards_gained` rides the same `import_pbp_data()` pull already consumed
+    elsewhere in this module (confirmed live to equal `air_yards + yards_after_catch` on a completed
+    reception, and 0 on an incompletion -- no new ingestion). `yards_threshold` is exposed as a
+    parameter (not hardcoded), matching Component E's own convention, so the backtest script's
+    required 10+/20+ sensitivity checks can reuse this same aggregation.
+    """
+    df = pbp if season_type is None else pbp[pbp["season_type"] == season_type]
+    trailing = df[
+        (df["week"] < target_week)
+        & (df["play_type"] == "pass")
+        & df["receiver_player_id"].notna()
+        & df["yards_gained"].notna()
+    ]
+    agg = (
+        trailing.groupby(["posteam", "receiver_player_id"], observed=True)
+        .agg(
+            sample_size=("play_id", "count"),
+            explosive=("yards_gained", lambda s: int((s >= yards_threshold).sum())),
+            player_name=("receiver_player_name", "first"),
+        )
+        .reset_index()
+        .rename(columns={"posteam": "team", "receiver_player_id": "player_id"})
+    )
+    agg["team"] = agg["team"].map(lambda t: normalize_team("nflverse_schedule", t))
+    agg["raw_value"] = agg["explosive"] / agg["sample_size"]
+    return agg.drop(columns=["explosive"])
+
+
+def explosive_target_rate_ceiling_signals(
+    pbp: pd.DataFrame,
+    target_week: int,
+    position_by_player_id: dict[str, str],
+    *,
+    season_type: str | None = "REG",
+    yards_threshold: int = EXPLOSIVE_TARGET_YARDS_THRESHOLD,
+    min_trailing_targets: dict[str, int] | None = None,
+) -> dict[str, list[CeilingSignal]]:
+    """ADR-0028 Component F: trailing explosive-target-rate LEVEL signal, WR and TE split into
+    separate position populations (see module section docstring above for the full design
+    rationale/sign-off, including why this is a position-label split, not a true-alignment split --
+    the same disclosed degradation Component C already carries). `position_by_player_id` must be
+    supplied by the caller, matching `adot_ceiling_signals`' own contract exactly.
+
+    Volume handling: `min_trailing_targets` (default `EXPLOSIVE_TARGET_MIN_TRAILING_TARGETS`) is a
+    position-specific floor (WR and TE have different real base rates, so a shared floor would
+    either over-gate TE or under-gate WR) applied as a raw_value-nulling gate -- never a dropped
+    row, and this also removes below-floor players from the cross-sectional z-scoring reference
+    population, same mechanism Components C/E already use. Exposed as a parameter (not hardcoded to
+    the module constant), matching `yards_threshold`'s own convention, specifically so the backtest
+    script's required 10+/20+ sensitivity checks can pass their OWN separately-derived floors (the
+    achievable base rate shifts with the threshold, so reusing the 15yd production floor at a 10yd
+    or 20yd threshold would silently over- or under-gate the sensitivity population).
+
+    **BACKTESTED AND CLOSED AS A NULL -- no `component_a_multiplier`-style live multiplier exists or
+    will be added for this.** Kept for traceability/reproducibility
+    (`scripts/ceiling_explosive_target_backtest.py` still consumes it) -- see this module's
+    Component F section docstring above and `docs/adr/0028-ceiling-signal-data-layer.md`'s
+    Component F Update section for the full backtest record. This construct was explicitly NOT
+    designed to capture a single-game matchup-driven explosive-target spike (that's
+    `MatchupContext`'s job) -- a deliberate scope limitation of the level-signal design, disclosed
+    up front rather than a gap found after the null.
+    """
+    floors = min_trailing_targets if min_trailing_targets is not None else EXPLOSIVE_TARGET_MIN_TRAILING_TARGETS
+    trailing = _aggregate_trailing_explosive_target_rate(pbp, target_week, season_type=season_type, yards_threshold=yards_threshold)
+    trailing = trailing.copy()
+    trailing["position"] = trailing["player_id"].map(position_by_player_id)
+
+    results: dict[str, list[CeilingSignal]] = {}
+    for position in ("WR", "TE"):
+        floor = floors[position]
+        pool = trailing[trailing["position"] == position].copy()
+        pool.loc[pool["sample_size"] < floor, "raw_value"] = None
+        pool = pool[["player_id", "player_name", "team", "sample_size", "raw_value"]]
+        results[position] = _z_score_and_shrink(pool)
+    return results
