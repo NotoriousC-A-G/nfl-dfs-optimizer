@@ -266,6 +266,7 @@ def main() -> None:
         home_wr = role_share_by_key.get((home, ROLE_WR))
         away_wr = role_share_by_key.get((away, ROLE_WR))
         home_rb = role_share_by_key.get((home, ROLE_RB))
+        away_rb = role_share_by_key.get((away, ROLE_RB))
         if home_wr is None or away_wr is None:
             continue
         try:
@@ -273,8 +274,14 @@ def main() -> None:
             ges_away = _build_ges(away, pace_proe_df, implied_total_z_by_team)
         except (IndexError, KeyError):
             continue
-        stack_profiles.append(build_stack_profile(ges_home, ges_away, spread, home_wr, away_wr, home_rb))
+        stack_profiles.append(
+            build_stack_profile(ges_home, ges_away, spread, home_wr, away_wr, home_rb, away_rb)
+        )
     print(f"  {len(stack_profiles)} StackProfile(s) built.\n")
+    rb_candidate_count = sum(
+        1 for p in stack_profiles if p.primary_rb_candidate is not None or p.bring_back_rb_candidate is not None
+    )
+    print(f"  {rb_candidate_count} StackProfile(s) with a real RB stack/bring-back candidate.\n")
 
     weekly = build_weekly_output(lineups, identities, stack_profiles)
 

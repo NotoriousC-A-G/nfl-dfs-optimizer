@@ -3,10 +3,13 @@ import pytest
 from nfl_dfs.correlation.stack_profile import (
     BRING_BACK_VIABILITY_FLOOR,
     SPREAD_DAMPENER_BANDS,
+    GameScriptLean,
     StackProfile,
     build_pivot_to,
     build_stack_profile,
+    classify_game_script_lean,
     game_stack_viability,
+    select_rb_stack_candidate,
     select_stack_candidates,
     single_team_viability,
     spread_dampener,
@@ -528,3 +531,180 @@ def test_build_pivot_to_names_candidates_and_score() -> None:
     assert "80" in text
     assert "60.0" in text
     assert "BUF" in text
+
+
+# --------------------------------------------------------------------------------------------
+# select_rb_stack_candidate (NflAgentConstructor plan, foundation signals)
+# --------------------------------------------------------------------------------------------
+
+
+def test_select_rb_stack_candidate_returns_bell_cow() -> None:
+    gibbs = _player_role_share("DET-RB1", "Jahmyr Gibbs", ROLE_RB, 0.68, role_tier="bell_cow")
+    rb = _role_share_result("DET", ROLE_RB, [gibbs], identified=gibbs, gate_passed=True)
+    assert select_rb_stack_candidate(rb) is gibbs
+
+
+def test_select_rb_stack_candidate_returns_mid_tier() -> None:
+    back = _player_role_share("X-RB1", "Some Back", ROLE_RB, 0.50, role_tier="mid_tier")
+    rb = _role_share_result("X", ROLE_RB, [back], identified=back, gate_passed=True)
+    assert select_rb_stack_candidate(rb) is back
+
+
+def test_select_rb_stack_candidate_none_for_committee_tier() -> None:
+    # Gate-cleared (identified is non-None), but role_tier is "committee" -- not dominant enough
+    # to anchor a stack thesis, even though it was identifiable at all.
+    back = _player_role_share("X-RB1", "Committee Back", ROLE_RB, 0.42, role_tier="committee")
+    rb = _role_share_result("X", ROLE_RB, [back], identified=back, gate_passed=True)
+    assert select_rb_stack_candidate(rb) is None
+
+
+def test_select_rb_stack_candidate_none_when_not_identified() -> None:
+    rb = _role_share_result("X", ROLE_RB, [], identified=None, gate_passed=False)
+    assert select_rb_stack_candidate(rb) is None
+
+
+def test_select_rb_stack_candidate_rejects_non_rb_role() -> None:
+    wr = _role_share_result("KC", ROLE_WR, [_player_role_share("A", "Player A", ROLE_WR, 0.30)])
+    with pytest.raises(ValueError):
+        select_rb_stack_candidate(wr)
+
+
+# --------------------------------------------------------------------------------------------
+# classify_game_script_lean (NflAgentConstructor plan, foundation signals)
+# --------------------------------------------------------------------------------------------
+
+
+def test_classify_game_script_lean_favorite() -> None:
+    lean = classify_game_script_lean(-6.5)
+    assert lean.stance == "favorite"
+    assert lean.abs_spread == pytest.approx(6.5)
+    assert lean.intensity == pytest.approx(0.85)  # 3 < 6.5 <= 7 band
+
+
+def test_classify_game_script_lean_underdog() -> None:
+    lean = classify_game_script_lean(6.5)
+    assert lean.stance == "underdog"
+    assert lean.abs_spread == pytest.approx(6.5)
+    assert lean.intensity == pytest.approx(0.85)
+
+
+def test_classify_game_script_lean_pick_em() -> None:
+    lean = classify_game_script_lean(0.0)
+    assert lean.stance == "pick_em"
+    assert lean.abs_spread == pytest.approx(0.0)
+    assert lean.intensity == pytest.approx(1.00)
+
+
+def test_classify_game_script_lean_extreme_blowout_favorite() -> None:
+    lean = classify_game_script_lean(-20.0)
+    assert lean.stance == "favorite"
+    assert lean.intensity == pytest.approx(0.25)
+
+
+def test_classify_game_script_lean_reuses_spread_dampener_bands() -> None:
+    # Same table, new purpose -- locking in that classify_game_script_lean doesn't invent its own
+    # thresholds (ADR-0011 "reuse before inventing").
+    for upper_bound, dampener in SPREAD_DAMPENER_BANDS:
+        if upper_bound == float("inf"):
+            continue
+        assert classify_game_script_lean(-upper_bound).intensity == pytest.approx(dampener)
+
+
+# --------------------------------------------------------------------------------------------
+# build_stack_profile -- RB candidates + game-script lean wiring (NflAgentConstructor plan)
+# --------------------------------------------------------------------------------------------
+
+
+def test_build_stack_profile_populates_primary_rb_candidate() -> None:
+    ges_home = _ges("DET", composite=85.0)
+    ges_away = _ges("GB", composite=70.0)
+    home_wr = _role_share_result(
+        "DET", ROLE_WR, [_player_role_share("DET-WR1", "Amon-Ra St. Brown", ROLE_WR, 0.30)]
+    )
+    away_wr = _role_share_result("GB", ROLE_WR, [_player_role_share("GB-WR1", "Jayden Reed", ROLE_WR, 0.22)])
+    gibbs = _player_role_share("DET-RB1", "Jahmyr Gibbs", ROLE_RB, 0.68, role_tier="bell_cow")
+    home_rb = _role_share_result("DET", ROLE_RB, [gibbs], identified=gibbs, gate_passed=True)
+
+    profile = build_stack_profile(ges_home, ges_away, -3.0, home_wr, away_wr, home_rb)
+
+    assert profile.primary_rb_candidate is gibbs
+
+
+def test_build_stack_profile_primary_rb_candidate_none_when_role_share_not_supplied() -> None:
+    ges_home = _ges("KC", composite=80.0)
+    ges_away = _ges("BUF", composite=60.0)
+    home_wr = _role_share_result("KC", ROLE_WR, [_player_role_share("KC-WR1", "Rashee Rice", ROLE_WR, 0.28)])
+    away_wr = _role_share_result("BUF", ROLE_WR, [_player_role_share("BUF-WR1", "Khalil Shakir", ROLE_WR, 0.24)])
+    profile = build_stack_profile(ges_home, ges_away, 2.0, home_wr, away_wr)
+    assert profile.primary_rb_candidate is None
+
+
+def test_build_stack_profile_populates_bring_back_rb_candidate_when_viable() -> None:
+    ges_home = _ges("KC", composite=80.0)
+    ges_away = _ges("BUF", composite=60.0)
+    home_wr = _role_share_result("KC", ROLE_WR, [_player_role_share("KC-WR1", "Rashee Rice", ROLE_WR, 0.28)])
+    away_wr = _role_share_result("BUF", ROLE_WR, [_player_role_share("BUF-WR1", "Khalil Shakir", ROLE_WR, 0.24)])
+    cook = _player_role_share("BUF-RB1", "James Cook", ROLE_RB, 0.62, role_tier="bell_cow")
+    away_rb = _role_share_result("BUF", ROLE_RB, [cook], identified=cook, gate_passed=True)
+
+    # |spread|=2 -> dampener 1.00, bottleneck=60 -> game_stack_viability=60 >= floor (20.0).
+    profile = build_stack_profile(ges_home, ges_away, 2.0, home_wr, away_wr, away_rb_role_share=away_rb)
+
+    assert profile.bring_back_rb_candidate is cook
+
+
+def test_build_stack_profile_bring_back_rb_candidate_none_when_game_stack_not_viable() -> None:
+    """Same ADR-0021 floor gate as the WR bring_back_candidates -- an RB candidate that would
+    otherwise be real must not be surfaced when the combined game-stack thesis doesn't clear the
+    bar."""
+    ges_home = _ges("KC", composite=70.0)
+    ges_away = _ges("BUF", composite=70.0)
+    home_wr = _role_share_result("KC", ROLE_WR, [_player_role_share("KC-WR1", "Rashee Rice", ROLE_WR, 0.28)])
+    away_wr = _role_share_result("BUF", ROLE_WR, [_player_role_share("BUF-WR1", "Khalil Shakir", ROLE_WR, 0.24)])
+    cook = _player_role_share("BUF-RB1", "James Cook", ROLE_RB, 0.62, role_tier="bell_cow")
+    away_rb = _role_share_result("BUF", ROLE_RB, [cook], identified=cook, gate_passed=True)
+
+    # |spread|=20 -> extreme-blowout dampener (0.25). bottleneck=70 -> viability=17.5 < 20.0.
+    profile = build_stack_profile(ges_home, ges_away, 20.0, home_wr, away_wr, away_rb_role_share=away_rb)
+
+    assert profile.bring_back_rb_candidate is None
+    assert profile.bring_back_status == "game_stack_not_viable"
+
+
+def test_build_stack_profile_bring_back_rb_candidate_none_when_environment_unavailable() -> None:
+    ges_home = _ges("KC", composite=80.0)
+    ges_away = _ges("NYJ", composite=None, is_available=False)
+    home_wr = _role_share_result("KC", ROLE_WR, [_player_role_share("KC-WR1", "Rashee Rice", ROLE_WR, 0.28)])
+    away_wr = _role_share_result("NYJ", ROLE_WR, [])
+    cook = _player_role_share("NYJ-RB1", "Some Back", ROLE_RB, 0.62, role_tier="bell_cow")
+    away_rb = _role_share_result("NYJ", ROLE_RB, [cook], identified=cook, gate_passed=True)
+
+    profile = build_stack_profile(ges_home, ges_away, -6.0, home_wr, away_wr, away_rb_role_share=away_rb)
+
+    assert profile.bring_back_rb_candidate is None
+    assert profile.bring_back_status == "environment_unavailable"
+
+
+def test_build_stack_profile_game_script_lean_home_and_away_are_mirrored() -> None:
+    ges_home = _ges("KC", composite=80.0)
+    ges_away = _ges("BUF", composite=60.0)
+    home_wr = _role_share_result("KC", ROLE_WR, [])
+    away_wr = _role_share_result("BUF", ROLE_WR, [])
+    # spread=-6.5 -- home (KC) is the favorite, away (BUF) is the underdog by the same magnitude.
+    profile = build_stack_profile(ges_home, ges_away, -6.5, home_wr, away_wr)
+
+    assert profile.game_script_lean_home == GameScriptLean(stance="favorite", abs_spread=6.5, intensity=0.85)
+    assert profile.game_script_lean_away == GameScriptLean(stance="underdog", abs_spread=6.5, intensity=0.85)
+
+
+def test_build_stack_profile_game_script_lean_always_computed_even_when_environment_unavailable() -> None:
+    # Pure function of spread -- unlike the WR/RB candidate fields, never gated on
+    # GameEnvironmentScore availability.
+    ges_home = _ges("KC", composite=None, is_available=False)
+    ges_away = _ges("BUF", composite=60.0)
+    home_wr = _role_share_result("KC", ROLE_WR, [])
+    away_wr = _role_share_result("BUF", ROLE_WR, [])
+    profile = build_stack_profile(ges_home, ges_away, 3.0, home_wr, away_wr)
+
+    assert profile.game_script_lean_home is not None
+    assert profile.game_script_lean_away is not None
