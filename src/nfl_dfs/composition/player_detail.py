@@ -103,7 +103,7 @@ from nfl_dfs.ceiling.signals import (
     component_a_multiplier,
     wr_red_zone_role_security_discount,
 )
-from nfl_dfs.correlation.stack_profile import StackProfile
+from nfl_dfs.correlation.stack_profile import GameScriptLean, StackProfile
 from nfl_dfs.game_environment.score import GameEnvironmentScore
 from nfl_dfs.ingestion.pff import PffFacetGrades, ResolvedGrade, TeamCoverageTendency, resolve_grade
 from nfl_dfs.ingestion.qb_rushing_profile import TrailingQbRushingProfile
@@ -356,6 +356,14 @@ class StackContext:
     `is_primary_stack_candidate`/`primary_stack_rank` are only ever set for a `home_team` player,
     `is_bring_back_candidate` only ever for an `away_team` player, matching that convention exactly
     rather than re-deriving a symmetric one this module doesn't own.
+
+    `is_primary_rb_stack_candidate`/`is_bring_back_rb_candidate` (NflAgentConstructor plan,
+    foundation signals) are the RB-role sibling of the two fields above, read off
+    `StackProfile.primary_rb_candidate`/`bring_back_rb_candidate` with the same home/away-anchor
+    split. `game_script_lean` is THIS player's own team's `GameScriptLean`
+    (`StackProfile.game_script_lean_home` for a home-team player, `_away` for an away-team player)
+    -- unlike the candidate fields, always populated whenever a `StackProfile` was found at all
+    (it's a pure function of `spread`, per `GameScriptLean`'s own contract).
     """
 
     home_team: str
@@ -368,6 +376,9 @@ class StackContext:
     is_bring_back_candidate: bool
     bring_back_status: str
     pivot_to: str | None
+    is_primary_rb_stack_candidate: bool
+    is_bring_back_rb_candidate: bool
+    game_script_lean: GameScriptLean | None
 
 
 def slate_window_label(kickoff_utc: str) -> str:
@@ -913,6 +924,19 @@ def _stack_context(
     if not is_home and profile.bring_back_candidates and gsis_id is not None:
         is_bring_back = any(candidate.player_id == gsis_id for candidate in profile.bring_back_candidates)
 
+    is_primary_rb = (
+        is_home
+        and profile.primary_rb_candidate is not None
+        and gsis_id is not None
+        and profile.primary_rb_candidate.player_id == gsis_id
+    )
+    is_bring_back_rb = (
+        not is_home
+        and profile.bring_back_rb_candidate is not None
+        and gsis_id is not None
+        and profile.bring_back_rb_candidate.player_id == gsis_id
+    )
+
     return (
         StackContext(
             home_team=profile.home_team,
@@ -925,6 +949,9 @@ def _stack_context(
             is_bring_back_candidate=is_bring_back,
             bring_back_status=profile.bring_back_status,
             pivot_to=profile.pivot_to,
+            is_primary_rb_stack_candidate=is_primary_rb,
+            is_bring_back_rb_candidate=is_bring_back_rb,
+            game_script_lean=profile.game_script_lean_home if is_home else profile.game_script_lean_away,
         ),
         None,
     )

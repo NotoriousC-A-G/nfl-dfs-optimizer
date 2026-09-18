@@ -1101,10 +1101,31 @@ def _render_stack_cell(record: PlayerDetailRecord) -> str:
                 "Live bring-back candidate for this game's stack thesis (StackProfile).",
             )
         )
+    if ctx.is_primary_rb_stack_candidate:
+        badges.append(
+            _badge(
+                "RB Stack",
+                "badge-stack-rb",
+                "Dominant RB (bell-cow/mid-tier role tier) for this game's anchor team -- part of "
+                "the stack thesis, not just a workload play (select_rb_stack_candidate, "
+                "NflAgentConstructor foundation signals).",
+            )
+        )
+    if ctx.is_bring_back_rb_candidate:
+        badges.append(
+            _badge(
+                "RB Bring-back",
+                "badge-stack-rb-bringback",
+                "Opposing dominant RB, live for a bring-back thesis alongside the pass-catching "
+                "bring-back (select_rb_stack_candidate).",
+            )
+        )
     badges_html = f'<div class="badges">{"".join(badges)}</div>' if badges else ""
     sub_parts = [f"{ctx.home_team} {ctx.home_spread:+.1f}"]
     if ctx.game_stack_viability is not None:
         sub_parts.append(f"game stack {ctx.game_stack_viability:.0f}")
+    if ctx.game_script_lean is not None:
+        sub_parts.append(f"{ctx.game_script_lean.stance} ({ctx.game_script_lean.intensity:.2f}x)")
     status_note = _BRING_BACK_STATUS_NOTES.get(ctx.bring_back_status)
     if status_note and not ctx.is_bring_back_candidate:
         sub_parts.append(status_note)
@@ -1471,6 +1492,8 @@ td { padding: 7px 10px; border-bottom: 1px solid var(--border); vertical-align: 
 .badge-leverage { background: var(--green); color: #fff; }
 .badge-stack-primary { background: var(--accent); color: #fff; }
 .badge-stack-bringback { background: var(--accent-light); color: var(--accent); border: 1px solid var(--accent); }
+.badge-stack-rb { background: var(--green); color: #fff; }
+.badge-stack-rb-bringback { background: transparent; color: var(--green); border: 1px solid var(--green); }
 .legend { margin-bottom: 12px; background: var(--bg2); border: 1px solid var(--border); border-radius: var(--radius); padding: 8px 14px; }
 .legend summary { cursor: pointer; font-weight: 600; color: var(--fg2); font-size: 0.82rem; }
 .legend-body { margin-top: 8px; font-size: 0.8rem; color: var(--fg2); line-height: 1.5; }

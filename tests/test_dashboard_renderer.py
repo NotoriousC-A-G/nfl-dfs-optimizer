@@ -23,6 +23,7 @@ from nfl_dfs.composition.player_detail import (
     StackContext,
 )
 from nfl_dfs.composition.lineup_dup_risk import LineupDupRiskAssessment
+from nfl_dfs.correlation.stack_profile import classify_game_script_lean
 from nfl_dfs.dashboard.renderer import SlateGameRow, render_dashboard_html, write_dashboard_html
 from nfl_dfs.game_environment.score import ComponentScore, GameEnvironmentScore
 from nfl_dfs.ingestion.pff import TeamCoverageTendency
@@ -189,7 +190,13 @@ def _slate_game_row(
 
 
 def _fully_populated_player_detail(
-    canonical_id: str, name: str, team: str, *, salary: int | None = 6500
+    canonical_id: str,
+    name: str,
+    team: str,
+    *,
+    salary: int | None = 6500,
+    is_primary_rb_stack_candidate: bool = False,
+    is_bring_back_rb_candidate: bool = False,
 ) -> PlayerDetailRecord:
     identity = PlayerIdentity(
         canonical_id=canonical_id,
@@ -297,6 +304,9 @@ def _fully_populated_player_detail(
             is_primary_stack_candidate=True,
             primary_stack_rank=1,
             is_bring_back_candidate=False,
+            is_primary_rb_stack_candidate=is_primary_rb_stack_candidate,
+            is_bring_back_rb_candidate=is_bring_back_rb_candidate,
+            game_script_lean=classify_game_script_lean(-3.5),
             bring_back_status="populated",
             pivot_to=f"{team} implied 27.5, {name} leads targets in a plus game environment.",
         ),
@@ -695,6 +705,35 @@ def test_red_zone_role_security_discount_no_sub_line_when_neutral_or_absent():
     wr = _fully_populated_player_detail("wr_star", "Star Wideout", "AAA")  # discount is None by default
     html = render_dashboard_html(weekly_output, [wr])
     assert "red-zone role-security" not in html
+
+
+def test_rb_stack_badge_renders_when_primary_rb_candidate() -> None:
+    weekly_output, _ = _weekly_output_with_three_lineups()
+    rb = _fully_populated_player_detail("rb_star", "Bell Cow", "AAA", is_primary_rb_stack_candidate=True)
+
+    html = render_dashboard_html(weekly_output, [rb])
+
+    assert "RB Stack" in html
+    assert "favorite" in html  # game_script_lean.stance sub-text (spread=-3.5, home team)
+
+
+def test_rb_bring_back_badge_renders_when_bring_back_rb_candidate() -> None:
+    weekly_output, _ = _weekly_output_with_three_lineups()
+    rb = _fully_populated_player_detail("rb_star", "Bring Back Back", "AAA", is_bring_back_rb_candidate=True)
+
+    html = render_dashboard_html(weekly_output, [rb])
+
+    assert "RB Bring-back" in html
+
+
+def test_no_rb_badges_when_neither_rb_candidate_field_set() -> None:
+    weekly_output, _ = _weekly_output_with_three_lineups()
+    wr = _fully_populated_player_detail("wr_star", "Star Wideout", "AAA")
+
+    html = render_dashboard_html(weekly_output, [wr])
+
+    assert "RB Stack" not in html
+    assert "RB Bring-back" not in html
 
 
 def test_empty_weekly_output_and_empty_player_pool_render_without_crashing():
