@@ -163,6 +163,53 @@ def spread_dampener(abs_spread: float) -> float:
     raise AssertionError("unreachable -- final band's upper bound is +inf")  # pragma: no cover
 
 
+GameScriptStance = Literal["favorite", "underdog", "pick_em"]
+
+
+@dataclass(frozen=True)
+class GameScriptLean:
+    """Favorite/underdog + intensity classification from ONE team's own SIGNED spread (e.g.
+    `ingestion/odds_api.py`'s `GameOdds.home_spread`, or `projection/blend.py`'s
+    `team_spreads_from_games` -- negative = favorite, this project's established sign convention).
+
+    Deliberately spread-only (NflAgentConstructor plan, foundation signals): no total/shootout
+    logic is duplicated here -- `game_stack_viability` (this module) already covers high-total/
+    shootout-viability framing from a different angle (bottleneck environment quality), so a
+    caller combines the two rather than this function trying to encode both in one number.
+
+    `stance`: `"favorite"` (`team_spread < 0`), `"underdog"` (`team_spread > 0`), or `"pick_em"`
+    (exactly `0.0` -- no favorite either way).
+    `intensity`: `SPREAD_DAMPENER_BANDS`' own multiplier at `abs(team_spread)` (1.00 pick'em/close
+    down to 0.25 extreme blowout) -- reused as a lean-intensity read, not recomputed (ADR-0011
+    "reuse before inventing"): a double-digit spread dampens a bring-back thesis (the table's
+    original purpose) for the same underlying reason it signals a lopsided, one-side-dominant
+    expected game script here.
+    """
+
+    stance: GameScriptStance
+    abs_spread: float
+    intensity: float
+
+
+def classify_game_script_lean(team_spread: float) -> GameScriptLean:
+    """Classify one team's own SIGNED spread into a `GameScriptLean` (favorite/underdog/pick'em +
+    intensity). `team_spread` must be that team's OWN signed spread (negative = favorite) -- for
+    the opposing team in the same game, pass the negation, not the same value twice.
+
+    Reuses `SPREAD_DAMPENER_BANDS`' exact magnitude cutoffs (ADR-0004/ADR-0010) for `intensity` --
+    see `GameScriptLean`'s own docstring for why this is a new PURPOSE for that table (game-script
+    lean intensity), not a new set of numeric thresholds.
+    """
+    if team_spread < 0:
+        stance: GameScriptStance = "favorite"
+    elif team_spread > 0:
+        stance = "underdog"
+    else:
+        stance = "pick_em"
+    abs_spread = abs(team_spread)
+    return GameScriptLean(stance=stance, abs_spread=abs_spread, intensity=spread_dampener(abs_spread))
+
+
 # --------------------------------------------------------------------------------------------
 # Viability formulas (PRD Section 6 `StackProfile`; ADR-0004/ADR-0010)
 # --------------------------------------------------------------------------------------------
@@ -250,6 +297,36 @@ def select_stack_candidates(
             "pass-catchers only (PRD Section 6: 'QB + top 1-2 pass-catchers')."
         )
     return wr_role_share.candidates[:max_candidates]
+
+
+def select_rb_stack_candidate(rb_role_share: RoleShareResult) -> PlayerRoleShare | None:
+    """The one RB worth naming as part of a QB/defense stack or a bring-back (NflAgentConstructor
+    plan, foundation signals): a dominant-back thesis, not a committee split.
+
+    Returns `rb_role_share.identified` only when it's gate-cleared (non-`None`, per
+    `RoleShareResult`'s own contract -- `identified` is never a guessed name) AND its
+    `role_tier` is `"bell_cow"` or `"mid_tier"` -- i.e. NOT `"committee"`. `role_tier` is derived
+    from `role_share_blended` independently of the identification gate (`BELLCOW_THRESHOLD`/
+    `MIDTIER_THRESHOLD` vs. the gate's own `RB_GATE_MIN_SHARE`/`RB_GATE_MIN_VOLUME`), so a
+    gate-passed RB can still land in `"committee"` tier -- that back cleared the bar for
+    "identifiable lead back" but not for "dominant enough to anchor a stack thesis," which is
+    the distinction this function exists to make. No new numeric thresholds: reuses the tier cuts
+    `usage_share.py` already computes (ADR-0011 "reuse before inventing").
+
+    Raises `ValueError` if `rb_role_share.role != ROLE_RB` -- this is an RB-only signal, matching
+    `select_stack_candidates`'s own role-guard convention for `ROLE_WR`.
+    """
+    if rb_role_share.role != ROLE_RB:
+        raise ValueError(
+            f"select_rb_stack_candidate expects a {ROLE_RB!r}-role RoleShareResult, got "
+            f"{rb_role_share.role!r}."
+        )
+    identified = rb_role_share.identified
+    if identified is None:
+        return None
+    if identified.role_tier not in ("bell_cow", "mid_tier"):
+        return None
+    return identified
 
 
 def _candidate_display_name(candidate: PlayerRoleShare) -> str:
@@ -424,6 +501,25 @@ class StackProfile:
     bring_back_candidates: list[PlayerRoleShare] | None = None
     pivot_to: str | None = None
 
+    # NflAgentConstructor plan, foundation signals -- RB-inclusive stacking + game-script lean.
+    # primary_rb_candidate: home_team's select_rb_stack_candidate() result -- None when
+    # home_rb_role_share wasn't supplied, or no RB clears the bell_cow/mid_tier bar this week.
+    # Unlike primary_stack_candidates (WR), this is NOT gated on ges_home.is_available -- it's a
+    # pure read of home_rb_role_share, mirroring build_pivot_to's existing uncontested-RB clause,
+    # which makes the same choice today.
+    primary_rb_candidate: PlayerRoleShare | None = None
+    # bring_back_rb_candidate: away_team's select_rb_stack_candidate() result -- gated on the SAME
+    # ADR-0021 game_stack_viability >= BRING_BACK_VIABILITY_FLOOR floor as bring_back_candidates,
+    # for the same reason: no basis for asserting a bring-back thesis (RB or WR) when the combined
+    # game-stack environment itself doesn't support one.
+    bring_back_rb_candidate: PlayerRoleShare | None = None
+    # game_script_lean_home/_away: classify_game_script_lean() on each team's own signed spread
+    # (home = `spread`, away = `-spread`). Always computed -- a pure function of `spread`, no
+    # GameEnvironmentScore/RoleShareResult dependency, so never None the way the RB/WR candidate
+    # fields can be.
+    game_script_lean_home: GameScriptLean | None = None
+    game_script_lean_away: GameScriptLean | None = None
+
     notes: list[str] = field(default_factory=list)
 
     @property
@@ -441,6 +537,7 @@ def build_stack_profile(
     home_wr_role_share: RoleShareResult,
     away_wr_role_share: RoleShareResult,
     home_rb_role_share: RoleShareResult | None = None,
+    away_rb_role_share: RoleShareResult | None = None,
 ) -> StackProfile:
     """Assemble a full `StackProfile` from both teams' `GameEnvironmentScore`, the game's spread,
     and (new this round, ADR-0019) both teams' `"WR"`-role `RoleShareResult`s. `ges_home`/`ges_away`
@@ -467,9 +564,13 @@ def build_stack_profile(
     are unaffected by this gate.
 
     `home_rb_role_share`, when supplied, must be a `"RB"`-role `RoleShareResult` for `home_team` --
-    used only to fold an ADR-0020 `uncontested_signal` (a confirmed uncontested lead RB) into
-    `pivot_to` when it fired. Optional: a caller that hasn't computed the anchor team's RB role
-    share yet still gets a full `pivot_to`, just without that specific clause.
+    used to fold an ADR-0020 `uncontested_signal` (a confirmed uncontested lead RB) into
+    `pivot_to` when it fired, AND (NflAgentConstructor plan, foundation signals) to populate
+    `primary_rb_candidate` via `select_rb_stack_candidate`. Optional: a caller that hasn't
+    computed the anchor team's RB role share yet still gets a full `pivot_to` and `StackProfile`,
+    just without those specific fields/clause. `away_rb_role_share`, likewise optional, is the
+    same lookup against `away_team`'s roster, gated the SAME ADR-0021 `game_stack_viability`
+    floor as `bring_back_candidates` -- see `bring_back_rb_candidate`.
     """
     assert home_wr_role_share.team == ges_home.team and home_wr_role_share.role == ROLE_WR, (
         f"home_wr_role_share must be a {ROLE_WR!r}-role RoleShareResult for {ges_home.team!r} "
@@ -483,6 +584,11 @@ def build_stack_profile(
         assert home_rb_role_share.team == ges_home.team and home_rb_role_share.role == ROLE_RB, (
             f"home_rb_role_share must be a {ROLE_RB!r}-role RoleShareResult for {ges_home.team!r}, "
             f"got team={home_rb_role_share.team!r} role={home_rb_role_share.role!r}"
+        )
+    if away_rb_role_share is not None:
+        assert away_rb_role_share.team == ges_away.team and away_rb_role_share.role == ROLE_RB, (
+            f"away_rb_role_share must be a {ROLE_RB!r}-role RoleShareResult for {ges_away.team!r}, "
+            f"got team={away_rb_role_share.team!r} role={away_rb_role_share.role!r}"
         )
 
     notes: list[str] = []
@@ -506,6 +612,14 @@ def build_stack_profile(
     # bring-back viability gate below -- only bring_back_candidates is.
     primary_candidates = select_stack_candidates(home_wr_role_share) if ges_home.is_available else None
 
+    # NflAgentConstructor plan, foundation signals: primary_rb_candidate is NOT gated on
+    # ges_home.is_available -- it's a pure read of home_rb_role_share's own gate-cleared
+    # `identified`, mirroring build_pivot_to's existing uncontested-RB clause (below), which makes
+    # the same choice today.
+    primary_rb_candidate = (
+        select_rb_stack_candidate(home_rb_role_share) if home_rb_role_share is not None else None
+    )
+
     # game_stack_viability is computed first (still always a real value whenever both
     # GameEnvironmentScores are available, per ADR-0021 Decision 5) so it can gate the bring-back
     # candidate selection below -- see ADR-0021 for the full decision.
@@ -516,18 +630,29 @@ def build_stack_profile(
     # floor comparison) doesn't exist at all when either score is unavailable.
     if not ges_home.is_available or not ges_away.is_available:
         bring_back_candidates: list[PlayerRoleShare] | None = None
+        bring_back_rb_candidate: PlayerRoleShare | None = None
         bring_back_status: BringBackStatus = "environment_unavailable"
     elif gsv is not None and gsv >= BRING_BACK_VIABILITY_FLOOR:
         bring_back_candidates = select_stack_candidates(away_wr_role_share)
+        bring_back_rb_candidate = (
+            select_rb_stack_candidate(away_rb_role_share) if away_rb_role_share is not None else None
+        )
         bring_back_status = "populated" if bring_back_candidates else "no_confident_candidate"
     else:
         # Both GameEnvironmentScores are available, but game_stack_viability < the floor -- ADR-0021,
         # new this round. The game environment itself doesn't support a bring-back thesis this week,
         # independent of whether away_wr_role_share would otherwise have produced a candidate.
         bring_back_candidates = None
+        bring_back_rb_candidate = None
         bring_back_status = "game_stack_not_viable"
 
     pivot_to = build_pivot_to(ges_home, ges_away.team, primary_candidates, gsv, home_rb_role_share)
+
+    # NflAgentConstructor plan, foundation signals: pure function of the signed spread, so always
+    # computed -- no GameEnvironmentScore/RoleShareResult dependency, unlike every candidate field
+    # above. Away team's own signed spread is the negation of home's (same game, opposite sides).
+    game_script_lean_home = classify_game_script_lean(spread)
+    game_script_lean_away = classify_game_script_lean(-spread)
 
     notes.append(
         f"primary_stack_candidates/bring_back_candidates ranked by RoleShare (role_share_blended) "
@@ -569,5 +694,9 @@ def build_stack_profile(
         primary_stack_candidates=primary_candidates,
         bring_back_candidates=bring_back_candidates,
         pivot_to=pivot_to,
+        primary_rb_candidate=primary_rb_candidate,
+        bring_back_rb_candidate=bring_back_rb_candidate,
+        game_script_lean_home=game_script_lean_home,
+        game_script_lean_away=game_script_lean_away,
         notes=notes,
     )
