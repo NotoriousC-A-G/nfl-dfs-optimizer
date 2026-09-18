@@ -387,6 +387,46 @@ def fetch_classic_draft_group_id(
     return select_classic_slate(session=session, require_label=require_label).draft_group_id
 
 
+def fetch_slate_by_draft_group_id(
+    draft_group_id: int, *, session: requests.Session | None = None
+) -> tuple[dict, DraftKingsSlate]:
+    """Fetch a SPECIFIC, already-known Classic slate directly by its `draftGroupId`, bypassing
+    `select_classic_slate`'s auto-detection entirely -- the explicit-selection escape hatch for
+    when a caller already knows exactly which slate to build for, rather than trusting
+    ambiguity-prone auto-detection.
+
+    **Real motivating case (2026-09-19, live):** DK started serving two overlapping, BOTH
+    unlabeled, BOTH day-coherent live Classic slates for the same Sunday at once -- the real
+    13-game main slate, and a smaller 8-game "early games only" slate missing the 4:05/4:25pm ET
+    games. `select_classic_slate` correctly refused to guess between them (`SlateSelectionError`,
+    "ambiguous, not guessing"), but `scripts/live_integration_check_output.py`'s own
+    `fetch_dk_raw_for_live_slate` blindly caught that error and substituted a THIRD, unrelated
+    "Primetime" slate -- silently building an entire live dashboard run against the wrong 2-game
+    slate with no one noticing until the output was inspected by hand. That fallback was built for
+    a genuinely different failure mode (the main slate already locked, zero live candidates at
+    all -- see that function's own docstring) and was never meant to paper over ambiguity between
+    multiple still-live candidates.
+
+    Returns the SAME `(raw draftables payload, DraftKingsSlate)` shape `select_classic_slate`'s
+    own callers already consume downstream, so this is a drop-in alternative entry point for a
+    caller (a script's own `DRAFT_GROUP_ID` constant, set by hand from a candidate list an
+    ambiguity error already prints) to use once it knows the exact id, not a parallel code path
+    with its own shape.
+    """
+    http = session or requests
+    contests_payload = http.get(CONTESTS_URL, timeout=_TIMEOUT).json()
+    label = _contest_labels_by_draft_group(contests_payload).get(draft_group_id, "")
+    payload = http.get(DRAFTABLES_URL.format(draft_group_id=draft_group_id), timeout=_TIMEOUT).json()
+    rows = payload.get("draftables", [])
+    slate = DraftKingsSlate(
+        draft_group_id=draft_group_id,
+        slate_label=label,
+        player_count=len(rows),
+        games=_slate_games_from_draftables(payload),
+    )
+    return payload, slate
+
+
 def fetch_draftkings_players(
     draft_group_id: int | None = None,
     *,

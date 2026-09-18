@@ -50,6 +50,7 @@ from nfl_dfs.ingestion.rotogrinders_injuries import fetch_injury_report
 from nfl_dfs.ingestion.snap_share import fetch_snap_shares
 from nfl_dfs.ingestion.usage_share import ROLE_RB, ROLE_WR, aggregate_player_trailing_red_zone, fetch_role_shares
 from nfl_dfs.ingestion.weather import WeatherReading, fetch_weather_reading
+from nfl_dfs.matchup.context import MatchupFacetInputs, PlayerMatchupInput, build_matchup_context_pool
 from nfl_dfs.normalization.crosswalk import fetch_crosswalk
 from nfl_dfs.normalization.injury_lookup import team_injuries
 from nfl_dfs.normalization.matcher import reconcile_week
@@ -57,7 +58,9 @@ from nfl_dfs.normalization.registry import PlayerRegistry
 from nfl_dfs.optimizer.lineup import EXCLUDED_INJURY_STATUSES, LineupGenerationError, generate_dup_risk_aware_lineups
 from nfl_dfs.output.weekly_output import build_weekly_output
 from nfl_dfs.ownership.leverage import build_leverage_assessments
+from nfl_dfs.composition.player_detail import _pff_native_id_for_identity
 from nfl_dfs.projection.blend import (
+    apply_matchup_context,
     build_projection_pool,
     extract_dk_injury_status,
     extract_dk_salary,
@@ -70,15 +73,23 @@ from scripts.live_integration_check_projection import fetch_footballguys_raw, fe
 
 SEASON = 2026
 WEEK = 2
+# Set to a specific DK draftGroupId to target that exact slate directly, bypassing auto-detection
+# entirely -- required once DK is serving more than one plausible main-shaped slate at once (a
+# real, live 2026-09-19 case; see ingestion.draftkings.fetch_slate_by_draft_group_id's own
+# docstring). Leave None to auto-detect (works fine when only one real main slate is live) -- if
+# auto-detection hits real ambiguity, it now fails loudly with the real candidate ids to choose
+# from here, rather than silently substituting an unrelated slate.
+DRAFT_GROUP_ID: int | None = 153428  # confirmed live 2026-09-19: the real 13-game Sunday main slate
 
 
 def main() -> None:
     print(f"=== Live dashboard integration check -- season={SEASON}, week={WEEK} ===\n")
 
     print("Fetching DraftKings (anchor)...")
-    dk_payload, dk_pool, dk_slate = fetch_dk_raw_for_live_slate()
+    dk_payload, dk_pool, dk_slate = fetch_dk_raw_for_live_slate(draft_group_id=DRAFT_GROUP_ID)
     slate_teams = sorted(dk_slate.teams)
-    print(f"  {len(dk_pool)} players, slate games: {[(g.away_team, g.home_team) for g in dk_slate.games]}")
+    print(f"  draft_group_id={dk_slate.draft_group_id} '{dk_slate.slate_label}' -- {len(dk_pool)} players, "
+          f"slate games: {[(g.away_team, g.home_team) for g in dk_slate.games]}")
 
     print("Fetching PFF...")
     from nfl_dfs.ingestion.pff import fetch_pff_players
@@ -113,6 +124,51 @@ def main() -> None:
     identities = reconcile_week(dk_pool, pff_pool, rg_pool, fbg_pool, crosswalk, registry)
     print(f"\n{len(identities)} DK anchor players reconciled.\n")
 
+    # gsis_to_pff_id and opponent_of only depend on crosswalk/dk_slate, both already available --
+    # built here (not down with the rest of the Player Detail section, where they used to live)
+    # specifically so MatchupContext can be computed BEFORE lineup generation, not after. Same
+    # "moved up, not duplicated" pattern ADR-0035/0037's dup-risk-aware wiring already established.
+    gsis_to_pff_id = build_gsis_to_pff_id_map(crosswalk)
+    opponent_of: dict[str, str] = {}
+    for g in dk_slate.games:
+        opponent_of[g.away_team] = g.home_team
+        opponent_of[g.home_team] = g.away_team
+
+    print("Fetching real PFF grade facets for MatchupContext (ADR-0014/0022, all 6 inputs)...")
+    receiving_scheme_grades = fetch_matchup_grades("receiving/scheme", WEEK, SEASON)
+    coverage_scheme_grades = fetch_matchup_grades("defense/coverage_scheme", WEEK, SEASON)
+    run_blocking_grades = fetch_matchup_grades("offense/run_blocking", WEEK, SEASON)
+    run_defense_grades = fetch_matchup_grades("defense/run", WEEK, SEASON)
+    pass_blocking_grades = fetch_matchup_grades("offense/pass_blocking", WEEK, SEASON)
+    pass_rush_grades = fetch_matchup_grades("defense/pass_rush", WEEK, SEASON)
+    coverage_tendency_by_team = team_coverage_tendency(coverage_scheme_grades)
+    print(
+        f"  receiving/scheme population={receiving_scheme_grades.population!r}, "
+        f"{len(receiving_scheme_grades.by_player_id)} player row(s)"
+    )
+    print(f"  {len(coverage_tendency_by_team)} team(s) with a coverage tendency rollup")
+
+    print("Building real MatchupContext for every reconciled identity (ADR-0035 wiring -- now actually applied to projections)...")
+    matchup_facets = MatchupFacetInputs(
+        run_blocking=run_blocking_grades,
+        run_defense=run_defense_grades,
+        pass_blocking=pass_blocking_grades,
+        pass_rush=pass_rush_grades,
+        coverage_scheme=coverage_scheme_grades,
+        receiving_scheme=receiving_scheme_grades,
+    )
+    matchup_players = [
+        PlayerMatchupInput(
+            canonical_player_id=identity.canonical_id,
+            team=identity.team,
+            position=identity.position,
+            pff_native_id=_pff_native_id_for_identity(identity, gsis_to_pff_id),
+        )
+        for identity in identities
+    ]
+    matchup_context_by_canonical_id = build_matchup_context_pool(matchup_players, opponent_of, matchup_facets)
+    print(f"  {len(matchup_context_by_canonical_id)} identit(y/ies) with a real MatchupContext this week")
+
     dk_salary = extract_dk_salary(dk_payload)
     dk_injury_status = extract_dk_injury_status(dk_payload)
     rotogrinders_fpts = extract_rotogrinders_fpts(rg_payload) if rg_payload else {}
@@ -121,6 +177,17 @@ def main() -> None:
         footballguys_points.update(extract_footballguys_points(html))
 
     pool = build_projection_pool(identities, dk_salary, rotogrinders_fpts, footballguys_points, dk_injury_status)
+    pool_before_matchup_context = {p.canonical_id: p.blended_projection for p in pool}
+    pool = apply_matchup_context(pool, matchup_context_by_canonical_id)
+    n_adjusted = sum(
+        1
+        for p in pool
+        if p.blended_projection is not None
+        and pool_before_matchup_context.get(p.canonical_id) is not None
+        and p.blended_projection != pool_before_matchup_context[p.canonical_id]
+    )
+    print(f"  {n_adjusted} player(s) had their blended_projection actually rescaled by a real MatchupContext multiplier\n")
+
     usable = [p for p in pool if p.blended_projection is not None and p.salary is not None]
     from collections import Counter
 
@@ -325,26 +392,10 @@ def main() -> None:
     qb_rushing_profile_by_gsis_id = trailing_qb_rushing_profiles(pbp, WEEK)
     print(f"  {len(qb_rushing_profile_by_gsis_id)} player(s) with a trailing QB rushing profile")
 
-    print("Fetching real PFF receiving/scheme and defense/coverage_scheme facet grades...")
-    receiving_scheme_grades = fetch_matchup_grades("receiving/scheme", WEEK, SEASON)
-    coverage_scheme_grades = fetch_matchup_grades("defense/coverage_scheme", WEEK, SEASON)
-    coverage_tendency_by_team = team_coverage_tendency(coverage_scheme_grades)
-    print(
-        f"  receiving/scheme population={receiving_scheme_grades.population!r}, "
-        f"{len(receiving_scheme_grades.by_player_id)} player row(s)"
-    )
-    print(f"  {len(coverage_tendency_by_team)} team(s) with a coverage tendency rollup")
-
-    gsis_to_pff_id = build_gsis_to_pff_id_map(crosswalk)
-
-    # leverage_by_native_id was already built earlier (ADR-0025/0026), before lineup generation --
-    # ADR-0035/0037's dup-risk-aware selection needs it before `generate_dup_risk_aware_lineups`
-    # runs, not after, so that block was moved up rather than duplicated here.
-
-    opponent_of: dict[str, str] = {}
-    for g in dk_slate.games:
-        opponent_of[g.away_team] = g.home_team
-        opponent_of[g.home_team] = g.away_team
+    # receiving_scheme_grades/coverage_scheme_grades/coverage_tendency_by_team/gsis_to_pff_id/
+    # opponent_of were all already built earlier, before lineup generation -- MatchupContext (this
+    # section's own wiring) and ADR-0035/0037's dup-risk-aware selection both need them before
+    # generation runs, not after, so those blocks were moved up rather than duplicated here.
 
     print("Building real GameEnvironmentScores for this slate's teams...")
     game_environment_by_team: dict[str, GameEnvironmentScore] = {}
