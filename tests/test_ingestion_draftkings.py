@@ -9,6 +9,7 @@ from nfl_dfs.ingestion.draftkings import (
     SlateSelectionError,
     classic_draft_group_ids,
     fetch_classic_draft_group_id,
+    fetch_slate_by_draft_group_id,
     parse_draftables,
     select_classic_slate,
 )
@@ -289,3 +290,54 @@ def test_fetch_classic_draft_group_id_still_returns_an_int_for_backward_compatib
     dg = fetch_classic_draft_group_id(session=session)
     assert dg == 200001
     assert isinstance(dg, int)
+
+
+# --- fetch_slate_by_draft_group_id: the explicit-selection escape hatch (2026-09-19) ------------
+# Real motivating incident: DK served two overlapping, both-unlabeled, both day-coherent live
+# Classic slates at once (the real 13-game main slate, and a smaller "early games only" slate).
+# select_classic_slate correctly refused to guess -- these tests cover the explicit-id path a
+# caller uses instead of relying on ambiguity-prone auto-detection at all.
+
+
+def test_fetch_slate_by_draft_group_id_fetches_the_exact_requested_slate_bypassing_selection():
+    # Two live, ambiguous, both-plausible-main candidates -- select_classic_slate would refuse to
+    # pick between them, but fetch_slate_by_draft_group_id doesn't call select_classic_slate at
+    # all, so ambiguity between OTHER candidates never matters here.
+    contests_payload = {
+        "Contests": [
+            _contest(200001, "NFL $1M Play-Action [Top Prize $100K]"),
+            _contest(200003, "NFL $2M Sunday Ticket [Top Prize $200K]"),
+        ]
+    }
+    draftables_by_dg = {
+        200001: _main_slate_draftables(),
+        200003: _draftables_payload(
+            [_row(40, "Deebo Samuel", "ARI", "WR", 4001, "ARI @ SF", "2026-09-13T20:05:00.0000000Z")]
+        ),
+    }
+    session = _FakeSession(contests_payload, draftables_by_dg)
+
+    payload, slate = fetch_slate_by_draft_group_id(200001, session=session)
+    assert slate.draft_group_id == 200001
+    assert slate.player_count == len(_main_slate_draftables()["draftables"])
+    assert payload == _main_slate_draftables()
+    assert slate.teams == {"BUF", "MIA", "MIN", "GB", "LAC", "LV"}
+
+
+def test_fetch_slate_by_draft_group_id_resolves_the_real_label():
+    contests_payload = {"Contests": [_contest(153071, "NFL $30K Wildcat [$10K to 1st] (Primetime)")]}
+    draftables_by_dg = {153071: _primetime_draftables()}
+    session = _FakeSession(contests_payload, draftables_by_dg)
+
+    _, slate = fetch_slate_by_draft_group_id(153071, session=session)
+    assert slate.slate_label == "Primetime"
+
+
+def test_fetch_slate_by_draft_group_id_unknown_id_gets_an_empty_label_not_a_crash():
+    contests_payload = {"Contests": [_contest(200001, "NFL $1M Play-Action [Top Prize $100K]")]}
+    draftables_by_dg = {200001: _main_slate_draftables(), 999999: _draftables_payload([])}
+    session = _FakeSession(contests_payload, draftables_by_dg)
+
+    _, slate = fetch_slate_by_draft_group_id(999999, session=session)
+    assert slate.slate_label == ""
+    assert slate.player_count == 0

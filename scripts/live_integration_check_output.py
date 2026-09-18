@@ -44,7 +44,9 @@ from nfl_dfs.game_environment.score import (
 )
 from nfl_dfs.ingestion.draftkings import (
     DRAFTABLES_URL,
+    SlateSelectionError,
     fetch_classic_draft_group_id,
+    fetch_slate_by_draft_group_id,
     parse_draftables,
     select_classic_slate,
 )
@@ -74,7 +76,7 @@ WEEK = 1
 NEUTRAL_WEATHER = WeatherInput(is_indoor=False)
 
 
-def fetch_dk_raw_for_live_slate():
+def fetch_dk_raw_for_live_slate(*, draft_group_id: int | None = None):
     """Same idea as `live_integration_check_projection.fetch_dk_raw`, but resilient to the "main
     slate already locked" real-world case this round's ingestion fix documents (module docstring)
     -- falls back to the "Primetime" slate rather than letting `SlateSelectionError` end the whole
@@ -82,10 +84,37 @@ def fetch_dk_raw_for_live_slate():
     StackProfile-building step below can scope itself to *this slate's actual games* rather than
     any game anywhere that happens to share a team name -- see main()'s comment on why that
     distinction turned out to matter live.
+
+    Pass `draft_group_id` to target a specific, already-known slate directly (`ingestion.
+    draftkings.fetch_slate_by_draft_group_id`), bypassing auto-detection and the Primetime
+    fallback entirely -- the explicit-selection path a caller should use once DK ambiguity makes
+    auto-detection unreliable (see the real 2026-09-19 incident in that function's own docstring:
+    two overlapping live main-shaped slates at once, and the old blanket "any SlateSelectionError
+    -> try Primetime" fallback here silently built an entire dashboard run against a THIRD,
+    unrelated slate).
+
+    **`SlateSelectionError`'s "ambiguous" case is never silently papered over with Primetime**,
+    even without an explicit `draft_group_id` -- only the "no live candidate at all" case (the
+    scenario the Primetime fallback was actually built for) still falls back automatically. An
+    ambiguous result re-raises with the real candidate list (already in the original error) and an
+    explicit instruction to pass `draft_group_id=` instead of guessing.
     """
+    if draft_group_id is not None:
+        payload, slate = fetch_slate_by_draft_group_id(draft_group_id)
+        return payload, parse_draftables(payload), slate
+
     try:
         slate = select_classic_slate()
-    except Exception as exc:  # noqa: BLE001
+    except SlateSelectionError as exc:
+        if "ambiguous" in str(exc):
+            raise SlateSelectionError(
+                f"{exc}\n\nThis is the 'more than one plausible main slate' case, not the "
+                "'already locked' case the Primetime fallback exists for -- silently substituting "
+                "Primetime here would build an entire live run against the WRONG slate with no one "
+                "noticing (the real 2026-09-19 incident this check now prevents). Pass "
+                "draft_group_id= explicitly (using a real id from the candidate list above) "
+                "instead of relying on auto-detection."
+            ) from exc
         print(f"  Main slate not resolvable ({exc}); falling back to require_label='Primetime'.")
         slate = select_classic_slate(require_label="Primetime")
     payload = requests.get(DRAFTABLES_URL.format(draft_group_id=slate.draft_group_id), timeout=20.0).json()
