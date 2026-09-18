@@ -20,12 +20,18 @@ and its own text says plainly: "This directly closes `StackProfile`'s already-do
 - `pivot_to`: a mechanical, templated affirmative-thesis string naming the actual computed inputs
   -- see `build_pivot_to`.
 
-**`MatchupContext` favorability is still NOT implemented anywhere in this pipeline** (per the
-walking-skeleton sequencing this task is deliberately not getting ahead of). PRD Section 6 ranks
-primary/bring-back candidates by "target share and `MatchupContext` favorability" -- this round
-ranks by target share (`role_share_blended`) alone, which is a real, acknowledged partial
-implementation of that ranking criterion, not a silent drop of half the spec. See
-`select_stack_candidates`'s docstring for the explicit follow-up note.
+**`MatchupContext` favorability -- closed for the WR/pass-catcher ranking in the
+NflAgentConstructor Phase A round.** PRD Section 6 ranks primary/bring-back candidates by "target
+share and `MatchupContext` favorability, not raw season totals alone." `MatchupContext` now exists
+(`matchup/context.py`) and is wired into live projections (`projection/blend.py`'s
+`apply_matchup_context`); `select_stack_candidates` now combines `role_share_blended` with a
+candidate's own `combined_multiplier` when a `MatchupContext` read is supplied for them, degrading
+gracefully to target-share-only ranking when it isn't (see `_stack_ranking_score`). This closes the
+gap the module previously flagged as future work, for the WR side -- `select_rb_stack_candidate`
+picks from a single gate-identified plurality leader, not a ranked list, so there's no ranking to
+apply the same combination to; that RB's own `MatchupContext.run_game` row already scales their
+`blended_projection` directly (`projection/blend.py`), which is the analogous treatment for a
+single-candidate role.
 
 **Anchor-team choice, flagged for Architect confirmation, not decided unilaterally:** PRD Section 6
 describes `primary_stack_candidates`/`bring_back_candidates`/`pivot_to` as singular fields (matching
@@ -122,6 +128,7 @@ from nfl_dfs.ingestion.usage_share import (
     PlayerRoleShare,
     RoleShareResult,
 )
+from nfl_dfs.matchup.context import MatchupContextResult
 
 # --------------------------------------------------------------------------------------------
 # Spread-magnitude dampener (ADR-0004, tail extended by ADR-0010 -- see module docstring)
@@ -266,22 +273,58 @@ def game_stack_viability(
 MAX_PRIMARY_CANDIDATES = 2  # PRD Section 6: "QB + top 1-2 pass-catchers"
 
 
+def _stack_ranking_score(
+    candidate: PlayerRoleShare, matchup_context_by_player_id: dict[str, MatchupContextResult] | None
+) -> float:
+    """PRD Section 6's actual ranking criterion: `role_share_blended` scaled by the candidate's own
+    `MatchupContext.combined_multiplier` when a read exists for them, else `role_share_blended`
+    alone -- graceful degradation, matching this module's "never fabricate/never crash on a missing
+    read" discipline everywhere else (ADR-0017 exclusion policy, `select_rb_stack_candidate`'s
+    `None` handling, etc.).
+
+    `combined_multiplier` is capped tightly around 1.0 (`MULTIPLIER_CAP`/
+    `PASS_PROTECTION_COVERAGE_COMBINED_CAP` -- +/-15-20%, see `matchup/grading.py`), so this nudges
+    the ranking rather than overriding workload -- the same "matchup adjusts around the edges,
+    workload dominates" relationship `MatchupContext` already has with `blended_projection` itself
+    (`projection/blend.py`'s `apply_matchup_context`), kept consistent here rather than inventing a
+    different combination rule for candidate ranking than for the projection number it's ranking.
+
+    `matchup_context_by_player_id` is keyed by canonical player id -- for the RB/WR-role players
+    this module ranks, that's the same value as `PlayerRoleShare.player_id` in the common case
+    (ADR-0013: canonical_id prefers nflverse `gsis_id`, which is exactly what `player_id` already
+    is for these roles) -- no separate crosswalk hop needed, but the `.get()` below still degrades
+    gracefully for the cases where it isn't.
+    """
+    if matchup_context_by_player_id is None:
+        return candidate.role_share_blended
+    ctx = matchup_context_by_player_id.get(candidate.player_id)
+    if ctx is None:
+        return candidate.role_share_blended
+    return candidate.role_share_blended * ctx.combined_multiplier
+
+
 def select_stack_candidates(
-    wr_role_share: RoleShareResult, *, max_candidates: int = MAX_PRIMARY_CANDIDATES
+    wr_role_share: RoleShareResult,
+    *,
+    max_candidates: int = MAX_PRIMARY_CANDIDATES,
+    matchup_context_by_player_id: dict[str, MatchupContextResult] | None = None,
 ) -> list[PlayerRoleShare]:
     """Top `max_candidates` pass-catchers for a stack thesis, ranked by `RoleShare`
-    (`role_share_blended` -- PRD Section 6 / ADR-0019). Used for both `primary_stack_candidates`
-    (the anchor team's own roster) and `bring_back_candidates` (PRD Section 6: "selected the same
-    way from the opposing roster" -- i.e. this same function, called with the opposing team's own
-    `"WR"`-role `RoleShareResult`).
+    (`role_share_blended`) combined with `MatchupContext` favorability when available (PRD Section
+    6 / ADR-0019, closed this round -- see `_stack_ranking_score`). Used for both
+    `primary_stack_candidates` (the anchor team's own roster) and `bring_back_candidates` (PRD
+    Section 6: "selected the same way from the opposing roster" -- i.e. this same function, called
+    with the opposing team's own `"WR"`-role `RoleShareResult`).
 
-    **Partial ranking, flagged explicitly (PRD Section 6):** the spec ranks primary/bring-back
-    candidates "by target share and `MatchupContext` favorability, not raw season totals alone."
-    `MatchupContext` (PRD Section 6) has not been implemented anywhere in this pipeline yet, so
-    this function ranks by `role_share_blended` (target share) alone -- a real, acknowledged
-    partial implementation of the spec, not a silent drop of the `MatchupContext` half. Follow-up,
-    once `MatchupContext` exists: combine its per-receiver favorability multiplier with
-    `role_share_blended` here rather than ranking on either alone.
+    **Closes a gap this module's own docstring previously flagged as future work:** PRD Section 6
+    ranks primary/bring-back candidates "by target share and `MatchupContext` favorability, not raw
+    season totals alone." `MatchupContext` now exists and is wired into live projections
+    (`projection/blend.py`'s `apply_matchup_context`) -- `matchup_context_by_player_id`, when
+    supplied, re-ranks (not just re-orders a fixed prefix) `wr_role_share.candidates` by the
+    combined score, so a lower-target-share receiver with a real matchup edge can outrank a
+    higher-target-share one with a tough matchup. `matchup_context_by_player_id=None` (the default)
+    keeps the pre-existing target-share-only behavior for any caller that hasn't computed
+    `MatchupContext` yet -- this is additive, not a breaking change to existing callers.
 
     `wr_role_share.candidates` is already sorted descending by `role_share_blended` (see
     `usage_share.py`'s monotonicity note in its own module docstring) and deliberately contains
@@ -296,7 +339,12 @@ def select_stack_candidates(
             f"{wr_role_share.role!r} -- StackProfile's primary/bring-back candidates are "
             "pass-catchers only (PRD Section 6: 'QB + top 1-2 pass-catchers')."
         )
-    return wr_role_share.candidates[:max_candidates]
+    ranked = sorted(
+        wr_role_share.candidates,
+        key=lambda c: _stack_ranking_score(c, matchup_context_by_player_id),
+        reverse=True,
+    )
+    return ranked[:max_candidates]
 
 
 def select_rb_stack_candidate(rb_role_share: RoleShareResult) -> PlayerRoleShare | None:
@@ -346,6 +394,10 @@ def build_pivot_to(
     primary_candidates: list[PlayerRoleShare] | None,
     game_stack_score: float | None,
     home_rb_role_share: RoleShareResult | None,
+    *,
+    matchup_context_applied: bool = False,
+    primary_rb_candidate: PlayerRoleShare | None = None,
+    bring_back_rb_candidate: PlayerRoleShare | None = None,
 ) -> str | None:
     """The affirmative stack thesis (PRD Section 6: "the affirmative thesis for the stack, not
     just an absence of red flags ... mirrors the field added to the MLB `SlateStrategy` dataclass:
@@ -368,6 +420,18 @@ def build_pivot_to(
     Returns `None` when `ges_home` (the anchor team's `GameEnvironmentScore`) is unavailable
     (ADR-0017 exclusion policy) -- there is no basis for an affirmative thesis without a computable
     game environment for the anchor team.
+
+    `matchup_context_applied`: pass `True` when `primary_candidates` was ranked with a real
+    `MatchupContext` read (i.e. `build_stack_profile` was called with `matchup_context_by_player_id`
+    supplied) -- purely changes which trailing caveat sentence this function appends, so the text
+    never claims a ranking basis that wasn't actually used.
+
+    `primary_rb_candidate`/`bring_back_rb_candidate` (NflAgentConstructor plan, foundation signals):
+    when supplied, name the anchor/opposing team's dominant RB directly in the affirmative thesis --
+    "RBs should totally be available as part of a stack with a QB," not a bystander to the
+    pass-catching stack. Independent of the ADR-0020 uncontested-backfield clause above (which only
+    fires for the narrower `PRIOR_UNCONTESTED` case): a gate-cleared bell-cow/mid-tier back that
+    isn't specifically "uncontested" still gets named here.
     """
     if not ges_home.is_available:
         return None
@@ -405,11 +469,32 @@ def build_pivot_to(
             "bell-cow thesis in its own right, independent of the pass-catching stack."
         )
 
-    parts.append(
-        "MatchupContext favorability is not yet implemented anywhere in this pipeline (PRD "
-        "Section 6) -- the ranking above is by trailing target share (RoleShare) alone; revisit "
-        "once MatchupContext exists."
-    )
+    if primary_rb_candidate is not None:
+        parts.append(
+            f"{_candidate_display_name(primary_rb_candidate)} "
+            f"({primary_rb_candidate.role_tier.replace('_', '-') if primary_rb_candidate.role_tier else 'lead'} "
+            f"back, {primary_rb_candidate.role_share_blended:.0%} role share) is part of the "
+            f"{ges_home.team} stack thesis -- a real RB/QB or RB/DST pairing candidate, not just a "
+            "workload play sitting outside it (select_rb_stack_candidate)."
+        )
+    if bring_back_rb_candidate is not None:
+        parts.append(
+            f"{_candidate_display_name(bring_back_rb_candidate)} "
+            f"({bring_back_rb_candidate.role_tier.replace('_', '-') if bring_back_rb_candidate.role_tier else 'lead'} "
+            f"back, {bring_back_rb_candidate.role_share_blended:.0%} role share) is a live RB "
+            f"bring-back candidate for {away_team}, alongside the pass-catching bring-back above."
+        )
+
+    if matchup_context_applied:
+        parts.append(
+            "Candidate ranking above combines trailing target share (RoleShare) with each "
+            "receiver's own MatchupContext favorability (PRD Section 6), not target share alone."
+        )
+    else:
+        parts.append(
+            "MatchupContext favorability was not supplied for this ranking -- the candidates "
+            "above are ranked by trailing target share (RoleShare) alone."
+        )
     return " ".join(parts)
 
 
@@ -434,7 +519,8 @@ BringBackStatus = Literal[
 class StackProfile:
     """PRD Section 6's `StackProfile`, correlation-stage output (Section 5 step 6): the two
     viability numbers ADR-0004/ADR-0010 specify a formula for, plus (closed this round, ADR-0019)
-    the candidate-selection/thesis fields, with one still-open gap noted below (`MatchupContext`).
+    the candidate-selection/thesis fields, with the `MatchupContext`-favorability half of the WR
+    ranking criterion closed in the NflAgentConstructor Phase A round (see below).
 
     One `StackProfile` per game/matchup (a directional team-pair for a given season/week), not
     per team -- `single_team_viability_home`/`_away` cover both teams' own-team stack theses,
@@ -456,13 +542,14 @@ class StackProfile:
       `bring_back_candidates`, so `pivot_to` never affirmatively asserts a bring-back pairing that
       `bring_back_candidates`/`bring_back_status` report as unsupported.
 
-    **Remaining, explicitly-flagged gap:** PRD Section 6 ranks these candidates by "target share
-    and `MatchupContext` favorability." `MatchupContext` is not implemented anywhere in this
-    pipeline yet, so the ranking above is by target share (`role_share_blended`) alone -- a real
-    partial implementation of the spec, not a silent drop. `primary_stack_candidates`/
-    `bring_back_candidates` are `[]` (not `None`) when a team's `"WR"`-role `RoleShareResult` has
-    no trailing-volume candidates at all -- a genuine "no confident candidate this week" result,
-    never a fabricated name.
+    **`MatchupContext` favorability:** PRD Section 6 ranks these candidates by "target share and
+    `MatchupContext` favorability." `select_stack_candidates` now combines both when the caller
+    supplies `matchup_context_by_player_id` to `build_stack_profile` (`_stack_ranking_score`) --
+    degrading gracefully to target-share-only ranking for any candidate (or call) without a real
+    `MatchupContext` read, never fabricating one. `primary_stack_candidates`/`bring_back_candidates`
+    are `[]` (not `None`) when a team's `"WR"`-role `RoleShareResult` has no trailing-volume
+    candidates at all -- a genuine "no confident candidate this week" result, never a fabricated
+    name.
 
     **`bring_back_candidates` is `None` for one of TWO distinct reasons (ADR-0021), disambiguated
     by `bring_back_status` -- never inferred from `None` alone:**
@@ -538,6 +625,7 @@ def build_stack_profile(
     away_wr_role_share: RoleShareResult,
     home_rb_role_share: RoleShareResult | None = None,
     away_rb_role_share: RoleShareResult | None = None,
+    matchup_context_by_player_id: dict[str, MatchupContextResult] | None = None,
 ) -> StackProfile:
     """Assemble a full `StackProfile` from both teams' `GameEnvironmentScore`, the game's spread,
     and (new this round, ADR-0019) both teams' `"WR"`-role `RoleShareResult`s. `ges_home`/`ges_away`
@@ -571,6 +659,13 @@ def build_stack_profile(
     just without those specific fields/clause. `away_rb_role_share`, likewise optional, is the
     same lookup against `away_team`'s roster, gated the SAME ADR-0021 `game_stack_viability`
     floor as `bring_back_candidates` -- see `bring_back_rb_candidate`.
+
+    `matchup_context_by_player_id`, when supplied (NflAgentConstructor plan, foundation signals),
+    is passed straight through to `select_stack_candidates` for BOTH `primary_stack_candidates` and
+    `bring_back_candidates` -- see `_stack_ranking_score` for the combination formula and
+    `select_stack_candidates`'s docstring for why `select_rb_stack_candidate` doesn't take the same
+    parameter (a single gate-identified candidate, not a ranked list). Omitting it keeps the
+    pre-existing target-share-only ranking.
     """
     assert home_wr_role_share.team == ges_home.team and home_wr_role_share.role == ROLE_WR, (
         f"home_wr_role_share must be a {ROLE_WR!r}-role RoleShareResult for {ges_home.team!r} "
@@ -610,7 +705,11 @@ def build_stack_profile(
     # "no confident candidate" result), which is a meaningfully different case -- see
     # select_stack_candidates's docstring. primary_stack_candidates is NOT affected by ADR-0021's
     # bring-back viability gate below -- only bring_back_candidates is.
-    primary_candidates = select_stack_candidates(home_wr_role_share) if ges_home.is_available else None
+    primary_candidates = (
+        select_stack_candidates(home_wr_role_share, matchup_context_by_player_id=matchup_context_by_player_id)
+        if ges_home.is_available
+        else None
+    )
 
     # NflAgentConstructor plan, foundation signals: primary_rb_candidate is NOT gated on
     # ges_home.is_available -- it's a pure read of home_rb_role_share's own gate-cleared
@@ -633,7 +732,9 @@ def build_stack_profile(
         bring_back_rb_candidate: PlayerRoleShare | None = None
         bring_back_status: BringBackStatus = "environment_unavailable"
     elif gsv is not None and gsv >= BRING_BACK_VIABILITY_FLOOR:
-        bring_back_candidates = select_stack_candidates(away_wr_role_share)
+        bring_back_candidates = select_stack_candidates(
+            away_wr_role_share, matchup_context_by_player_id=matchup_context_by_player_id
+        )
         bring_back_rb_candidate = (
             select_rb_stack_candidate(away_rb_role_share) if away_rb_role_share is not None else None
         )
@@ -646,7 +747,16 @@ def build_stack_profile(
         bring_back_rb_candidate = None
         bring_back_status = "game_stack_not_viable"
 
-    pivot_to = build_pivot_to(ges_home, ges_away.team, primary_candidates, gsv, home_rb_role_share)
+    pivot_to = build_pivot_to(
+        ges_home,
+        ges_away.team,
+        primary_candidates,
+        gsv,
+        home_rb_role_share,
+        matchup_context_applied=matchup_context_by_player_id is not None,
+        primary_rb_candidate=primary_rb_candidate,
+        bring_back_rb_candidate=bring_back_rb_candidate,
+    )
 
     # NflAgentConstructor plan, foundation signals: pure function of the signed spread, so always
     # computed -- no GameEnvironmentScore/RoleShareResult dependency, unlike every candidate field
@@ -654,12 +764,20 @@ def build_stack_profile(
     game_script_lean_home = classify_game_script_lean(spread)
     game_script_lean_away = classify_game_script_lean(-spread)
 
-    notes.append(
-        f"primary_stack_candidates/bring_back_candidates ranked by RoleShare (role_share_blended) "
-        f"alone -- MatchupContext favorability (PRD Section 6's other ranking criterion) is not "
-        f"yet implemented anywhere in this pipeline. {ges_home.team} is this StackProfile's anchor "
-        f"team for these fields; {ges_away.team} supplies bring_back_candidates."
-    )
+    if matchup_context_by_player_id is not None:
+        notes.append(
+            "primary_stack_candidates/bring_back_candidates ranked by RoleShare (role_share_blended) "
+            f"combined with MatchupContext favorability (PRD Section 6). {ges_home.team} is this "
+            f"StackProfile's anchor team for these fields; {ges_away.team} supplies "
+            "bring_back_candidates."
+        )
+    else:
+        notes.append(
+            "primary_stack_candidates/bring_back_candidates ranked by RoleShare (role_share_blended) "
+            "alone -- no matchup_context_by_player_id was supplied to build_stack_profile this call. "
+            f"{ges_home.team} is this StackProfile's anchor team for these fields; {ges_away.team} "
+            "supplies bring_back_candidates."
+        )
     if ges_home.is_available and not primary_candidates:
         notes.append(
             f"{ges_home.team}: no WR-role trailing-volume candidates this week -- "

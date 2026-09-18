@@ -23,6 +23,7 @@ from nfl_dfs.ingestion.usage_share import (
     PlayerRoleShare,
     RoleShareResult,
 )
+from nfl_dfs.matchup.context import MatchupContextResult
 
 
 def _ges(team: str, composite: float | None, *, is_available: bool = True) -> GameEnvironmentScore:
@@ -68,6 +69,22 @@ def _player_role_share(
         role_share_blended=role_share_blended,
         role_tier=role_tier,
         prior_used=prior_used,
+    )
+
+
+def _matchup_context(player_id: str, combined_multiplier: float) -> MatchupContextResult:
+    """Minimal synthetic MatchupContextResult -- this module only ever reads combined_multiplier
+    (via player_id, as the dict key), but every field is filled so the dataclass is always valid."""
+    return MatchupContextResult(
+        canonical_player_id=player_id,
+        team="X",
+        opponent="Y",
+        position="WR",
+        combined_multiplier=combined_multiplier,
+        run_game=None,
+        pass_protection=None,
+        coverage=None,
+        coverage_confidence=None,
     )
 
 
@@ -533,6 +550,39 @@ def test_build_pivot_to_names_candidates_and_score() -> None:
     assert "BUF" in text
 
 
+def test_build_pivot_to_names_primary_rb_candidate() -> None:
+    # RBs should be named as part of the stack thesis directly, not just via the narrower
+    # uncontested-backfield clause -- the original complaint this round closes ("a bell-cow RB
+    # isn't credited as part of the stack").
+    ges_home = _ges("MIN", composite=80.0)
+    candidates = [_player_role_share("A", "Justin Jefferson", ROLE_WR, 0.28)]
+    rb = _player_role_share("B", "Aaron Jones", ROLE_RB, 0.55, role_tier="mid_tier")
+    text = build_pivot_to(ges_home, "CHI", candidates, 60.0, None, primary_rb_candidate=rb)
+    assert text is not None
+    assert "Aaron Jones" in text
+    assert "MIN stack thesis" in text
+    assert "55%" in text
+
+
+def test_build_pivot_to_names_bring_back_rb_candidate() -> None:
+    ges_home = _ges("MIN", composite=80.0)
+    candidates = [_player_role_share("A", "Justin Jefferson", ROLE_WR, 0.28)]
+    rb = _player_role_share("B", "D.J. Moore RB", ROLE_RB, 0.60, role_tier="bell_cow")
+    text = build_pivot_to(ges_home, "CHI", candidates, 60.0, None, bring_back_rb_candidate=rb)
+    assert text is not None
+    assert "bring-back candidate for CHI" in text
+    assert "60%" in text
+
+
+def test_build_pivot_to_omits_rb_clauses_when_no_candidate_supplied() -> None:
+    ges_home = _ges("KC", composite=80.0)
+    candidates = [_player_role_share("A", "Rashee Rice", ROLE_WR, 0.28)]
+    text = build_pivot_to(ges_home, "BUF", candidates, 60.0, None)
+    assert text is not None
+    assert "stack thesis" not in text
+    assert "bring-back candidate for" not in text
+
+
 # --------------------------------------------------------------------------------------------
 # select_rb_stack_candidate (NflAgentConstructor plan, foundation signals)
 # --------------------------------------------------------------------------------------------
@@ -708,3 +758,118 @@ def test_build_stack_profile_game_script_lean_always_computed_even_when_environm
 
     assert profile.game_script_lean_home is not None
     assert profile.game_script_lean_away is not None
+
+
+# --------------------------------------------------------------------------------------------
+# select_stack_candidates / build_stack_profile -- MatchupContext-combined ranking
+# (NflAgentConstructor plan: "RBs was an example -- we have to do that all over the field")
+# --------------------------------------------------------------------------------------------
+
+
+def test_stack_ranking_score_falls_back_to_role_share_when_no_matchup_context_dict() -> None:
+    candidates = select_stack_candidates(
+        _role_share_result(
+            "KC",
+            ROLE_WR,
+            [
+                _player_role_share("A", "Player A", ROLE_WR, 0.30),
+                _player_role_share("B", "Player B", ROLE_WR, 0.20),
+            ],
+        )
+    )
+    assert [c.player_id for c in candidates] == ["A", "B"]
+
+
+def test_select_stack_candidates_reranks_by_matchup_context_when_supplied() -> None:
+    # B has less raw target share than A, but a strong enough MatchupContext edge to outrank A --
+    # this is the actual, previously-flagged PRD Section 6 gap ("target share AND MatchupContext
+    # favorability, not raw season totals alone"), now closed.
+    wr = _role_share_result(
+        "KC",
+        ROLE_WR,
+        [
+            _player_role_share("A", "Player A", ROLE_WR, 0.30),
+            _player_role_share("B", "Player B", ROLE_WR, 0.28),
+            _player_role_share("C", "Player C", ROLE_WR, 0.10),
+        ],
+    )
+    matchup_context_by_player_id = {
+        "A": _matchup_context("A", 0.85),  # tough matchup, dampens A's effective score to 0.255
+        "B": _matchup_context("B", 1.15),  # favorable matchup, boosts B's effective score to 0.322
+        # C has no MatchupContext read at all -- falls back to role_share_blended (0.10) alone.
+    }
+    candidates = select_stack_candidates(wr, matchup_context_by_player_id=matchup_context_by_player_id)
+    assert [c.player_id for c in candidates] == ["B", "A"]
+
+
+def test_select_stack_candidates_missing_matchup_context_read_degrades_to_role_share() -> None:
+    wr = _role_share_result(
+        "KC",
+        ROLE_WR,
+        [
+            _player_role_share("A", "Player A", ROLE_WR, 0.30),
+            _player_role_share("B", "Player B", ROLE_WR, 0.20),
+        ],
+    )
+    # Neither candidate has a MatchupContext read in this dict -- ranking must be unchanged from
+    # the role-share-only case, not crash on a missing key.
+    candidates = select_stack_candidates(wr, matchup_context_by_player_id={})
+    assert [c.player_id for c in candidates] == ["A", "B"]
+
+
+def test_build_stack_profile_passes_matchup_context_through_to_both_sides() -> None:
+    ges_home = _ges("KC", composite=80.0)
+    ges_away = _ges("BUF", composite=60.0)
+    # Raw share order is B > A on both rosters -- the multiplier swing (1.15 vs 0.85) is enough to
+    # flip that ordering once MatchupContext is combined in, which is the actual point of this test.
+    home_wr = _role_share_result(
+        "KC",
+        ROLE_WR,
+        [
+            _player_role_share("KC-A", "Home Low Share High Matchup", ROLE_WR, 0.22),
+            _player_role_share("KC-B", "Home High Share Bad Matchup", ROLE_WR, 0.24),
+        ],
+    )
+    away_wr = _role_share_result(
+        "BUF",
+        ROLE_WR,
+        [
+            _player_role_share("BUF-A", "Away Low Share High Matchup", ROLE_WR, 0.20),
+            _player_role_share("BUF-B", "Away High Share Bad Matchup", ROLE_WR, 0.22),
+        ],
+    )
+    matchup_context_by_player_id = {
+        "KC-A": _matchup_context("KC-A", 1.15),
+        "KC-B": _matchup_context("KC-B", 0.85),
+        "BUF-A": _matchup_context("BUF-A", 1.15),
+        "BUF-B": _matchup_context("BUF-B", 0.85),
+    }
+
+    profile = build_stack_profile(
+        ges_home, ges_away, 2.0, home_wr, away_wr, matchup_context_by_player_id=matchup_context_by_player_id
+    )
+
+    assert [c.player_id for c in profile.primary_stack_candidates] == ["KC-A", "KC-B"]
+    assert [c.player_id for c in profile.bring_back_candidates] == ["BUF-A", "BUF-B"]
+    assert "MatchupContext favorability" in profile.pivot_to
+    assert any("combined with MatchupContext favorability" in note for note in profile.notes)
+
+
+def test_build_stack_profile_omits_matchup_context_by_default() -> None:
+    ges_home = _ges("KC", composite=80.0)
+    ges_away = _ges("BUF", composite=60.0)
+    home_wr = _role_share_result(
+        "KC",
+        ROLE_WR,
+        [
+            _player_role_share("KC-A", "Player A", ROLE_WR, 0.20),
+            _player_role_share("KC-B", "Player B", ROLE_WR, 0.30),
+        ],
+    )
+    away_wr = _role_share_result("BUF", ROLE_WR, [])
+    profile = build_stack_profile(ges_home, ges_away, 2.0, home_wr, away_wr)
+
+    # Unchanged, pre-existing behavior when matchup_context_by_player_id isn't supplied at all.
+    assert [c.player_id for c in profile.primary_stack_candidates] == ["KC-B", "KC-A"]
+    assert "MatchupContext favorability was not supplied" in profile.pivot_to
+    assert any("no matchup_context_by_player_id was supplied" in note for note in profile.notes)

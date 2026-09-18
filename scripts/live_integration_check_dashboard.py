@@ -275,9 +275,22 @@ def main() -> None:
         except (IndexError, KeyError):
             continue
         stack_profiles.append(
-            build_stack_profile(ges_home, ges_away, spread, home_wr, away_wr, home_rb, away_rb)
+            build_stack_profile(
+                ges_home,
+                ges_away,
+                spread,
+                home_wr,
+                away_wr,
+                home_rb,
+                away_rb,
+                matchup_context_by_player_id=matchup_context_by_canonical_id,
+            )
         )
     print(f"  {len(stack_profiles)} StackProfile(s) built.\n")
+    matchup_ranked_count = sum(
+        1 for p in stack_profiles if any("combined with MatchupContext" in note for note in p.notes)
+    )
+    print(f"  {matchup_ranked_count} StackProfile(s) with WR candidates ranked using real MatchupContext.\n")
     rb_candidate_count = sum(
         1 for p in stack_profiles if p.primary_rb_candidate is not None or p.bring_back_rb_candidate is not None
     )

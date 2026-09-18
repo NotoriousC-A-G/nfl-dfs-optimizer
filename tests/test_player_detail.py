@@ -8,7 +8,7 @@ from nfl_dfs.composition.player_detail import (
     build_player_detail_record,
     slate_window_label,
 )
-from nfl_dfs.correlation.stack_profile import StackProfile
+from nfl_dfs.correlation.stack_profile import StackProfile, classify_game_script_lean
 from nfl_dfs.ingestion.qb_rushing_profile import TrailingQbRushingProfile
 from nfl_dfs.ingestion.receiving_profile import TrailingReceivingProfile
 from nfl_dfs.game_environment.score import ComponentScore, GameEnvironmentScore
@@ -793,6 +793,8 @@ def _stack_profile(
     primary_stack_candidates: list[PlayerRoleShare] | None = None,
     bring_back_candidates: list[PlayerRoleShare] | None = None,
     bring_back_status: str = "populated",
+    primary_rb_candidate: PlayerRoleShare | None = None,
+    bring_back_rb_candidate: PlayerRoleShare | None = None,
 ) -> StackProfile:
     return StackProfile(
         season=SEASON,
@@ -807,6 +809,10 @@ def _stack_profile(
         primary_stack_candidates=primary_stack_candidates,
         bring_back_candidates=bring_back_candidates,
         pivot_to="GB implied 27.5, leads targets.",
+        primary_rb_candidate=primary_rb_candidate,
+        bring_back_rb_candidate=bring_back_rb_candidate,
+        game_script_lean_home=classify_game_script_lean(-3.5),
+        game_script_lean_away=classify_game_script_lean(3.5),
     )
 
 
@@ -849,6 +855,50 @@ def test_stack_context_none_with_reason_when_no_matching_profile():
     )
     assert record.stack_context is None
     assert "no StackProfile found" in record.stack_context_reason
+
+
+def test_stack_context_home_team_primary_rb_candidate():
+    identity = _identity("00-3", "Home RB1", "RB", "GB", gsis_id="gsis-home-rb1")
+    rb = _role_share("gsis-home-rb1", "Home RB1", ROLE_RB, "GB", blended=0.65, tier="bell_cow")
+    profile = _stack_profile("GB", "CHI", primary_rb_candidate=rb)
+    record = build_player_detail_record(
+        identity, SEASON, WEEK, team="GB", position="RB", opponent_team_this_week="CHI", stack_profiles=[profile]
+    )
+    assert record.stack_context is not None
+    assert record.stack_context.is_primary_rb_stack_candidate is True
+    assert record.stack_context.is_bring_back_rb_candidate is False
+    # Home player -> home team's own game_script_lean, not the away team's.
+    assert record.stack_context.game_script_lean is not None
+    assert record.stack_context.game_script_lean.stance == "favorite"  # spread=-3.5, home is favored
+
+
+def test_stack_context_away_team_bring_back_rb_candidate():
+    identity = _identity("00-4", "Away RB1", "RB", "CHI", gsis_id="gsis-away-rb1")
+    rb = _role_share("gsis-away-rb1", "Away RB1", ROLE_RB, "CHI", blended=0.62, tier="bell_cow")
+    profile = _stack_profile("GB", "CHI", bring_back_rb_candidate=rb)
+    record = build_player_detail_record(
+        identity, SEASON, WEEK, team="CHI", position="RB", opponent_team_this_week="GB", stack_profiles=[profile]
+    )
+    assert record.stack_context is not None
+    assert record.stack_context.is_bring_back_rb_candidate is True
+    assert record.stack_context.is_primary_rb_stack_candidate is False
+    assert record.stack_context.game_script_lean is not None
+    assert record.stack_context.game_script_lean.stance == "underdog"  # away side of a -3.5 home spread
+
+
+def test_stack_context_rb_candidate_does_not_leak_across_home_away_sides():
+    # A player on the AWAY team must never read True for is_primary_rb_stack_candidate even if
+    # they happen to share an id with the home side's primary_rb_candidate by construction error --
+    # this test locks in that the home/away split is enforced by is_home, not just presence.
+    identity = _identity("00-5", "Away WR", "WR", "CHI", gsis_id="gsis-away-wr")
+    home_rb = _role_share("gsis-home-rb1", "Home RB1", ROLE_RB, "GB", blended=0.65, tier="bell_cow")
+    profile = _stack_profile("GB", "CHI", primary_rb_candidate=home_rb)
+    record = build_player_detail_record(
+        identity, SEASON, WEEK, team="CHI", position="WR", opponent_team_this_week="GB", stack_profiles=[profile]
+    )
+    assert record.stack_context is not None
+    assert record.stack_context.is_primary_rb_stack_candidate is False
+    assert record.stack_context.is_bring_back_rb_candidate is False
 
 
 def test_injury_distinguishes_no_data_from_healthy_from_a_real_entry():
