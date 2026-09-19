@@ -245,11 +245,20 @@ def _solve_single_lineup(
     pool_by_id: dict[str, PlayerProjection],
     previous_core_stacks: list[frozenset[str]],
     game_environment_scores: dict[str, float] | None,
+    *,
+    objective_delta_by_id: dict[str, float] | None = None,
 ) -> Lineup | None:
     """One ILP solve: maximize total blended projection subject to PRD Section 3's roster/salary
     rules, Section 7's QB+pass-catcher stack rule, and a no-good cut per already-generated
     lineup's core stack. Returns `None` (never raises) when this specific solve is infeasible --
     `generate_lineups` decides what that means (first-solve infeasibility vs. cuts exhausted).
+
+    `objective_delta_by_id` (NflAgentConstructor Phase B) is an optional per-player adjustment
+    added to the objective only -- it never touches `blended_projection` itself or the returned
+    `Lineup.total_projected_points`/`total_salary` (still real, undistorted sums below), so it can
+    only influence WHICH lineup gets selected, never what gets reported as its real projected
+    points. A missing `canonical_id` in the dict contributes 0.0, same "no entry, no effect"
+    convention as `game_environment_scores.get(...)` above.
     """
     players = list(pool_by_id.values())
     ids = [p.canonical_id for p in players]
@@ -261,6 +270,8 @@ def _solve_single_lineup(
         term = p.blended_projection
         if game_environment_scores is not None:
             term += _GAME_ENVIRONMENT_NUDGE_WEIGHT * game_environment_scores.get(p.team, 0.0)
+        if objective_delta_by_id is not None:
+            term += objective_delta_by_id.get(p.canonical_id, 0.0)
         return term
 
     prob += pulp.lpSum(objective_term(p) * x[p.canonical_id] for p in players)
@@ -333,6 +344,8 @@ def generate_lineups(
     pool: list[PlayerProjection],
     n: int = 3,
     game_environment_scores: dict[str, float] | None = None,
+    *,
+    objective_delta_by_id: dict[str, float] | None = None,
 ) -> list[Lineup]:
     """Generate up to `n` distinct-core-stack lineups from a `build_projection_pool` output.
 
@@ -346,6 +359,10 @@ def generate_lineups(
     property of the whole run, not one lineup, so it's surfaced via a `RuntimeWarning` instead so
     a caller monitoring stderr/warnings can still notice without every normal 3-for-3 run growing
     a spurious return-shape branch.
+
+    `objective_delta_by_id` (NflAgentConstructor Phase B) -- see `_solve_single_lineup`'s
+    docstring. Defaults to `None`, so an omitted/`None` call is byte-identical to today's
+    behavior.
     """
     import warnings
 
@@ -355,7 +372,12 @@ def generate_lineups(
     previous_core_stacks: list[frozenset[str]] = []
 
     for i in range(n):
-        lineup = _solve_single_lineup(pool_by_id, previous_core_stacks, game_environment_scores)
+        lineup = _solve_single_lineup(
+            pool_by_id,
+            previous_core_stacks,
+            game_environment_scores,
+            objective_delta_by_id=objective_delta_by_id,
+        )
         if lineup is None:
             if i == 0:
                 raise LineupGenerationError(
@@ -453,6 +475,7 @@ def generate_dup_risk_aware_lineups(
     *,
     oversample_size: int = DEFAULT_OVERSAMPLE_SIZE,
     game_environment_scores: dict[str, float] | None = None,
+    objective_delta_by_id: dict[str, float] | None = None,
 ) -> list[Lineup]:
     """ADR-0035's fully-resolved design, built (ADR-0037) -- **post-hoc candidate selection over
     an oversampled pool, NOT a hard ownership cap and NOT a linear penalty in the ILP objective**
@@ -499,6 +522,15 @@ def generate_dup_risk_aware_lineups(
     projected-vs-actual ownership comparison -- this project has no period-correct historical
     vendor projections (ADR-0018/0025) to validate this specific proxy against real historical
     data the way the bucket thresholds themselves were validated.
+
+    `objective_delta_by_id` (NflAgentConstructor Phase B) -- see `_solve_single_lineup`'s
+    docstring. Applies to every oversampled candidate before selection, same as
+    `game_environment_scores`.
     """
-    candidates = generate_lineups(pool, n=oversample_size, game_environment_scores=game_environment_scores)
+    candidates = generate_lineups(
+        pool,
+        n=oversample_size,
+        game_environment_scores=game_environment_scores,
+        objective_delta_by_id=objective_delta_by_id,
+    )
     return _select_dup_risk_aware_lineups(candidates, projected_ownership_by_canonical_id, dup_risk_table)

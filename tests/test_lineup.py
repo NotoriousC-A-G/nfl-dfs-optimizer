@@ -410,3 +410,71 @@ def test_generate_dup_risk_aware_lineups_constants_match_the_adr_resolved_thresh
     assert LINEUP_2_MAX_BUCKET == 7
     assert LINEUP_2_FALLBACK_BUCKET == 8
     assert LINEUP_3_MAX_BUCKET == 2
+
+
+# --------------------------------------------------------------------------------------------
+# objective_delta_by_id (NflAgentConstructor Phase B1) -- an optional per-player objective
+# adjustment that must be inert by default and never leak into the real reported point totals.
+# --------------------------------------------------------------------------------------------
+
+
+def test_objective_delta_by_id_defaults_to_the_identical_lineup():
+    pool = _synthetic_pool()
+    plain = generate_lineups(pool, n=3)
+    with_none = generate_lineups(pool, n=3, objective_delta_by_id=None)
+    assert [lu.core_stack for lu in with_none] == [lu.core_stack for lu in plain]
+    assert [lu.total_projected_points for lu in with_none] == [
+        lu.total_projected_points for lu in plain
+    ]
+
+
+def test_objective_delta_by_id_can_change_which_lineup_is_selected():
+    pool = _synthetic_pool()
+    baseline = generate_lineups(pool, n=1)[0]
+    # A massive boost on a cheap player not in the baseline lineup should pull it into the
+    # winning roster -- proof the delta genuinely influences selection, not just bookkeeping.
+    boosted_id = next(
+        p.canonical_id for p in pool if p.canonical_id not in {bp.canonical_id for bp in baseline.players}
+    )
+    delta = {boosted_id: 1000.0}
+    boosted_lineup = generate_lineups(pool, n=1, objective_delta_by_id=delta)[0]
+    assert boosted_id in {p.canonical_id for p in boosted_lineup.players}
+
+
+def test_objective_delta_by_id_never_changes_the_reported_projected_points_or_salary():
+    # The delta must only steer which roster is chosen -- the returned lineup's own
+    # total_projected_points/total_salary must stay real, undistorted sums over blended_projection
+    # and salary, never inflated/deflated by the synthetic agent delta.
+    pool = _synthetic_pool()
+    boosted_id = pool[0].canonical_id
+    delta = {boosted_id: 1000.0}
+    lineup = generate_lineups(pool, n=1, objective_delta_by_id=delta)[0]
+    assert lineup.total_projected_points == sum(p.blended_projection for p in lineup.players)
+    assert lineup.total_salary == sum(p.salary for p in lineup.players)
+
+
+def test_objective_delta_by_id_missing_canonical_id_contributes_zero():
+    # A delta dict that only names players outside the pool must behave identically to None.
+    pool = _synthetic_pool()
+    plain = generate_lineups(pool, n=3)
+    irrelevant_delta = generate_lineups(pool, n=3, objective_delta_by_id={"not_in_pool": 50.0})
+    assert [lu.core_stack for lu in irrelevant_delta] == [lu.core_stack for lu in plain]
+
+
+def test_generate_dup_risk_aware_lineups_threads_objective_delta_by_id_through():
+    pool = _synthetic_pool()
+    table = DupRiskLookupTable(
+        seasons=(2023, 2024, 2025), n_rows=1000, bucket_upper_bounds=(),
+        bucket_dup_rate={0: 0.01}, bucket_mean_lineup_ct={0: 1.0},
+    )
+    ownership = {p.canonical_id: 10.0 for p in pool}
+    baseline = generate_dup_risk_aware_lineups(pool, ownership, table, oversample_size=3)
+    boosted_id = next(
+        p.canonical_id
+        for p in pool
+        if p.canonical_id not in {bp.canonical_id for bp in baseline[0].players}
+    )
+    boosted = generate_dup_risk_aware_lineups(
+        pool, ownership, table, oversample_size=3, objective_delta_by_id={boosted_id: 1000.0}
+    )
+    assert boosted_id in {p.canonical_id for p in boosted[0].players}
