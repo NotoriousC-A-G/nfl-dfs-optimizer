@@ -24,18 +24,26 @@ from nfl_dfs.analysis.circumstance.injury import (
     CircumstanceChange,
     detect_injury_circumstance_change,
 )
+from nfl_dfs.analysis.circumstance.matchup_extreme import (
+    EXTREME_MULTIPLIER_DISTANCE_FRACTION,
+    MatchupExtremeCircumstance,
+    detect_matchup_extreme_circumstance,
+)
 
 __all__ = [
     "DEFAULT_MAX_ARTICLE_CHARS",
     "DEFAULT_MAX_ARTICLES",
     "DEFAULT_MAX_TOKENS",
     "DEPARTED_SHARE_FLOOR",
+    "EXTREME_MULTIPLIER_DISTANCE_FRACTION",
     "CircumstanceAssessment",
     "CircumstanceChange",
     "CircumstanceSource",
+    "MatchupExtremeCircumstance",
     "MessagesResult",
     "build_anthropic_messages_client",
     "detect_injury_circumstance_change",
+    "detect_matchup_extreme_circumstance",
     "find_relevant_articles",
     "synthesize_circumstance",
 ]
