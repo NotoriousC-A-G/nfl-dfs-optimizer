@@ -1,3 +1,5 @@
+import dataclasses
+
 import pytest
 
 from nfl_dfs.analysis.injury_circumstance import (
@@ -133,6 +135,85 @@ def test_custom_departed_share_floor_is_honored() -> None:
 
 def test_default_departed_share_floor_constant() -> None:
     assert DEPARTED_SHARE_FLOOR == pytest.approx(0.20)
+
+
+# --------------------------------------------------------------------------------------------
+# detect_injury_circumstance_change -- position_by_player_id as a DEPARTED-only correctness gate
+# (confirmed live 2026-09-19: Carson Wentz, MIN's real backup QB, named as an "RB-role teammate";
+# reconsidered same day -- position data informs the model's own reasoning, it doesn't pre-filter
+# what the model gets to see. See detect_injury_circumstance_change's own docstring.)
+# --------------------------------------------------------------------------------------------
+
+
+def test_qb_never_becomes_the_detected_departure_when_position_data_supplied() -> None:
+    # A backup QB with real trailing "RB-role" volume who gets hurt should never itself become the
+    # detected departure -- there's no real RB circumstance here, just that QB's own scramble volume.
+    wentz = _player_role_share("wentz", "C.Wentz", 0.44, role_tier="committee")
+    jones = _player_role_share("jones", "A.Jones", 0.30, role_tier="mid_tier")
+    role_share = _role_share_result("MIN", [wentz, jones])
+    status_by_id = {"wentz": "OUT", "jones": None}
+    position_by_id = {"wentz": "QB", "jones": "RB"}
+
+    assert detect_injury_circumstance_change(role_share, status_by_id, position_by_player_id=position_by_id) is None
+
+
+def test_remaining_is_never_filtered_by_position_even_when_position_data_supplied() -> None:
+    # A QB anomaly among the REMAINING candidates is deliberately left in place -- see the module
+    # docstring for why this isn't silently pre-filtered the way the departed check is.
+    mason = _player_role_share("mason", "J.Mason", 0.50)
+    jones = _player_role_share("jones", "A.Jones", 0.49)
+    wentz = _player_role_share("wentz", "C.Wentz", 0.44, role_tier="committee")
+    role_share = _role_share_result("MIN", [mason, jones, wentz])
+    status_by_id = {"mason": "OUT", "jones": None, "wentz": None}
+    position_by_id = {"mason": "RB", "jones": "RB", "wentz": "QB"}
+
+    change = detect_injury_circumstance_change(role_share, status_by_id, position_by_player_id=position_by_id)
+
+    assert change is not None
+    assert change.remaining == [jones, wentz]
+
+
+def test_without_position_data_departure_detection_is_unaffected() -> None:
+    mason = _player_role_share("mason", "J.Mason", 0.50)
+    jones = _player_role_share("jones", "A.Jones", 0.49)
+    role_share = _role_share_result("MIN", [mason, jones])
+    status_by_id = {"mason": "OUT", "jones": None}
+
+    change = detect_injury_circumstance_change(role_share, status_by_id)
+
+    assert change is not None
+    assert change.departed is mason
+
+
+# --------------------------------------------------------------------------------------------
+# _candidate_line / synthesize_circumstance_pov -- position shown as context, not filtered
+# --------------------------------------------------------------------------------------------
+
+
+def test_synthesize_circumstance_pov_prompt_shows_position_and_anomaly_instruction() -> None:
+    client = _FakeMessagesClient("pov text")
+    change = _change()  # departed=J.Mason, remaining=[A.Jones]
+    change = dataclasses.replace(
+        change,
+        remaining=[*change.remaining, _player_role_share("wentz", "C.Wentz", 0.44, role_tier="committee")],
+    )
+    position_by_id = {"mason": "RB", "jones": "RB", "wentz": "QB"}
+
+    synthesize_circumstance_pov(change, [], client=client, position_by_player_id=position_by_id)
+
+    prompt = client.last_call["messages"][0]["content"]
+    assert "C.Wentz" in prompt  # the anomalous candidate IS shown to the model, not hidden
+    assert "position QB" in prompt
+    assert "position RB" in prompt
+    assert "showing up with real trailing volume in an RB-role list" in prompt
+
+
+def test_synthesize_circumstance_pov_prompt_omits_position_when_not_supplied() -> None:
+    client = _FakeMessagesClient("pov text")
+    synthesize_circumstance_pov(_change(), [], client=client)
+
+    candidate_lines = client.last_call["messages"][0]["content"].split("\n")
+    assert not any(", position " in line for line in candidate_lines)
 
 
 # --------------------------------------------------------------------------------------------
