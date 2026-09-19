@@ -1215,9 +1215,9 @@ def _render_player_expand_content(record: PlayerDetailRecord) -> str:
     blocks.append(_expand_block("Slate Window", _render_slate_window_cell(record)))
     blocks.append(_expand_block("Injury", _render_injury_cell(record)))
     if record.circumstance_assessment is not None:
-        # Only shown when a real circumstance was detected AND synthesized (analysis/
-        # injury_circumstance.py) -- unlike every block above, omitted entirely rather than
-        # rendered empty for the overwhelming majority of players with nothing to show here.
+        # Only shown when a real circumstance was detected AND synthesized (analysis/circumstance/,
+        # any detector kind) -- unlike every block above, omitted entirely rather than rendered
+        # empty for the overwhelming majority of players with nothing to show here.
         blocks.append(_expand_block("Circumstance", _render_circumstance_cell(record)))
     return '<div class="expand-grid">' + "".join(blocks) + "</div>"
 

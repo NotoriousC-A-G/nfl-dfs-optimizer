@@ -739,13 +739,14 @@ def test_no_rb_badges_when_neither_rb_candidate_field_set() -> None:
 def test_circumstance_expand_block_renders_when_assessment_present() -> None:
     import dataclasses
 
-    from nfl_dfs.analysis.injury_circumstance import CircumstanceAssessment
+    from nfl_dfs.analysis.circumstance import CircumstanceAssessment
 
     weekly_output, _ = _weekly_output_with_three_lineups()
     rb = _fully_populated_player_detail("rb_star", "Bell Cow", "AAA")
     rb = dataclasses.replace(
         rb,
         circumstance_assessment=CircumstanceAssessment(
+            kind="injury",
             pov="Expect an expanded workhorse role this week.",
             model="claude-sonnet-5",
             generated_at="2026-09-19T12:00:00+00:00",

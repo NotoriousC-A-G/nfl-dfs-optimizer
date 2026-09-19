@@ -296,12 +296,12 @@ def main() -> None:
     )
     print(f"  {rb_candidate_count} StackProfile(s) with a real RB stack/bring-back candidate.\n")
 
-    print("=== Detecting real injury-driven circumstance changes (analysis/injury_circumstance.py) ===")
-    from nfl_dfs.analysis.injury_circumstance import (
+    print("=== Detecting real injury-driven circumstance changes (analysis/circumstance/) ===")
+    from nfl_dfs.analysis.circumstance import (
         build_anthropic_messages_client,
         detect_injury_circumstance_change,
         find_relevant_articles,
-        synthesize_circumstance_pov,
+        synthesize_circumstance,
     )
     from nfl_dfs.storage.footballguys_article_store import read_all_articles
 
@@ -336,20 +336,20 @@ def main() -> None:
                 relevant_articles = find_relevant_articles(change.team, archived_articles)
                 remaining_names = ", ".join(r.player_name or r.player_id for r in change.remaining)
                 try:
-                    assessment = synthesize_circumstance_pov(
-                        change, relevant_articles, client=anthropic_client, position_by_player_id=position_by_gsis_id
-                    )
+                    assessment = synthesize_circumstance(change, relevant_articles, client=anthropic_client)
                 except Exception as exc:  # noqa: BLE001 -- one bad synthesis call must not kill the run
                     print(
                         f"  {change.team} {change.role}: synthesis FAILED for {remaining_names} -- {exc}"
                     )
                     continue
-                for remaining in change.remaining:
-                    circumstance_assessments_by_gsis_id[remaining.player_id] = assessment
+                for subject_id in change.circumstance_subjects():
+                    circumstance_assessments_by_gsis_id[subject_id] = assessment
                 print(
                     f"  {change.team} {change.role}: {change.departed.player_name or change.departed.player_id} "
                     f"{change.departed_status} -> synthesized POV for {remaining_names} "
-                    f"({len(relevant_articles)} article(s) used)"
+                    f"({len(relevant_articles)} article(s) used, "
+                    f"{assessment.input_tokens}in/{assessment.output_tokens}out/"
+                    f"{assessment.thinking_tokens}think tokens)"
                 )
         else:
             print("  ANTHROPIC_API_KEY not configured -- circumstance(s) detected but not synthesized:")
