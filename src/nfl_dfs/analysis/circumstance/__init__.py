@@ -19,6 +19,7 @@ from nfl_dfs.analysis.circumstance.engine import (
     find_relevant_articles,
     synthesize_circumstance,
 )
+from nfl_dfs.analysis.circumstance.depth_chart import DepthChartDivergence, detect_depth_chart_divergence
 from nfl_dfs.analysis.circumstance.injury import (
     DEPARTED_SHARE_FLOOR,
     CircumstanceChange,
@@ -39,9 +40,11 @@ __all__ = [
     "CircumstanceAssessment",
     "CircumstanceChange",
     "CircumstanceSource",
+    "DepthChartDivergence",
     "MatchupExtremeCircumstance",
     "MessagesResult",
     "build_anthropic_messages_client",
+    "detect_depth_chart_divergence",
     "detect_injury_circumstance_change",
     "detect_matchup_extreme_circumstance",
     "find_relevant_articles",
