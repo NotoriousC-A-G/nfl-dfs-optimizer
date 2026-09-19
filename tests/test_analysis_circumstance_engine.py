@@ -240,3 +240,81 @@ def test_synthesize_circumstance_raises_on_whitespace_only_response() -> None:
     client = _FakeMessagesClient("   \n  ")
     with pytest.raises(RuntimeError, match="empty response"):
         synthesize_circumstance(_FakeSource(), [], client=client)
+
+
+# --------------------------------------------------------------------------------------------
+# synthesize_circumstance -- cache integration (2026-09-19, the real token-burn fix: repeated
+# live-script runs within the same week were resynthesizing every identical circumstance)
+# --------------------------------------------------------------------------------------------
+
+
+class _FakeCache:
+    """In-memory CircumstanceCache -- no filesystem needed to test the engine's own cache logic
+    (the real filesystem implementation is tested separately, storage/circumstance_cache_store.py)."""
+
+    def __init__(self) -> None:
+        self._store: dict[str, "CircumstanceAssessment"] = {}
+        self.has_calls = 0
+        self.read_calls = 0
+        self.write_calls = 0
+
+    def _key(self, source) -> str:
+        return f"{source.circumstance_kind()}:{source.circumstance_team()}:{source.circumstance_facts()}"
+
+    def has(self, source) -> bool:
+        self.has_calls += 1
+        return self._key(source) in self._store
+
+    def read(self, source):
+        self.read_calls += 1
+        return self._store[self._key(source)]
+
+    def write(self, source, assessment) -> None:
+        self.write_calls += 1
+        self._store[self._key(source)] = assessment
+
+
+def test_synthesize_circumstance_cache_miss_calls_client_and_writes_through() -> None:
+    cache = _FakeCache()
+    client = _FakeMessagesClient("Real synthesized text.")
+
+    assessment = synthesize_circumstance(_FakeSource(), [], client=client, cache=cache)
+
+    assert client.last_call is not None  # a real call WAS made
+    assert assessment.pov == "Real synthesized text."
+    assert cache.write_calls == 1
+
+
+def test_synthesize_circumstance_cache_hit_never_calls_client() -> None:
+    cache = _FakeCache()
+    client = _FakeMessagesClient("Real synthesized text.")
+    source = _FakeSource()
+
+    first = synthesize_circumstance(source, [], client=client, cache=cache)
+    client.last_call = None  # reset -- confirm the SECOND call makes no new real call at all
+    second = synthesize_circumstance(source, [], client=client, cache=cache)
+
+    assert client.last_call is None  # no real API call happened on the cache hit
+    assert second == first
+    assert cache.write_calls == 1  # only the first (real) call ever wrote
+
+
+def test_synthesize_circumstance_force_refresh_bypasses_cache_read_but_still_writes() -> None:
+    cache = _FakeCache()
+    client = _FakeMessagesClient("Fresh text.")
+    source = _FakeSource()
+    stale = synthesize_circumstance(source, [], client=_FakeMessagesClient("Old text."), cache=None)
+    cache.write(source, stale)  # seed a stale cache entry directly, one write
+
+    assessment = synthesize_circumstance(source, [], client=client, cache=cache, force_refresh=True)
+
+    assert client.last_call is not None  # force_refresh made a real call despite a cache entry existing
+    assert assessment.pov == "Fresh text."
+    assert cache.write_calls == 2  # the seed write, then the force-refreshed result overwrites it
+    assert cache.read(source).pov == "Fresh text."  # the stale entry was genuinely replaced
+
+
+def test_synthesize_circumstance_without_cache_always_calls_client() -> None:
+    client = _FakeMessagesClient("pov text")
+    synthesize_circumstance(_FakeSource(), [], client=client)  # cache=None, the default
+    assert client.last_call is not None

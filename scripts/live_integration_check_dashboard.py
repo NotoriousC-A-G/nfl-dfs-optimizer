@@ -297,13 +297,22 @@ def main() -> None:
     print(f"  {rb_candidate_count} StackProfile(s) with a real RB stack/bring-back candidate.\n")
 
     print("=== Detecting real injury-driven circumstance changes (analysis/circumstance/) ===")
+    import os
+
     from nfl_dfs.analysis.circumstance import (
         build_anthropic_messages_client,
         detect_injury_circumstance_change,
         find_relevant_articles,
         synthesize_circumstance,
     )
+    from nfl_dfs.storage.circumstance_cache_store import FilesystemCircumstanceCache
     from nfl_dfs.storage.footballguys_article_store import read_all_articles
+
+    # FORCE_CIRCUMSTANCE_REFRESH=1 bypasses the cache READ for this run (still writes the fresh
+    # result) -- for when a caller knows new evidence landed that the cache key deliberately
+    # doesn't track (circumstance_cache_store.py's own disclosed non-invalidation).
+    force_circumstance_refresh = os.environ.get("FORCE_CIRCUMSTANCE_REFRESH") == "1"
+    circumstance_cache = FilesystemCircumstanceCache()
 
     dk_status_by_canonical_id = {p.canonical_id: p.dk_injury_status for p in pool}
     # usage_share.py's RB/WR role computation is plurality-of-volume, not position-filtered (that
@@ -332,11 +341,27 @@ def main() -> None:
             anthropic_client = build_anthropic_messages_client(config.anthropic_api_key)
             archived_articles = read_all_articles()
             print(f"  {len(archived_articles)} archived Footballguys article(s) available as evidence.")
+            cache_hits = 0
+            real_calls = 0
+            total_input_tokens = 0
+            total_output_tokens = 0
+            total_thinking_tokens = 0
             for change in circumstance_changes:
                 relevant_articles = find_relevant_articles(change.team, archived_articles)
                 remaining_names = ", ".join(r.player_name or r.player_id for r in change.remaining)
+                # Checked BEFORE the call so the run's own summary can report real cache hits vs
+                # real new API calls -- synthesize_circumstance's return value alone can't tell the
+                # two apart (a cache-served assessment carries its ORIGINAL real token counts, not
+                # zeros -- see CircumstanceAssessment's own docstring for why).
+                was_cached = not force_circumstance_refresh and circumstance_cache.has(change)
                 try:
-                    assessment = synthesize_circumstance(change, relevant_articles, client=anthropic_client)
+                    assessment = synthesize_circumstance(
+                        change,
+                        relevant_articles,
+                        client=anthropic_client,
+                        cache=circumstance_cache,
+                        force_refresh=force_circumstance_refresh,
+                    )
                 except Exception as exc:  # noqa: BLE001 -- one bad synthesis call must not kill the run
                     print(
                         f"  {change.team} {change.role}: synthesis FAILED for {remaining_names} -- {exc}"
@@ -344,13 +369,29 @@ def main() -> None:
                     continue
                 for subject_id in change.circumstance_subjects():
                     circumstance_assessments_by_gsis_id[subject_id] = assessment
-                print(
-                    f"  {change.team} {change.role}: {change.departed.player_name or change.departed.player_id} "
-                    f"{change.departed_status} -> synthesized POV for {remaining_names} "
-                    f"({len(relevant_articles)} article(s) used, "
-                    f"{assessment.input_tokens}in/{assessment.output_tokens}out/"
-                    f"{assessment.thinking_tokens}think tokens)"
-                )
+                if was_cached:
+                    cache_hits += 1
+                    print(
+                        f"  {change.team} {change.role}: {change.departed.player_name or change.departed.player_id} "
+                        f"{change.departed_status} -> cached POV reused for {remaining_names} (no new API call)"
+                    )
+                else:
+                    real_calls += 1
+                    total_input_tokens += assessment.input_tokens
+                    total_output_tokens += assessment.output_tokens
+                    total_thinking_tokens += assessment.thinking_tokens
+                    print(
+                        f"  {change.team} {change.role}: {change.departed.player_name or change.departed.player_id} "
+                        f"{change.departed_status} -> synthesized POV for {remaining_names} "
+                        f"({len(relevant_articles)} article(s) used, "
+                        f"{assessment.input_tokens}in/{assessment.output_tokens}out/"
+                        f"{assessment.thinking_tokens}think tokens)"
+                    )
+            print(
+                f"  {real_calls} real API call(s), {cache_hits} cache hit(s) -- "
+                f"{total_input_tokens} input / {total_output_tokens} output / {total_thinking_tokens} thinking "
+                f"tokens spent this run ({total_input_tokens + total_output_tokens} total)."
+            )
         else:
             print("  ANTHROPIC_API_KEY not configured -- circumstance(s) detected but not synthesized:")
             for change in circumstance_changes:
