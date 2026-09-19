@@ -229,20 +229,16 @@ def main() -> None:
     projected_ownership_by_canonical_id = build_projected_ownership_by_canonical_id(identities, leverage_by_native_id)
     print(f"  {len(projected_ownership_by_canonical_id)} identit(y/ies) with a live projected-ownership read")
 
-    print("=== Solving for up to 3 dup-risk-aware lineups (ADR-0035/0037) ===")
-    try:
-        if dup_risk_table is not None:
-            lineups = generate_dup_risk_aware_lineups(pool, projected_ownership_by_canonical_id, dup_risk_table)
-        else:
-            # No real dup-risk table this pull -- fall back to plain best-3-by-projection rather
-            # than blocking the whole dashboard build on a table that couldn't be built.
-            from nfl_dfs.optimizer.lineup import generate_lineups
-
-            lineups = generate_lineups(pool, n=3)
-    except LineupGenerationError as exc:
-        print(f"LineupGenerationError: {exc}")
-        return
-    print(f"Generated {len(lineups)} lineup(s). Core stack teams: {[lu.core_stack_team for lu in lineups]}\n")
+    # ------------------------------------------------------------------------------------------
+    # NflAgentConstructor Phase B2: StackProfiles, real circumstance detection, and the pbp fetch
+    # + Component A ceiling signals are all built here -- BEFORE lineup generation, not after --
+    # so a future agent-preference objective delta (Phase B3+) can read real stack/circumstance/
+    # ceiling signals at generation time instead of only after lineups already exist. Pure
+    # reordering: every block below is unchanged from its prior position further down this
+    # function, just moved up. `role_share_results`/`pbp`/`snap_shares_by_player`/
+    # `red_zone_trailing`/`ceiling_signals_by_gsis_id` are computed once here and reused, not
+    # duplicated, by the (still-in-place) Player Detail section later in this function.
+    # ------------------------------------------------------------------------------------------
 
     print("=== Building real StackProfiles (for rationale text) ===")
     with warnings.catch_warnings(record=True):
@@ -251,7 +247,7 @@ def main() -> None:
         implied_df = fetch_dk_implied_totals(SEASON)
     implied_total_z_by_team = dict(zip(implied_df["team"], implied_df["implied_total_z"], strict=False))
 
-    slate_games = {(g.away_team, g.home_team) for g in dk_slate.games}
+    slate_games_pairs = {(g.away_team, g.home_team) for g in dk_slate.games}
     spreads = _fetch_real_spreads()
 
     role_share_results = fetch_role_shares(SEASON, WEEK)
@@ -261,7 +257,7 @@ def main() -> None:
 
     stack_profiles = []
     for (away, home), spread in spreads.items():
-        if (away, home) not in slate_games:
+        if (away, home) not in slate_games_pairs:
             continue
         home_wr = role_share_by_key.get((home, ROLE_WR))
         away_wr = role_share_by_key.get((away, ROLE_WR))
@@ -461,6 +457,46 @@ def main() -> None:
                 )
     print()
 
+    print("Fetching real RoleShare/snap-share/red-zone trailing data...")
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        snap_shares = fetch_snap_shares(SEASON, WEEK)
+    for w in caught:
+        print(f"  WARNING (snap shares): {w.message}")
+    snap_shares_by_player = {s.player_id: s for s in snap_shares}
+    print(f"  {len(role_share_results)} RoleShareResult(s), {len(snap_shares)} PlayerSnapShare(s)")
+
+    import nfl_data_py as nfl
+
+    with warnings.catch_warnings(record=True):
+        warnings.simplefilter("always")
+        pbp = nfl.import_pbp_data([SEASON], include_participation=False)
+    red_zone_trailing = aggregate_player_trailing_red_zone(pbp, WEEK)
+    print(f"  {len(red_zone_trailing)} trailing red-zone player-role row(s)")
+
+    print("Building real Component A ceiling signals (ADR-0028)...")
+    ceiling_signals_by_gsis_id = {}
+    for role in (ROLE_RB, ROLE_WR):
+        for signal in role_share_ceiling_signals(pbp, WEEK, role):
+            ceiling_signals_by_gsis_id[signal.player_id] = signal
+    n_with_real_z = sum(1 for s in ceiling_signals_by_gsis_id.values() if s.shrunk_z_score is not None)
+    print(f"  {len(ceiling_signals_by_gsis_id)} player(s) with a Component A signal, {n_with_real_z} with a real (gated-in) shrunk_z_score\n")
+
+    print("=== Solving for up to 3 dup-risk-aware lineups (ADR-0035/0037) ===")
+    try:
+        if dup_risk_table is not None:
+            lineups = generate_dup_risk_aware_lineups(pool, projected_ownership_by_canonical_id, dup_risk_table)
+        else:
+            # No real dup-risk table this pull -- fall back to plain best-3-by-projection rather
+            # than blocking the whole dashboard build on a table that couldn't be built.
+            from nfl_dfs.optimizer.lineup import generate_lineups
+
+            lineups = generate_lineups(pool, n=3)
+    except LineupGenerationError as exc:
+        print(f"LineupGenerationError: {exc}")
+        return
+    print(f"Generated {len(lineups)} lineup(s). Core stack teams: {[lu.core_stack_team for lu in lineups]}\n")
+
     weekly = build_weekly_output(lineups, identities, stack_profiles)
 
     # ------------------------------------------------------------------------------------------
@@ -529,31 +565,6 @@ def main() -> None:
     # ------------------------------------------------------------------------------------------
     print("=== Building real PlayerDetailRecords for the full slate pool ===")
 
-    print("Fetching real RoleShare/snap-share/red-zone trailing data...")
-    with warnings.catch_warnings(record=True) as caught:
-        warnings.simplefilter("always")
-        snap_shares = fetch_snap_shares(SEASON, WEEK)
-    for w in caught:
-        print(f"  WARNING (snap shares): {w.message}")
-    snap_shares_by_player = {s.player_id: s for s in snap_shares}
-    print(f"  {len(role_share_results)} RoleShareResult(s), {len(snap_shares)} PlayerSnapShare(s)")
-
-    import nfl_data_py as nfl
-
-    with warnings.catch_warnings(record=True):
-        warnings.simplefilter("always")
-        pbp = nfl.import_pbp_data([SEASON], include_participation=False)
-    red_zone_trailing = aggregate_player_trailing_red_zone(pbp, WEEK)
-    print(f"  {len(red_zone_trailing)} trailing red-zone player-role row(s)")
-
-    print("Building real Component A ceiling signals (ADR-0028)...")
-    ceiling_signals_by_gsis_id = {}
-    for role in (ROLE_RB, ROLE_WR):
-        for signal in role_share_ceiling_signals(pbp, WEEK, role):
-            ceiling_signals_by_gsis_id[signal.player_id] = signal
-    n_with_real_z = sum(1 for s in ceiling_signals_by_gsis_id.values() if s.shrunk_z_score is not None)
-    print(f"  {len(ceiling_signals_by_gsis_id)} player(s) with a Component A signal, {n_with_real_z} with a real (gated-in) shrunk_z_score")
-
     print("Building real WR red-zone role-security signals (ADR-0036)...")
     red_zone_signals_by_gsis_id = {s.player_id: s for s in red_zone_ceiling_signals(pbp, WEEK, ROLE_WR)}
     n_with_real_discount = sum(
@@ -578,9 +589,12 @@ def main() -> None:
     print(f"  {len(qb_rushing_profile_by_gsis_id)} player(s) with a trailing QB rushing profile")
 
     # receiving_scheme_grades/coverage_scheme_grades/coverage_tendency_by_team/gsis_to_pff_id/
-    # opponent_of were all already built earlier, before lineup generation -- MatchupContext (this
-    # section's own wiring) and ADR-0035/0037's dup-risk-aware selection both need them before
-    # generation runs, not after, so those blocks were moved up rather than duplicated here.
+    # opponent_of, and (NflAgentConstructor Phase B2) role_share_results/role_share_by_key,
+    # stack_profiles, circumstance_assessments_by_gsis_id, pbp, snap_shares_by_player,
+    # red_zone_trailing, and ceiling_signals_by_gsis_id were all already built earlier, before
+    # lineup generation -- MatchupContext, ADR-0035/0037's dup-risk-aware selection, and a future
+    # agent-preference objective delta all need them before generation runs, not after, so those
+    # blocks were moved up rather than duplicated here.
 
     print("Building real GameEnvironmentScores for this slate's teams...")
     game_environment_by_team: dict[str, GameEnvironmentScore] = {}
