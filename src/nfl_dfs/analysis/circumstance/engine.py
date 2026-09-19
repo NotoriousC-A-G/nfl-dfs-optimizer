@@ -98,9 +98,12 @@ class CircumstanceAssessment:
     evidence_article_titles: list[str]  # titles of the real archived articles actually supplied as
     # grounding context -- [] when none were found, in which case the prompt explicitly told the
     # model no article coverage existed and the resulting pov should read accordingly
-    # Real token usage from the API response -- default 0 for an assessment served from a cache
-    # read rather than a live call (storage/circumstance_cache_store.py), so a real call is never
-    # silently conflated with a free one.
+    # Real token usage from the ORIGINAL API response that produced this pov -- preserved as-is
+    # when this assessment is later served from a cache read (storage/circumstance_cache_store.py),
+    # so the real historical cost of generating this text stays visible even on a free re-read. A
+    # caller tracking "how many tokens did THIS run actually spend" must check cache hit/miss
+    # itself (e.g. via CircumstanceCache.has() before calling synthesize_circumstance), not infer it
+    # from these fields. Default 0 only for a caller that never made a real call at all.
     input_tokens: int = 0
     output_tokens: int = 0
     thinking_tokens: int = 0
@@ -162,6 +165,18 @@ class _MessagesClient(Protocol):
     def messages_create(self, *, model: str, max_tokens: int, messages: list[dict]) -> MessagesResult: ...
 
 
+class CircumstanceCache(Protocol):
+    """Structural interface for a real-vs-cached read/write of a `CircumstanceAssessment`, keyed on
+    a `CircumstanceSource`'s own facts (`storage/circumstance_cache_store.py`'s real filesystem
+    implementation). Named here, not in the storage module, so `engine.py` stays independent of any
+    concrete storage backend -- same posture as `_MessagesClient`. `synthesize_circumstance` never
+    calls the real API for a circumstance whose facts haven't changed since the last real call."""
+
+    def has(self, source: CircumstanceSource) -> bool: ...
+    def read(self, source: CircumstanceSource) -> CircumstanceAssessment: ...
+    def write(self, source: CircumstanceSource, assessment: CircumstanceAssessment) -> None: ...
+
+
 def _build_prompt(source: CircumstanceSource, articles: list[ArchivedArticle], *, max_article_chars: int) -> str:
     team = source.circumstance_team()
     if articles:
@@ -211,6 +226,8 @@ def synthesize_circumstance(
     model: str = "claude-sonnet-5",
     max_article_chars: int = DEFAULT_MAX_ARTICLE_CHARS,
     max_tokens: int = DEFAULT_MAX_TOKENS,
+    cache: CircumstanceCache | None = None,
+    force_refresh: bool = False,
 ) -> CircumstanceAssessment:
     """Calls `client.messages_create(...)` with a prompt grounded exclusively in `source` (a
     detector's own real detection result) and `articles` (real archived Footballguys coverage, from
@@ -221,7 +238,21 @@ def synthesize_circumstance(
 
     `max_tokens` defaults to `DEFAULT_MAX_TOKENS` (4000) -- see the module-level constant's own
     comment for why a smaller budget silently produces an empty response on this prompt shape.
+
+    `cache`, when supplied (`storage/circumstance_cache_store.py`'s real filesystem implementation,
+    or a fake in tests), avoids a real API call entirely when a cached assessment already exists for
+    this EXACT `source.circumstance_facts()` -- content-addressed, so a genuine fact change (a
+    status flip, a multiplier shift) naturally produces a cache miss with no TTL/expiry logic. This
+    is the fix for the real, confirmed-live cost problem of every dashboard re-run resynthesizing
+    every identical circumstance from scratch (2026-09-19: ~8 re-runs in one day, ~35-63k tokens
+    each, all producing the exact same output). `force_refresh=True` skips the cache READ (always
+    makes a real call) but still WRITES the fresh result, for a caller that explicitly wants an
+    up-to-date read regardless of what's cached (e.g. new article evidence became available, which
+    the cache key deliberately does NOT track -- see `circumstance_cache_store.py`'s own docstring).
     """
+    if cache is not None and not force_refresh and cache.has(source):
+        return cache.read(source)
+
     prompt = _build_prompt(source, articles, max_article_chars=max_article_chars)
     result = client.messages_create(model=model, max_tokens=max_tokens, messages=[{"role": "user", "content": prompt}])
     if not result.text.strip():
@@ -235,7 +266,7 @@ def synthesize_circumstance(
             "whole max_tokens budget was consumed by extended thinking before any visible text was "
             "written. Try a larger max_tokens."
         )
-    return CircumstanceAssessment(
+    assessment = CircumstanceAssessment(
         kind=source.circumstance_kind(),
         pov=result.text,
         model=model,
@@ -245,6 +276,9 @@ def synthesize_circumstance(
         output_tokens=result.output_tokens,
         thinking_tokens=result.thinking_tokens,
     )
+    if cache is not None:
+        cache.write(source, assessment)
+    return assessment
 
 
 def build_anthropic_messages_client(api_key: str):  # pragma: no cover -- thin real-SDK wrapper
