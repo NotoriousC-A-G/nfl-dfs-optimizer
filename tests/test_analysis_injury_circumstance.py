@@ -205,7 +205,20 @@ def test_synthesize_circumstance_pov_prompt_shows_position_and_anomaly_instructi
     assert "C.Wentz" in prompt  # the anomalous candidate IS shown to the model, not hidden
     assert "position QB" in prompt
     assert "position RB" in prompt
-    assert "showing up with real trailing volume in an RB-role list" in prompt
+    assert "showing up in an RB-role list" in prompt
+    assert "do not guess at a specific play-by-play mechanism" in prompt
+    # Raw trailing share + sample size + shrinkage weight are shown alongside the blended number --
+    # confirmed live 2026-09-19: without these, the model invented an unverifiable "kneel-downs"
+    # explanation for a small-sample QB's inflated blended share instead of reasoning from real data.
+    assert "raw trailing:" in prompt
+    # Position mismatch must NOT be handled as a blanket "QB means discount" rule either (Chris,
+    # 2026-09-19: "Wentz isn't going to take on a significant percentage... that's not just because
+    # of his position but because of how he plays. The answer could be different for another QB
+    # [Jackson, Willis]") -- the model is pointed at its own knowledge of the specific named player.
+    assert "do NOT apply a blanket" in prompt
+    assert "Lamar Jackson" in prompt
+    assert "real playing style" in prompt
+    assert "shrinkage weight" in prompt
 
 
 def test_synthesize_circumstance_pov_prompt_omits_position_when_not_supplied() -> None:
@@ -316,6 +329,18 @@ def test_synthesize_circumstance_pov_prompt_discloses_when_no_articles_found() -
     assert "do not imply you read any coverage" in prompt
 
 
+def test_synthesize_circumstance_pov_prompt_requires_reliability_judgment_before_writing() -> None:
+    # The whole point of an LLM step over a template: it must judge whether the real inputs given
+    # actually support a meaningful conclusion, not just narrate whatever numbers it's handed.
+    client = _FakeMessagesClient("pov text")
+    synthesize_circumstance_pov(_change(), [], client=client)
+
+    prompt = client.last_call["messages"][0]["content"]
+    assert "judge how reliable each input actually is" in prompt
+    assert "whole point" in prompt and "just printing the numbers" in prompt
+    assert 'a calibrated "there isn' in prompt  # explicitly permits/prefers a low-confidence answer
+
+
 def test_synthesize_circumstance_pov_prompt_includes_article_text_when_found() -> None:
     client = _FakeMessagesClient("pov text")
     articles = [_article("a1", "Vikings backfield notes", "Real excerpt body text about the backfield.")]
@@ -332,3 +357,34 @@ def test_synthesize_circumstance_pov_custom_model_is_passed_through() -> None:
 
     assert client.last_call["model"] == "claude-opus-5"
     assert assessment.model == "claude-opus-5"
+
+
+def test_synthesize_circumstance_pov_default_max_tokens_is_passed_through() -> None:
+    from nfl_dfs.analysis.injury_circumstance import DEFAULT_MAX_TOKENS
+
+    client = _FakeMessagesClient("pov text")
+    synthesize_circumstance_pov(_change(), [], client=client)
+
+    assert client.last_call["max_tokens"] == DEFAULT_MAX_TOKENS
+
+
+def test_synthesize_circumstance_pov_custom_max_tokens_is_passed_through() -> None:
+    client = _FakeMessagesClient("pov text")
+    synthesize_circumstance_pov(_change(), [], client=client, max_tokens=1234)
+
+    assert client.last_call["max_tokens"] == 1234
+
+
+def test_synthesize_circumstance_pov_raises_loudly_on_empty_response() -> None:
+    # Confirmed live 2026-09-19: an under-budgeted max_tokens gets entirely consumed by extended
+    # thinking, returning an empty string with no error -- this must never ship silently as a blank
+    # CircumstanceAssessment (an empty box in the dashboard with no indication anything went wrong).
+    client = _FakeMessagesClient("")
+    with pytest.raises(RuntimeError, match="empty response"):
+        synthesize_circumstance_pov(_change(), [], client=client)
+
+
+def test_synthesize_circumstance_pov_raises_on_whitespace_only_response() -> None:
+    client = _FakeMessagesClient("   \n  ")
+    with pytest.raises(RuntimeError, match="empty response"):
+        synthesize_circumstance_pov(_change(), [], client=client)
