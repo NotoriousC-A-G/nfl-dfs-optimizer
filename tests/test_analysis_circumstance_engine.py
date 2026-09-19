@@ -1,3 +1,5 @@
+from datetime import date
+
 import pytest
 
 from nfl_dfs.analysis.circumstance.engine import (
@@ -68,11 +70,13 @@ def test_find_relevant_articles_empty_when_no_match() -> None:
 
 # --------------------------------------------------------------------------------------------
 # find_relevant_articles -- real, hard week-exclusion (confirmed live 2026-09-19: without this, a
-# thin-current-coverage team's results backfilled with real Week 1 "Cracking DraftKings"/"Cracking
-# FanDuel" pricing pieces -- genuinely stale, week-specific DFS analysis with no signal
-# distinguishing it from real current coverage. Chris: "we need to be week aware... pulling
-# sentiment from stale analysis would be a killer.")
+# thin-current-coverage team's results backfilled with real Week 1 "Cracking DraftKings" pricing
+# pieces -- genuinely stale, week-specific DFS analysis with no signal distinguishing it from real
+# current coverage. Chris: "we need to be week aware... pulling sentiment from stale analysis would
+# be a killer.")
 # --------------------------------------------------------------------------------------------
+
+_AS_OF = date(2026, 9, 19)
 
 
 def test_wrong_week_article_excluded_via_clean_week_tag() -> None:
@@ -80,7 +84,7 @@ def test_wrong_week_article_excluded_via_clean_week_tag() -> None:
     week1 = _article("a1", "Cracking DraftKings Week 1", "Vikings pricing notes.", tags=["week 1"])
     week2 = _article("a2", "Cracking DraftKings Week 2", "Vikings pricing notes.", tags=["week 2"])
 
-    matches = find_relevant_articles("MIN", [week1, week2], season=2026, week=2)
+    matches = find_relevant_articles("MIN", [week1, week2], week=2, as_of=_AS_OF)
 
     assert week2 in matches
     assert week1 not in matches
@@ -88,25 +92,83 @@ def test_wrong_week_article_excluded_via_clean_week_tag() -> None:
 
 def test_wrong_week_article_excluded_via_title_mention_when_no_clean_tag() -> None:
     week1 = _article("a1", "NFL Week 1 Injury Report", "Vikings injury notes.", tags=["Injuries", "news"])
-    matches = find_relevant_articles("MIN", [week1], season=2026, week=2)
+    matches = find_relevant_articles("MIN", [week1], week=2, as_of=_AS_OF)
     assert matches == []
 
 
-def test_evergreen_article_with_no_determinable_week_is_kept() -> None:
+def test_evergreen_article_with_no_determinable_week_is_kept_when_recent() -> None:
     evergreen = _article("a1", "24 Receivers Who Changed My Mind", "Vikings receiver notes.", tags=["strategy"])
-    matches = find_relevant_articles("MIN", [evergreen], season=2026, week=2)
+    matches = find_relevant_articles("MIN", [evergreen], week=2, as_of=_AS_OF)
     assert evergreen in matches
 
 
-def test_same_week_number_prior_season_is_excluded_by_year() -> None:
-    # A real "week 2" tag from a PRIOR season must not pass just because the week number matches.
+def test_same_week_number_prior_season_is_excluded_by_recency_window() -> None:
+    # A real "week 2" tag from a PRIOR season must not pass just because the week number matches --
+    # published_date puts it far outside the recency window relative to as_of.
     stale_season = _article("a1", "Week 2 Old Notes", "Vikings notes.", published_date="2024-09-15", tags=["week 2"])
     current_season = _article("a2", "Week 2 New Notes", "Vikings notes.", published_date="2026-09-18", tags=["week 2"])
 
-    matches = find_relevant_articles("MIN", [stale_season, current_season], season=2026, week=2)
+    matches = find_relevant_articles("MIN", [stale_season, current_season], week=2, as_of=_AS_OF)
 
     assert current_season in matches
     assert stale_season not in matches
+
+
+def test_evergreen_but_stale_article_excluded_by_recency_window_even_without_a_week_tag() -> None:
+    # Real gap confirmed live 2026-09-19 (Chris: "all these articles list the date that it was
+    # published"): 62 real archived articles are genuinely evergreen-STYLE pieces from a stale
+    # prior year with no week tag/title mention at all -- these must not slip through just because
+    # _article_week can't determine a week number for them.
+    stale_evergreen = _article(
+        "a1", "Derrick Henry: Are We Sure He's Still a Workhorse?", "Vikings notes.", published_date="2024-07-18"
+    )
+    matches = find_relevant_articles("MIN", [stale_evergreen], week=2, as_of=_AS_OF)
+    assert matches == []
+
+
+def test_prior_season_playoffs_excluded_despite_same_calendar_year() -> None:
+    # Real gap confirmed live 2026-09-19: 105 real January-2026 articles ("Cracking DraftKings Wild
+    # Card Weekend") are dated "2026" despite being from the PRIOR season's playoffs, not the
+    # current regular season -- a plain calendar-year check would wrongly keep these. The day-based
+    # recency window has no such calendar-year seam.
+    playoffs = _article(
+        "a1", "Cracking DraftKings Wild Card Weekend", "Vikings notes.", published_date="2026-01-09", tags=["week 2"]
+    )
+    matches = find_relevant_articles("MIN", [playoffs], week=2, as_of=_AS_OF)
+    assert matches == []
+
+
+def test_custom_recency_window_is_honored() -> None:
+    borderline = _article("a1", "Vikings notes from a while back", "Vikings notes.", published_date="2026-08-15")
+    assert find_relevant_articles("MIN", [borderline], week=2, as_of=_AS_OF) == []  # ~35 days > default 21
+    matches = find_relevant_articles("MIN", [borderline], week=2, as_of=_AS_OF, recency_window_days=60)
+    assert borderline in matches
+
+
+# --------------------------------------------------------------------------------------------
+# find_relevant_articles -- always excludes FanDuel-platform-specific content (Chris: "be careful
+# about mixing in fanduel content... different scoring. I primarily play on DraftKings")
+# --------------------------------------------------------------------------------------------
+
+
+def test_fanduel_titled_article_is_excluded() -> None:
+    fanduel = _article("a1", "Cracking FanDuel Week 2", "Vikings pricing notes.", tags=["week 2"])
+    assert find_relevant_articles("MIN", [fanduel]) == []
+
+
+def test_draftkings_titled_article_is_kept() -> None:
+    dk = _article("a1", "Cracking DraftKings Week 2", "Vikings pricing notes.", tags=["week 2"])
+    assert dk in find_relevant_articles("MIN", [dk])
+
+
+def test_fanduel_tag_alone_does_not_exclude_a_real_dk_article() -> None:
+    # Real case confirmed live: "DraftKings Thursday Showdown" is genuinely DK-specific content but
+    # is ALSO tagged "FanDuel" as a broad cross-platform DFS tag -- tag-based exclusion would
+    # wrongly drop it. Only the TITLE is checked.
+    dk_but_fanduel_tagged = _article(
+        "a1", "DraftKings Thursday Showdown: Week 2", "Vikings notes.", tags=["week 2", "DraftKings", "FanDuel"]
+    )
+    assert dk_but_fanduel_tagged in find_relevant_articles("MIN", [dk_but_fanduel_tagged])
 
 
 def test_week_filtering_is_opt_in_omitting_week_keeps_pre_existing_behavior() -> None:

@@ -32,7 +32,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from typing import Protocol
 
 from nfl_dfs.ingestion.odds_api import TEAM_NAME_TO_ABBR
@@ -53,6 +53,18 @@ DEFAULT_MAX_ARTICLE_CHARS = 2000
 # whole budget, stop_reason="max_tokens") rather than an error -- confirmed live 2026-09-19 at
 # max_tokens=400. 4000 completes cleanly for every real circumstance tested this session.
 DEFAULT_MAX_TOKENS = 4000
+
+# Real judgment call, flagged as a draft starting value per this project's ADR-0019/ADR-0020
+# convention (not backtested): how many days back an article can be published and still count as
+# "recent enough" to ground a real current-week circumstance, when it has no determinable week
+# (`_article_week`) of its own to check directly. ~3 weeks is generous enough to catch a real
+# current-week piece published slightly early, tight enough to exclude prior-season/offseason
+# content. Confirmed live 2026-09-19 this genuinely matters: a plain calendar-YEAR check (the
+# module's first version of this fix) let 105 real January-2026 articles through -- e.g. "Cracking
+# DraftKings Wild Card Weekend" -- because they're dated "2026" despite being from the PRIOR NFL
+# season's playoffs, not the current 2026 regular season. A day-based window relative to a real
+# reference date doesn't have that calendar-year seam.
+DEFAULT_RECENCY_WINDOW_DAYS = 21
 
 
 _WEEK_TAG_RE = re.compile(r"(?i)^week\s*(\d+)$")
@@ -77,32 +89,62 @@ def _article_week(article: ArchivedArticle) -> int | None:
     return None
 
 
+_FANDUEL_TITLE_RE = re.compile(r"(?i)\bfanduel\b")
+_DRAFTKINGS_TITLE_RE = re.compile(r"(?i)\bdraftkings\b")
+
+
+def _is_fanduel_specific(article: ArchivedArticle) -> bool:
+    """True when this article's own TITLE identifies it as FanDuel-platform-specific content (real
+    "Cracking FanDuel"/"FanDuel GPP Guide"/"FanDuel Top 10" style pieces -- different salary cap,
+    different scoring/bonus rules than DraftKings). Confirmed live 2026-09-19: title is a clean,
+    reliable signal for this -- zero real archived articles have both "FanDuel" and "DraftKings" in
+    the title. TAGS are deliberately NOT used for this check: many genuinely DK-specific pieces
+    ("DraftKings Thursday Showdown", "Vegas Value Chart") are ALSO tagged "FanDuel" as a broad
+    cross-platform DFS tag, so a tag-based check would wrongly drop real DK-relevant content. This
+    project is DraftKings-only by design (Chris: "I primarily play on DraftKings"), so this is an
+    unconditional exclusion in `find_relevant_articles`, not an opt-in.
+    """
+    return bool(_FANDUEL_TITLE_RE.search(article.title)) and not _DRAFTKINGS_TITLE_RE.search(article.title)
+
+
 def find_relevant_articles(
     team: str,
     articles: list[ArchivedArticle],
     *,
     max_results: int = DEFAULT_MAX_ARTICLES,
-    season: int | None = None,
     week: int | None = None,
+    as_of: date | None = None,
+    recency_window_days: int = DEFAULT_RECENCY_WINDOW_DAYS,
 ) -> list[ArchivedArticle]:
     """Every archived Footballguys article (`storage/footballguys_article_store.py`) whose title or
     body mentions `team` by its full name or nickname (e.g. "Minnesota Vikings" or "Vikings" for
     "MIN") -- a real, blunt substring match, not semantic search; reuses `odds_api.py`'s
     `TEAM_NAME_TO_ABBR` (ADR-0011 "reuse before inventing") rather than a new team-name table.
 
-    **`season`/`week`, when supplied, are a real hard exclusion, not a ranking nudge** (confirmed
-    live 2026-09-19: without this, a thin-current-coverage team's top-5 backfilled with real Week 1
-    "Cracking DraftKings"/"Cracking FanDuel" pricing pieces -- genuinely stale, week-specific DFS
-    analysis handed to the synthesis step with no signal distinguishing it from real current
-    coverage. Chris: "we need to be week aware... pulling sentiment from stale analysis would be a
-    killer."). Any article whose real week (`_article_week`) is DETERMINABLE and does NOT match
-    `(season, week)` is dropped entirely before ranking -- never merely deprioritized, since a
-    lower-ranked-but-still-included stale article is exactly the failure mode this closes. An
-    article with no determinable week (evergreen content) is kept -- it isn't wrong for this week,
-    just not week-anchored, a real and different case from a wrong-week article.
+    **Always excludes FanDuel-platform-specific content** -- see `_is_fanduel_specific`. This
+    project is DraftKings-only; FanDuel's salary/scoring rules differ enough that a FanDuel-specific
+    value/pricing take isn't reliable evidence for a DK decision.
 
-    Returns the most recent `max_results` matches (after the above exclusion), most-recent-first (by
-    `published_date`). Team-generic (not tied to any one detector type) -- shared by every
+    **`week`, when supplied, is a real hard exclusion, not a ranking nudge** (confirmed live
+    2026-09-19: without this, a thin-current-coverage team's top-5 backfilled with real Week 1
+    "Cracking DraftKings" pricing pieces -- genuinely stale, week-specific DFS analysis handed to
+    the synthesis step with no signal distinguishing it from real current coverage. Chris: "we need
+    to be week aware... pulling sentiment from stale analysis would be a killer."):
+
+    - An article whose real week (`_article_week` -- the clean `"week N"` tag, or a "week N" title
+      mention) is determinable and does NOT equal `week` is dropped.
+    - **Every** article -- including one with NO determinable week -- must also be published within
+      `recency_window_days` of `as_of` (real calendar days, default `DEFAULT_RECENCY_WINDOW_DAYS`
+      -- confirmed live 2026-09-19 this matters on its own, Chris: "all these articles list the date
+      that it was published": a plain calendar-YEAR check let 105 real January-2026 "Wild Card
+      Weekend"/"Divisional Round" articles through, since they're dated "2026" despite being from
+      the PRIOR season's playoffs, not the current regular season -- a day-based window relative to
+      a real reference date has no such calendar-year seam). `as_of` defaults to the real current
+      UTC date; pass an explicit value for a reproducible/testable reference point. An article with
+      no `published_date` at all is kept (never fabricate a "too old" exclusion from missing data).
+
+    Returns the most recent `max_results` matches (after the above exclusions), most-recent-first
+    (by `published_date`). Team-generic (not tied to any one detector type) -- shared by every
     circumstance kind.
 
     Returns `[]` (never fabricates a match) when `team` isn't a recognized abbreviation or no
@@ -116,25 +158,29 @@ def find_relevant_articles(
     matches = [
         a
         for a in articles
-        if full_name in a.title or nickname in a.title or full_name in a.text or nickname in a.text
+        if (full_name in a.title or nickname in a.title or full_name in a.text or nickname in a.text)
+        and not _is_fanduel_specific(a)
     ]
     if week is not None:
-        matches = [a for a in matches if _matches_target_week(a, season, week)]
+        reference = as_of if as_of is not None else datetime.now(timezone.utc).date()
+        matches = [a for a in matches if _matches_target_week(a, week, as_of=reference, window_days=recency_window_days)]
     matches.sort(key=lambda a: a.published_date or "", reverse=True)
     return matches[:max_results]
 
 
-def _matches_target_week(article: ArchivedArticle, season: int | None, week: int) -> bool:
+def _matches_target_week(article: ArchivedArticle, week: int, *, as_of: date, window_days: int) -> bool:
+    if article.published_date:
+        try:
+            published = date.fromisoformat(article.published_date)
+        except ValueError:
+            published = None
+        if published is not None and (as_of - published).days > window_days:
+            return False
+
     article_week = _article_week(article)
     if article_week is None:
-        return True  # evergreen/undetermined -- not excluded, but not confidently "current" either
-    if article_week != week:
-        return False
-    # A "week N" tag/title match alone doesn't rule out a PRIOR season's week N (e.g. a real
-    # 2024 "week 2" article) -- published_date's own year is the real signal for that.
-    if season is not None and article.published_date and not article.published_date.startswith(str(season)):
-        return False
-    return True
+        return True  # recent enough (or undated), but no determinable week -- kept as evergreen
+    return article_week == week
 
 
 @dataclass(frozen=True)
