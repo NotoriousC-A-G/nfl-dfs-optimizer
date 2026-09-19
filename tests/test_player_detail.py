@@ -901,6 +901,58 @@ def test_stack_context_rb_candidate_does_not_leak_across_home_away_sides():
     assert record.stack_context.is_bring_back_rb_candidate is False
 
 
+def test_circumstance_assessment_present_when_supplied_for_this_player():
+    from nfl_dfs.analysis.injury_circumstance import CircumstanceAssessment
+
+    identity = _identity("00-6", "Aaron Jones", "RB", "MIN", gsis_id="gsis-jones")
+    assessment = CircumstanceAssessment(
+        pov="Jones should see an expanded role.",
+        model="claude-sonnet-5",
+        generated_at="2026-09-19T12:00:00+00:00",
+        evidence_article_titles=["Vikings backfield notes"],
+    )
+    record = build_player_detail_record(
+        identity,
+        SEASON,
+        WEEK,
+        team="MIN",
+        position="RB",
+        opponent_team_this_week="CHI",
+        circumstance_assessments_by_gsis_id={"gsis-jones": assessment},
+    )
+    assert record.circumstance_assessment is assessment
+    assert record.circumstance_assessment_reason is None
+
+
+def test_circumstance_assessment_none_with_reason_when_not_supplied():
+    identity = _identity("00-7", "Some Player", "RB", "MIN", gsis_id="gsis-other")
+    record = build_player_detail_record(
+        identity, SEASON, WEEK, team="MIN", position="RB", opponent_team_this_week="CHI"
+    )
+    assert record.circumstance_assessment is None
+    assert "no injury-driven circumstance change" in record.circumstance_assessment_reason
+
+
+def test_circumstance_assessment_none_when_dict_supplied_but_this_player_not_a_key():
+    from nfl_dfs.analysis.injury_circumstance import CircumstanceAssessment
+
+    identity = _identity("00-8", "Some Other Player", "RB", "MIN", gsis_id="gsis-not-affected")
+    assessment = CircumstanceAssessment(
+        pov="pov text", model="claude-sonnet-5", generated_at="2026-09-19T12:00:00+00:00", evidence_article_titles=[]
+    )
+    record = build_player_detail_record(
+        identity,
+        SEASON,
+        WEEK,
+        team="MIN",
+        position="RB",
+        opponent_team_this_week="CHI",
+        circumstance_assessments_by_gsis_id={"gsis-jones": assessment},
+    )
+    assert record.circumstance_assessment is None
+    assert record.circumstance_assessment_reason is not None
+
+
 def test_injury_distinguishes_no_data_from_healthy_from_a_real_entry():
     identity = _identity("00-1", "Some WR", "WR", "GB", gsis_id="00-1")
 

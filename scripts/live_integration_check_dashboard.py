@@ -296,6 +296,51 @@ def main() -> None:
     )
     print(f"  {rb_candidate_count} StackProfile(s) with a real RB stack/bring-back candidate.\n")
 
+    print("=== Detecting real injury-driven circumstance changes (analysis/injury_circumstance.py) ===")
+    from nfl_dfs.analysis.injury_circumstance import (
+        build_anthropic_messages_client,
+        detect_injury_circumstance_change,
+        find_relevant_articles,
+        synthesize_circumstance_pov,
+    )
+    from nfl_dfs.storage.footballguys_article_store import read_all_articles
+
+    dk_status_by_canonical_id = {p.canonical_id: p.dk_injury_status for p in pool}
+    circumstance_changes = [
+        change
+        for role_share in role_share_results
+        if (change := detect_injury_circumstance_change(role_share, dk_status_by_canonical_id)) is not None
+    ]
+    print(f"  {len(circumstance_changes)} real circumstance(s) detected.")
+
+    circumstance_assessments_by_gsis_id = {}
+    if circumstance_changes:
+        if config.anthropic_api_key:
+            anthropic_client = build_anthropic_messages_client(config.anthropic_api_key)
+            archived_articles = read_all_articles()
+            print(f"  {len(archived_articles)} archived Footballguys article(s) available as evidence.")
+            for change in circumstance_changes:
+                relevant_articles = find_relevant_articles(change.team, archived_articles)
+                assessment = synthesize_circumstance_pov(change, relevant_articles, client=anthropic_client)
+                for remaining in change.remaining:
+                    circumstance_assessments_by_gsis_id[remaining.player_id] = assessment
+                remaining_names = ", ".join(r.player_name or r.player_id for r in change.remaining)
+                print(
+                    f"  {change.team} {change.role}: {change.departed.player_name or change.departed.player_id} "
+                    f"{change.departed_status} -> synthesized POV for {remaining_names} "
+                    f"({len(relevant_articles)} article(s) used)"
+                )
+        else:
+            print("  ANTHROPIC_API_KEY not configured -- circumstance(s) detected but not synthesized:")
+            for change in circumstance_changes:
+                remaining_names = ", ".join(r.player_name or r.player_id for r in change.remaining)
+                print(
+                    f"    {change.team} {change.role}: "
+                    f"{change.departed.player_name or change.departed.player_id} {change.departed_status}, "
+                    f"remaining: {remaining_names}"
+                )
+    print()
+
     weekly = build_weekly_output(lineups, identities, stack_profiles)
 
     # ------------------------------------------------------------------------------------------
@@ -455,6 +500,7 @@ def main() -> None:
             carry_share_by_week_by_gsis_id=carry_share_by_week_by_gsis_id,
             target_share_by_week_by_gsis_id=target_share_by_week_by_gsis_id,
             qb_rushing_profile_by_gsis_id=qb_rushing_profile_by_gsis_id,
+            circumstance_assessments_by_gsis_id=circumstance_assessments_by_gsis_id,
         )
         player_details.append(record)
 

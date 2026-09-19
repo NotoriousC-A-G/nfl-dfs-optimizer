@@ -736,6 +736,40 @@ def test_no_rb_badges_when_neither_rb_candidate_field_set() -> None:
     assert "RB Bring-back" not in html
 
 
+def test_circumstance_expand_block_renders_when_assessment_present() -> None:
+    import dataclasses
+
+    from nfl_dfs.analysis.injury_circumstance import CircumstanceAssessment
+
+    weekly_output, _ = _weekly_output_with_three_lineups()
+    rb = _fully_populated_player_detail("rb_star", "Bell Cow", "AAA")
+    rb = dataclasses.replace(
+        rb,
+        circumstance_assessment=CircumstanceAssessment(
+            pov="Expect an expanded workhorse role this week.",
+            model="claude-sonnet-5",
+            generated_at="2026-09-19T12:00:00+00:00",
+            evidence_article_titles=["Vikings backfield notes"],
+        ),
+    )
+
+    html = render_dashboard_html(weekly_output, [rb])
+
+    assert "Circumstance" in html
+    assert "Expect an expanded workhorse role this week." in html
+    assert "Vikings backfield notes" in html
+    assert "claude-sonnet-5" in html
+
+
+def test_circumstance_expand_block_omitted_when_no_assessment() -> None:
+    weekly_output, _ = _weekly_output_with_three_lineups()
+    wr = _fully_populated_player_detail("wr_star", "Star Wideout", "AAA")
+
+    html = render_dashboard_html(weekly_output, [wr])
+
+    assert "expand-label\">Circumstance<" not in html
+
+
 def test_empty_weekly_output_and_empty_player_pool_render_without_crashing():
     empty_output = build_weekly_output([], [])
     html = render_dashboard_html(empty_output, [])
