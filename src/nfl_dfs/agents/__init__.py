@@ -13,6 +13,15 @@ itself, mirroring the sister MLB project's own resolved delta-dispatch design.
 """
 
 from nfl_dfs.agents.constructor import EdgeCondition, NflAgentConstructor
+from nfl_dfs.agents.registry import (
+    ARBITRAGEUR,
+    CHALK_ANCHOR,
+    EXPLOSION_SHOOTOUT,
+    GAME_SCRIPT_ARCHITECT,
+    MATCHUP_PURIST,
+    NFL_AGENTS,
+    VOLATILITY_ENGINE,
+)
 from nfl_dfs.agents.scoring import (
     CLOSE_SPREAD_THRESHOLD_POINTS,
     HIGH_TOTAL_THRESHOLD_POINTS,
@@ -21,8 +30,15 @@ from nfl_dfs.agents.scoring import (
 from nfl_dfs.agents.signal_bundle import PlayerSignals, SignalBundle, build_signal_bundle
 
 __all__ = [
+    "ARBITRAGEUR",
+    "CHALK_ANCHOR",
     "CLOSE_SPREAD_THRESHOLD_POINTS",
+    "EXPLOSION_SHOOTOUT",
+    "GAME_SCRIPT_ARCHITECT",
     "HIGH_TOTAL_THRESHOLD_POINTS",
+    "MATCHUP_PURIST",
+    "NFL_AGENTS",
+    "VOLATILITY_ENGINE",
     "EdgeCondition",
     "NflAgentConstructor",
     "PlayerSignals",
