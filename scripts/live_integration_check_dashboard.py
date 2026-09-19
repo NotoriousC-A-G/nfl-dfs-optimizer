@@ -410,7 +410,7 @@ def main() -> None:
             archived_articles = read_all_articles()
             print(f"  {len(archived_articles)} archived Footballguys article(s) available as evidence.")
             for change in circumstance_changes:
-                relevant_articles = find_relevant_articles(change.team, archived_articles)
+                relevant_articles = find_relevant_articles(change.team, archived_articles, season=SEASON, week=WEEK)
                 remaining_names = ", ".join(r.player_name or r.player_id for r in change.remaining)
                 label = (
                     f"{change.team} {change.role}: {change.departed.player_name or change.departed.player_id} "
@@ -418,7 +418,7 @@ def main() -> None:
                 )
                 _run_synthesis(change, relevant_articles, label=label)
             for extreme in matchup_extreme_changes:
-                relevant_articles = find_relevant_articles(extreme.team, archived_articles)
+                relevant_articles = find_relevant_articles(extreme.team, archived_articles, season=SEASON, week=WEEK)
                 direction = "favorable" if extreme.matchup.combined_multiplier > 1.0 else "unfavorable"
                 label = (
                     f"{extreme.team} {extreme.position} matchup: {extreme.player_name} vs {extreme.matchup.opponent} "
@@ -426,7 +426,7 @@ def main() -> None:
                 )
                 _run_synthesis(extreme, relevant_articles, label=label)
             for divergence in depth_chart_divergences:
-                relevant_articles = find_relevant_articles(divergence.team, archived_articles)
+                relevant_articles = find_relevant_articles(divergence.team, archived_articles, season=SEASON, week=WEEK)
                 label = (
                     f"{divergence.team} {divergence.role} depth-chart divergence: depth chart says "
                     f"{divergence.depth_chart_leader.player_name}, usage leads with "
