@@ -1166,6 +1166,22 @@ def _render_injury_cell(record: PlayerDetailRecord) -> str:
     )
 
 
+def _render_circumstance_cell(record: PlayerDetailRecord) -> str:
+    assessment = record.circumstance_assessment
+    if assessment is None:
+        return ""
+    evidence = (
+        "Sourced from: " + "; ".join(_esc(t) for t in assessment.evidence_article_titles)
+        if assessment.evidence_article_titles
+        else "No archived Footballguys coverage found for this team -- based on trailing role share alone."
+    )
+    return (
+        f'<div class="cell-main">{_esc(assessment.pov)}</div>'
+        f'<div class="cell-sub">{evidence} &middot; synthesized by {_esc(assessment.model)}, '
+        f"{_esc(assessment.generated_at)}</div>"
+    )
+
+
 def _expand_block(label: str, content_html: str) -> str:
     return (
         f'<div class="expand-block"><div class="expand-label">{_esc(label)}</div>'
@@ -1198,6 +1214,11 @@ def _render_player_expand_content(record: PlayerDetailRecord) -> str:
     blocks.append(_expand_block("Game Environment", _render_game_environment_cell(record)))
     blocks.append(_expand_block("Slate Window", _render_slate_window_cell(record)))
     blocks.append(_expand_block("Injury", _render_injury_cell(record)))
+    if record.circumstance_assessment is not None:
+        # Only shown when a real circumstance was detected AND synthesized (analysis/
+        # injury_circumstance.py) -- unlike every block above, omitted entirely rather than
+        # rendered empty for the overwhelming majority of players with nothing to show here.
+        blocks.append(_expand_block("Circumstance", _render_circumstance_cell(record)))
     return '<div class="expand-grid">' + "".join(blocks) + "</div>"
 
 

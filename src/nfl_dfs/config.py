@@ -19,6 +19,11 @@ class Config:
     odds_api_key: str | None = os.getenv("ODDS_API_KEY") or None
     # Weather: Open-Meteo (primary) + NWS api.weather.gov (storm cross-check), same as the
     # MLB build — both are free/keyless, so there's no weather API key to configure.
+    # analysis/injury_circumstance.py's synthesis step only (Chris, 2026-09-19) — every other data
+    # source above is required for the live scripts to run at all; this one isn't. It still shows
+    # up in missing() like any other field (no special-casing there), but that module's own caller
+    # checks for it explicitly and degrades to "no synthesis" rather than crashing when it's unset.
+    anthropic_api_key: str | None = os.getenv("ANTHROPIC_API_KEY") or None
 
     def missing(self) -> list[str]:
         return [f.name for f in fields(self) if getattr(self, f.name) is None]

@@ -23,6 +23,11 @@ dependencies = [
     # ResultsDB raw/curated storage (storage/resultsdb_store.py, ADR-0024) writes curated tables as
     # Parquet -- no other module in this codebase needed a Parquet engine before this.
     "pyarrow>=15.0",
+    # analysis/injury_circumstance.py's synthesis step (Chris, 2026-09-19) -- the first live LLM
+    # call anywhere in this pipeline's build path; every other module is deterministic pbp/vendor
+    # data. Used ONLY to synthesize a point-of-view paragraph from real, supplied evidence (trailing
+    # role-share numbers + ingested Footballguys article excerpts), never to invent stats itself.
+    "anthropic>=0.40",
 ]
 
 [project.optional-dependencies]

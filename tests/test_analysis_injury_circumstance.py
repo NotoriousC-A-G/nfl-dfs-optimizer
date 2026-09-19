@@ -1,0 +1,253 @@
+import pytest
+
+from nfl_dfs.analysis.injury_circumstance import (
+    DEPARTED_SHARE_FLOOR,
+    CircumstanceChange,
+    detect_injury_circumstance_change,
+    find_relevant_articles,
+    synthesize_circumstance_pov,
+)
+from nfl_dfs.ingestion.usage_share import PRIOR_LEAGUE_AVERAGE, ROLE_RB, PlayerRoleShare, RoleShareResult
+from nfl_dfs.storage.footballguys_article_store import ArchivedArticle
+
+
+def _player_role_share(
+    player_id: str, player_name: str, role_share_blended: float, *, role_tier: str | None = "mid_tier"
+) -> PlayerRoleShare:
+    return PlayerRoleShare(
+        player_id=player_id,
+        player_name=player_name,
+        role=ROLE_RB,
+        weeks_played=4,
+        trailing_volume=40,
+        trailing_team_volume=100,
+        trailing_share=0.40,
+        shrinkage_weight=0.4,
+        role_share_blended=role_share_blended,
+        role_tier=role_tier,
+        prior_used=PRIOR_LEAGUE_AVERAGE,
+    )
+
+
+def _role_share_result(team: str, candidates: list[PlayerRoleShare]) -> RoleShareResult:
+    return RoleShareResult(
+        season=2026,
+        week=2,
+        team=team,
+        role=ROLE_RB,
+        candidates=candidates,
+        identified=candidates[0] if candidates else None,
+        gate_passed=bool(candidates),
+    )
+
+
+def _article(slug: str, title: str, text: str, *, published_date: str = "2026-09-18") -> ArchivedArticle:
+    return ArchivedArticle(
+        slug=slug,
+        url=f"https://www.footballguys.com/article/{slug}",
+        title=title,
+        author="Some Author",
+        published_date=published_date,
+        category_ids=[7],
+        tags=[],
+        text=text,
+        fetched_at="2026-09-18T12:00:00Z",
+    )
+
+
+# --------------------------------------------------------------------------------------------
+# detect_injury_circumstance_change
+# --------------------------------------------------------------------------------------------
+
+
+def test_detects_out_teammate_with_real_share_and_a_real_remaining_candidate() -> None:
+    mason = _player_role_share("mason", "J.Mason", 0.50)
+    jones = _player_role_share("jones", "A.Jones", 0.49)
+    role_share = _role_share_result("MIN", [mason, jones])
+    status_by_id = {"mason": "OUT", "jones": None}
+
+    change = detect_injury_circumstance_change(role_share, status_by_id)
+
+    assert change is not None
+    assert change.team == "MIN"
+    assert change.role == ROLE_RB
+    assert change.departed is mason
+    assert change.departed_status == "OUT"
+    assert change.remaining == [jones]
+
+
+def test_returns_none_when_nobody_is_out() -> None:
+    mason = _player_role_share("mason", "J.Mason", 0.50)
+    jones = _player_role_share("jones", "A.Jones", 0.49)
+    role_share = _role_share_result("MIN", [mason, jones])
+    status_by_id = {"mason": "Q", "jones": None}
+
+    assert detect_injury_circumstance_change(role_share, status_by_id) is None
+
+
+def test_returns_none_when_out_players_share_is_below_the_floor() -> None:
+    bit_part = _player_role_share("bit", "Bit Part", 0.10, role_tier="committee")
+    jones = _player_role_share("jones", "A.Jones", 0.49)
+    role_share = _role_share_result("MIN", [jones, bit_part])
+    status_by_id = {"bit": "OUT", "jones": None}
+
+    assert detect_injury_circumstance_change(role_share, status_by_id) is None
+
+
+def test_returns_none_when_every_remaining_candidate_is_also_out() -> None:
+    mason = _player_role_share("mason", "J.Mason", 0.50)
+    jones = _player_role_share("jones", "A.Jones", 0.49)
+    role_share = _role_share_result("MIN", [mason, jones])
+    status_by_id = {"mason": "OUT", "jones": "IR"}
+
+    assert detect_injury_circumstance_change(role_share, status_by_id) is None
+
+
+def test_picks_the_most_consequential_departure_when_multiple_are_out() -> None:
+    # candidates are already sorted descending by role_share_blended (usage_share.py's contract) --
+    # the first OUT/IR candidate clearing the floor is the one detected, not every one.
+    mason = _player_role_share("mason", "J.Mason", 0.50)
+    bit_part = _player_role_share("bit", "Bit Part", 0.22, role_tier="committee")
+    jones = _player_role_share("jones", "A.Jones", 0.15, role_tier="committee")
+    role_share = _role_share_result("MIN", [mason, bit_part, jones])
+    status_by_id = {"mason": "OUT", "bit": "OUT", "jones": None}
+
+    change = detect_injury_circumstance_change(role_share, status_by_id)
+
+    assert change is not None
+    assert change.departed is mason
+    assert change.remaining == [jones]  # bit_part is also OUT -- excluded from remaining too
+
+
+def test_custom_departed_share_floor_is_honored() -> None:
+    small_role = _player_role_share("small", "Small Role", 0.15, role_tier="committee")
+    jones = _player_role_share("jones", "A.Jones", 0.49)
+    role_share = _role_share_result("MIN", [jones, small_role])
+    status_by_id = {"small": "OUT", "jones": None}
+
+    assert detect_injury_circumstance_change(role_share, status_by_id) is None
+    change = detect_injury_circumstance_change(role_share, status_by_id, departed_share_floor=0.10)
+    assert change is not None
+    assert change.departed is small_role
+
+
+def test_default_departed_share_floor_constant() -> None:
+    assert DEPARTED_SHARE_FLOOR == pytest.approx(0.20)
+
+
+# --------------------------------------------------------------------------------------------
+# find_relevant_articles
+# --------------------------------------------------------------------------------------------
+
+
+def test_find_relevant_articles_matches_full_team_name_or_nickname() -> None:
+    vikings_article = _article("a1", "Minnesota Vikings backfield notes", "Some body text.")
+    nickname_only = _article("a2", "Week 2 waiver wire", "The Vikings are expected to lean on...")
+    unrelated = _article("a3", "Packers notes", "Nothing about MIN here.")
+
+    matches = find_relevant_articles("MIN", [vikings_article, nickname_only, unrelated])
+
+    assert vikings_article in matches
+    assert nickname_only in matches
+    assert unrelated not in matches
+
+
+def test_find_relevant_articles_most_recent_first() -> None:
+    older = _article("a1", "Vikings early notes", "text", published_date="2026-09-10")
+    newer = _article("a2", "Vikings latest", "text", published_date="2026-09-18")
+
+    matches = find_relevant_articles("MIN", [older, newer])
+
+    assert matches == [newer, older]
+
+
+def test_find_relevant_articles_respects_max_results() -> None:
+    articles = [_article(f"a{i}", "Vikings notes", "text", published_date=f"2026-09-{10+i:02d}") for i in range(8)]
+    matches = find_relevant_articles("MIN", articles, max_results=3)
+    assert len(matches) == 3
+
+
+def test_find_relevant_articles_empty_for_unrecognized_team() -> None:
+    assert find_relevant_articles("ZZZ", [_article("a1", "Vikings notes", "text")]) == []
+
+
+def test_find_relevant_articles_empty_when_no_match() -> None:
+    unrelated = _article("a1", "Packers notes", "Nothing about the other team.")
+    assert find_relevant_articles("MIN", [unrelated]) == []
+
+
+# --------------------------------------------------------------------------------------------
+# synthesize_circumstance_pov
+# --------------------------------------------------------------------------------------------
+
+
+class _FakeMessagesClient:
+    """Records the exact prompt it was called with -- no network, no real API key needed."""
+
+    def __init__(self, response_text: str) -> None:
+        self.response_text = response_text
+        self.last_call: dict | None = None
+
+    def messages_create(self, *, model: str, max_tokens: int, messages: list[dict]) -> str:
+        self.last_call = {"model": model, "max_tokens": max_tokens, "messages": messages}
+        return self.response_text
+
+
+def _change() -> CircumstanceChange:
+    mason = _player_role_share("mason", "J.Mason", 0.50)
+    jones = _player_role_share("jones", "A.Jones", 0.49)
+    return CircumstanceChange(
+        season=2026, week=2, team="MIN", role=ROLE_RB, departed=mason, departed_status="OUT", remaining=[jones]
+    )
+
+
+def test_synthesize_circumstance_pov_returns_real_client_text_and_metadata() -> None:
+    client = _FakeMessagesClient("Jones should see an expanded workhorse role this week.")
+    articles = [_article("a1", "Vikings backfield notes", "Jones expected to see more work.")]
+
+    assessment = synthesize_circumstance_pov(_change(), articles, client=client)
+
+    assert assessment.pov == "Jones should see an expanded workhorse role this week."
+    assert assessment.model == "claude-sonnet-5"
+    assert assessment.evidence_article_titles == ["Vikings backfield notes"]
+    assert assessment.generated_at  # a real timestamp was stamped, not left blank
+
+
+def test_synthesize_circumstance_pov_prompt_names_departed_and_remaining_players() -> None:
+    client = _FakeMessagesClient("pov text")
+    synthesize_circumstance_pov(_change(), [], client=client)
+
+    assert client.last_call is not None
+    prompt = client.last_call["messages"][0]["content"]
+    assert "J.Mason" in prompt
+    assert "OUT" in prompt
+    assert "A.Jones" in prompt
+    assert "50%" in prompt
+    assert "49%" in prompt
+
+
+def test_synthesize_circumstance_pov_prompt_discloses_when_no_articles_found() -> None:
+    client = _FakeMessagesClient("pov text")
+    synthesize_circumstance_pov(_change(), [], client=client)
+
+    prompt = client.last_call["messages"][0]["content"]
+    assert "No archived Footballguys articles mention this team" in prompt
+    assert "do not imply you read any coverage" in prompt
+
+
+def test_synthesize_circumstance_pov_prompt_includes_article_text_when_found() -> None:
+    client = _FakeMessagesClient("pov text")
+    articles = [_article("a1", "Vikings backfield notes", "Real excerpt body text about the backfield.")]
+    synthesize_circumstance_pov(_change(), articles, client=client)
+
+    prompt = client.last_call["messages"][0]["content"]
+    assert "Vikings backfield notes" in prompt
+    assert "Real excerpt body text about the backfield." in prompt
+
+
+def test_synthesize_circumstance_pov_custom_model_is_passed_through() -> None:
+    client = _FakeMessagesClient("pov text")
+    assessment = synthesize_circumstance_pov(_change(), [], client=client, model="claude-opus-5")
+
+    assert client.last_call["model"] == "claude-opus-5"
+    assert assessment.model == "claude-opus-5"
