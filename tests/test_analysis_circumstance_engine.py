@@ -9,7 +9,9 @@ from nfl_dfs.analysis.circumstance.engine import (
 from nfl_dfs.storage.footballguys_article_store import ArchivedArticle
 
 
-def _article(slug: str, title: str, text: str, *, published_date: str = "2026-09-18") -> ArchivedArticle:
+def _article(
+    slug: str, title: str, text: str, *, published_date: str = "2026-09-18", tags: list[str] | None = None
+) -> ArchivedArticle:
     return ArchivedArticle(
         slug=slug,
         url=f"https://www.footballguys.com/article/{slug}",
@@ -17,7 +19,7 @@ def _article(slug: str, title: str, text: str, *, published_date: str = "2026-09
         author="Some Author",
         published_date=published_date,
         category_ids=[7],
-        tags=[],
+        tags=tags or [],
         text=text,
         fetched_at="2026-09-18T12:00:00Z",
     )
@@ -62,6 +64,55 @@ def test_find_relevant_articles_empty_for_unrecognized_team() -> None:
 def test_find_relevant_articles_empty_when_no_match() -> None:
     unrelated = _article("a1", "Packers notes", "Nothing about the other team.")
     assert find_relevant_articles("MIN", [unrelated]) == []
+
+
+# --------------------------------------------------------------------------------------------
+# find_relevant_articles -- real, hard week-exclusion (confirmed live 2026-09-19: without this, a
+# thin-current-coverage team's results backfilled with real Week 1 "Cracking DraftKings"/"Cracking
+# FanDuel" pricing pieces -- genuinely stale, week-specific DFS analysis with no signal
+# distinguishing it from real current coverage. Chris: "we need to be week aware... pulling
+# sentiment from stale analysis would be a killer.")
+# --------------------------------------------------------------------------------------------
+
+
+def test_wrong_week_article_excluded_via_clean_week_tag() -> None:
+    # The exact real case: a real "Cracking DraftKings" Week 1 piece must never surface for Week 2.
+    week1 = _article("a1", "Cracking DraftKings Week 1", "Vikings pricing notes.", tags=["week 1"])
+    week2 = _article("a2", "Cracking DraftKings Week 2", "Vikings pricing notes.", tags=["week 2"])
+
+    matches = find_relevant_articles("MIN", [week1, week2], season=2026, week=2)
+
+    assert week2 in matches
+    assert week1 not in matches
+
+
+def test_wrong_week_article_excluded_via_title_mention_when_no_clean_tag() -> None:
+    week1 = _article("a1", "NFL Week 1 Injury Report", "Vikings injury notes.", tags=["Injuries", "news"])
+    matches = find_relevant_articles("MIN", [week1], season=2026, week=2)
+    assert matches == []
+
+
+def test_evergreen_article_with_no_determinable_week_is_kept() -> None:
+    evergreen = _article("a1", "24 Receivers Who Changed My Mind", "Vikings receiver notes.", tags=["strategy"])
+    matches = find_relevant_articles("MIN", [evergreen], season=2026, week=2)
+    assert evergreen in matches
+
+
+def test_same_week_number_prior_season_is_excluded_by_year() -> None:
+    # A real "week 2" tag from a PRIOR season must not pass just because the week number matches.
+    stale_season = _article("a1", "Week 2 Old Notes", "Vikings notes.", published_date="2024-09-15", tags=["week 2"])
+    current_season = _article("a2", "Week 2 New Notes", "Vikings notes.", published_date="2026-09-18", tags=["week 2"])
+
+    matches = find_relevant_articles("MIN", [stale_season, current_season], season=2026, week=2)
+
+    assert current_season in matches
+    assert stale_season not in matches
+
+
+def test_week_filtering_is_opt_in_omitting_week_keeps_pre_existing_behavior() -> None:
+    week1 = _article("a1", "Cracking DraftKings Week 1", "Vikings pricing notes.", tags=["week 1"])
+    matches = find_relevant_articles("MIN", [week1])  # no season/week supplied
+    assert week1 in matches
 
 
 # --------------------------------------------------------------------------------------------

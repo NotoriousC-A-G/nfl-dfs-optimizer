@@ -30,6 +30,7 @@ signal in this codebase.
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Protocol
@@ -54,17 +55,55 @@ DEFAULT_MAX_ARTICLE_CHARS = 2000
 DEFAULT_MAX_TOKENS = 4000
 
 
+_WEEK_TAG_RE = re.compile(r"(?i)^week\s*(\d+)$")
+_WEEK_MENTION_RE = re.compile(r"(?i)\bweek\s*(\d+)\b")
+
+
+def _article_week(article: ArchivedArticle) -> int | None:
+    """Best-effort REAL week number this article is ABOUT (not just when it was published) --
+    prefers the clean `"week N"` tag (confirmed live 2026-09-19: present on ~82% of real September
+    2026 articles, exact values `"week 1"`/`"week 2"`), falling back to a "week N" mention in the
+    title when no clean tag exists. `None` means this article isn't clearly about one specific week
+    (evergreen/draft-strategy/"changed my mind" content, or a genuinely untagged piece) -- treated
+    as week-agnostic by `find_relevant_articles`, not excluded and not assumed current either.
+    """
+    for tag in article.tags:
+        match = _WEEK_TAG_RE.match(tag.strip())
+        if match:
+            return int(match.group(1))
+    match = _WEEK_MENTION_RE.search(article.title)
+    if match:
+        return int(match.group(1))
+    return None
+
+
 def find_relevant_articles(
-    team: str, articles: list[ArchivedArticle], *, max_results: int = DEFAULT_MAX_ARTICLES
+    team: str,
+    articles: list[ArchivedArticle],
+    *,
+    max_results: int = DEFAULT_MAX_ARTICLES,
+    season: int | None = None,
+    week: int | None = None,
 ) -> list[ArchivedArticle]:
     """Every archived Footballguys article (`storage/footballguys_article_store.py`) whose title or
     body mentions `team` by its full name or nickname (e.g. "Minnesota Vikings" or "Vikings" for
     "MIN") -- a real, blunt substring match, not semantic search; reuses `odds_api.py`'s
     `TEAM_NAME_TO_ABBR` (ADR-0011 "reuse before inventing") rather than a new team-name table.
 
-    Returns the most recent `max_results` matches, most-recent-first (by `published_date`), since a
-    fresher article is more likely to reflect a real current circumstance than an older one. Team-
-    generic (not tied to any one detector type) -- shared by every circumstance kind.
+    **`season`/`week`, when supplied, are a real hard exclusion, not a ranking nudge** (confirmed
+    live 2026-09-19: without this, a thin-current-coverage team's top-5 backfilled with real Week 1
+    "Cracking DraftKings"/"Cracking FanDuel" pricing pieces -- genuinely stale, week-specific DFS
+    analysis handed to the synthesis step with no signal distinguishing it from real current
+    coverage. Chris: "we need to be week aware... pulling sentiment from stale analysis would be a
+    killer."). Any article whose real week (`_article_week`) is DETERMINABLE and does NOT match
+    `(season, week)` is dropped entirely before ranking -- never merely deprioritized, since a
+    lower-ranked-but-still-included stale article is exactly the failure mode this closes. An
+    article with no determinable week (evergreen content) is kept -- it isn't wrong for this week,
+    just not week-anchored, a real and different case from a wrong-week article.
+
+    Returns the most recent `max_results` matches (after the above exclusion), most-recent-first (by
+    `published_date`). Team-generic (not tied to any one detector type) -- shared by every
+    circumstance kind.
 
     Returns `[]` (never fabricates a match) when `team` isn't a recognized abbreviation or no
     archived article mentions it -- a caller (`synthesize_circumstance`) must treat an empty result
@@ -79,8 +118,23 @@ def find_relevant_articles(
         for a in articles
         if full_name in a.title or nickname in a.title or full_name in a.text or nickname in a.text
     ]
+    if week is not None:
+        matches = [a for a in matches if _matches_target_week(a, season, week)]
     matches.sort(key=lambda a: a.published_date or "", reverse=True)
     return matches[:max_results]
+
+
+def _matches_target_week(article: ArchivedArticle, season: int | None, week: int) -> bool:
+    article_week = _article_week(article)
+    if article_week is None:
+        return True  # evergreen/undetermined -- not excluded, but not confidently "current" either
+    if article_week != week:
+        return False
+    # A "week N" tag/title match alone doesn't rule out a PRIOR season's week N (e.g. a real
+    # 2024 "week 2" article) -- published_date's own year is the real signal for that.
+    if season is not None and article.published_date and not article.published_date.startswith(str(season)):
+        return False
+    return True
 
 
 @dataclass(frozen=True)
