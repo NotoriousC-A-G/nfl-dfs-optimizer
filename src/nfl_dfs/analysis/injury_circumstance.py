@@ -64,6 +64,12 @@ DEFAULT_MAX_ARTICLES = 5
 # Per-article truncation for the same reason -- a full article's text is usually far more than the
 # synthesis step needs to ground one paragraph.
 DEFAULT_MAX_ARTICLE_CHARS = 2000
+# NOT a "short answer" budget -- see synthesize_circumstance_pov's own docstring. This prompt's
+# "judge reliability first" instruction routinely spends real extended-thinking tokens before any
+# visible text, and a too-small max_tokens silently returns an EMPTY pov (thinking alone consumes
+# the whole budget, stop_reason="max_tokens") rather than an error -- confirmed live 2026-09-19 at
+# max_tokens=400. 4000 completes cleanly for every real circumstance tested this session.
+DEFAULT_MAX_TOKENS = 4000
 
 
 @dataclass(frozen=True)
@@ -222,11 +228,25 @@ def _candidate_line(candidate: PlayerRoleShare, position_by_player_id: dict[str,
     in an RB-role RoleShareResult, `usage_share.py`'s own disclosed non-position-filtered
     computation) itself, from real data, rather than that judgment being made silently in code
     before it ever sees the candidate. See `detect_injury_circumstance_change`'s docstring for why
-    `remaining` is deliberately NOT filtered by position the way `departed` detection is."""
+    `remaining` is deliberately NOT filtered by position the way `departed` detection is.
+
+    **Shows the RAW trailing share alongside the shrinkage-BLENDED one, not just the blended
+    number alone (confirmed live 2026-09-19: showing only `role_share_blended` led the model to
+    invent an unverifiable specific mechanism -- "kneel-downs" -- to explain a small-sample QB's
+    44% blended share, when the real explanation was visible in data it simply wasn't shown: 2 real
+    carries over 1 tracked week (raw share 6.5%), shrinkage-blended 86% of the way toward the
+    league-wide RB prior. Giving the model the real raw share, sample size, and shrinkage weight
+    lets it explain the actual divergence instead of guessing a plausible-sounding one.**
+    """
     position = (position_by_player_id or {}).get(candidate.player_id)
     position_note = f", position {position}" if position else ""
     tier_note = f", role tier {candidate.role_tier}" if candidate.role_tier else ""
-    return f"- {candidate.player_name or candidate.player_id}: {candidate.role_share_blended:.0%} trailing role share{tier_note}{position_note}"
+    return (
+        f"- {candidate.player_name or candidate.player_id}: {candidate.role_share_blended:.0%} blended "
+        f"role share (raw trailing: {candidate.trailing_volume}/{candidate.trailing_team_volume} = "
+        f"{candidate.trailing_share:.0%} over {candidate.weeks_played} tracked week(s), shrinkage weight "
+        f"{candidate.shrinkage_weight:.2f} toward the league-wide prior){tier_note}{position_note}"
+    )
 
 
 def _build_prompt(
@@ -242,9 +262,18 @@ def _build_prompt(
     remaining_lines = "\n".join(_candidate_line(c, position_by_player_id) for c in change.remaining)
     anomaly_instruction = (
         "Where a listed candidate's own position looks out of place for this role (e.g. a QB "
-        "showing up with real trailing volume in an RB-role list -- that reflects scrambles/kneels, "
-        "not real backfield competition), say so explicitly and weigh their numbers accordingly in "
-        "your own reasoning, rather than treating every listed name as an equally real position-mate."
+        "showing up in an RB-role list), do NOT apply a blanket 'wrong position means discount it' "
+        "rule -- that's still not real judgment, just a different rule. Use what you actually know "
+        "about THIS specific player's real playing style: a known mobile/dual-threat quarterback "
+        "(the Lamar Jackson/Malik Willis type) can carry genuine, repeatable rushing volume that "
+        "IS meaningful for this role, while a pocket passer with minimal real rushing history "
+        "showing the same numbers almost certainly reflects an unrepresentative small sample, not a "
+        "real role. Say explicitly which case applies to this named player and why. Separately, "
+        "where a candidate's blended share diverges sharply from their raw trailing share (a small "
+        "sample being pulled hard toward the league-wide prior), explain that divergence using ONLY "
+        "the real numbers given above (raw share, tracked weeks, shrinkage weight) -- do not guess "
+        "at a specific play-by-play mechanism (e.g. claiming it reflects kneel-downs) that isn't "
+        "actually given to you."
     )
     if articles:
         evidence_block = "\n\n".join(
@@ -273,11 +302,21 @@ Remaining {change.role}-role teammates with real trailing volume:
 Real Footballguys article coverage found for {change.team}:
 {evidence_block}
 
-Write a short (2-4 sentence) point of view on how {change.team} is likely to handle this backfield/
-role situation this week, and why. {evidence_instruction} {anomaly_instruction} Do not invent player
-names, stats, or sources not given above. Do not give betting or financial advice -- this is about
-expected on-field role/usage only. If the evidence is thin, say so plainly rather than overstating
-confidence."""
+FIRST, before writing anything, judge how reliable each input actually is -- this is the whole point
+of asking you rather than just printing the numbers above. Specifically: is the tracked-week sample
+large enough that the raw share is a meaningful read, or is it a couple of plays getting stretched by
+shrinkage toward a league-wide prior? Does the article evidence actually address this team's specific
+situation, or is it tangential/generic coverage that happens to mention the team? A candidate whose
+position doesn't match this role, or whose numbers come from a 1-2-play sample, deserves real
+skepticism, not a confident-sounding story built on top of it.
+
+THEN write a short (2-4 sentence) point of view on how {change.team} is likely to handle this
+backfield/role situation this week. If, after that assessment, the real inputs above don't actually
+support a meaningful point of view -- too small a sample, no relevant coverage, or both -- say that
+plainly as your answer; a calibrated "there isn't enough here to say" is a MORE useful answer than a
+fluent-sounding one built past what the data supports. {evidence_instruction} {anomaly_instruction}
+Do not invent player names, stats, or sources not given above. Do not give betting or financial
+advice -- this is about expected on-field role/usage only."""
 
 
 def synthesize_circumstance_pov(
@@ -288,6 +327,7 @@ def synthesize_circumstance_pov(
     model: str = "claude-sonnet-5",
     max_article_chars: int = DEFAULT_MAX_ARTICLE_CHARS,
     position_by_player_id: dict[str, str] | None = None,
+    max_tokens: int = DEFAULT_MAX_TOKENS,
 ) -> CircumstanceAssessment:
     """Calls `client.messages_create(...)` with a prompt grounded exclusively in `change` (the
     deterministic detection result) and `articles` (real archived Footballguys coverage, from
@@ -301,11 +341,32 @@ def synthesize_circumstance_pov(
     the model can reason about a position anomaly (a QB's volume showing up in an RB-role list)
     itself -- see `_candidate_line`/`detect_injury_circumstance_change`'s docstring for why this
     reasoning belongs here, in the synthesis step, rather than as a silent pre-filter upstream.
+
+    `max_tokens` defaults to `DEFAULT_MAX_TOKENS` (4000), not a small "short answer" budget --
+    confirmed live 2026-09-19: this prompt's "judge reliability FIRST" instruction routinely makes
+    the model spend real extended-thinking tokens before writing anything, and at `max_tokens=400`
+    the entire budget was consumed by thinking with ZERO tokens left for the actual visible answer
+    (`stop_reason="max_tokens"`, an empty `pov`, live-confirmed on this exact prompt). 2000 still
+    truncated the answer mid-sentence; 4000 completed cleanly (`stop_reason="end_turn"`,
+    ~770 output tokens for the case tested). This feature only fires a handful of times per slate
+    (one detected circumstance = one call), so the extra token budget is a real but bounded cost.
     """
     prompt = _build_prompt(
         change, articles, max_article_chars=max_article_chars, position_by_player_id=position_by_player_id
     )
-    pov = client.messages_create(model=model, max_tokens=400, messages=[{"role": "user", "content": prompt}])
+    pov = client.messages_create(model=model, max_tokens=max_tokens, messages=[{"role": "user", "content": prompt}])
+    if not pov.strip():
+        # Never silently ship an empty assessment -- confirmed live 2026-09-19 this happens
+        # specifically when max_tokens is exhausted by extended thinking before any visible text is
+        # written (see this function's own docstring). A blank CircumstanceAssessment would render
+        # as an empty box in the dashboard with no indication anything went wrong -- loud failure
+        # here instead, so a caller raises max_tokens or investigates rather than shipping silence.
+        raise RuntimeError(
+            f"synthesize_circumstance_pov got an empty response for {change.team} {change.role} "
+            f"(model={model!r}, max_tokens={max_tokens}) -- likely the whole max_tokens budget was "
+            "consumed by extended thinking before any visible text was written. Try a larger "
+            "max_tokens."
+        )
     return CircumstanceAssessment(
         pov=pov,
         model=model,

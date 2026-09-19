@@ -334,12 +334,18 @@ def main() -> None:
             print(f"  {len(archived_articles)} archived Footballguys article(s) available as evidence.")
             for change in circumstance_changes:
                 relevant_articles = find_relevant_articles(change.team, archived_articles)
-                assessment = synthesize_circumstance_pov(
-                    change, relevant_articles, client=anthropic_client, position_by_player_id=position_by_gsis_id
-                )
+                remaining_names = ", ".join(r.player_name or r.player_id for r in change.remaining)
+                try:
+                    assessment = synthesize_circumstance_pov(
+                        change, relevant_articles, client=anthropic_client, position_by_player_id=position_by_gsis_id
+                    )
+                except Exception as exc:  # noqa: BLE001 -- one bad synthesis call must not kill the run
+                    print(
+                        f"  {change.team} {change.role}: synthesis FAILED for {remaining_names} -- {exc}"
+                    )
+                    continue
                 for remaining in change.remaining:
                     circumstance_assessments_by_gsis_id[remaining.player_id] = assessment
-                remaining_names = ", ".join(r.player_name or r.player_id for r in change.remaining)
                 print(
                     f"  {change.team} {change.role}: {change.departed.player_name or change.departed.player_id} "
                     f"{change.departed_status} -> synthesized POV for {remaining_names} "
