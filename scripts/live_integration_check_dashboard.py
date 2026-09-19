@@ -306,10 +306,23 @@ def main() -> None:
     from nfl_dfs.storage.footballguys_article_store import read_all_articles
 
     dk_status_by_canonical_id = {p.canonical_id: p.dk_injury_status for p in pool}
+    # usage_share.py's RB/WR role computation is plurality-of-volume, not position-filtered (that
+    # module's own disclosed "Judgment call 2") -- a backup QB's scramble/kneel carries can show up
+    # in an RB-role RoleShareResult (confirmed live: Carson Wentz, MIN). Real position data (already
+    # reconciled, identities) is used two ways below: as a correctness gate on whether a circumstance
+    # fires at all (detect_injury_circumstance_change's departed check), and as real context handed
+    # to the synthesis step so it can reason about a same-role anomaly itself -- never as a silent
+    # pre-filter deciding which candidates the model gets to see at all.
+    position_by_gsis_id = {i.nflverse_gsis_id: i.position for i in identities if i.nflverse_gsis_id}
     circumstance_changes = [
         change
         for role_share in role_share_results
-        if (change := detect_injury_circumstance_change(role_share, dk_status_by_canonical_id)) is not None
+        if (
+            change := detect_injury_circumstance_change(
+                role_share, dk_status_by_canonical_id, position_by_player_id=position_by_gsis_id
+            )
+        )
+        is not None
     ]
     print(f"  {len(circumstance_changes)} real circumstance(s) detected.")
 
@@ -321,7 +334,9 @@ def main() -> None:
             print(f"  {len(archived_articles)} archived Footballguys article(s) available as evidence.")
             for change in circumstance_changes:
                 relevant_articles = find_relevant_articles(change.team, archived_articles)
-                assessment = synthesize_circumstance_pov(change, relevant_articles, client=anthropic_client)
+                assessment = synthesize_circumstance_pov(
+                    change, relevant_articles, client=anthropic_client, position_by_player_id=position_by_gsis_id
+                )
                 for remaining in change.remaining:
                     circumstance_assessments_by_gsis_id[remaining.player_id] = assessment
                 remaining_names = ", ".join(r.player_name or r.player_id for r in change.remaining)

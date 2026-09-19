@@ -90,6 +90,7 @@ def detect_injury_circumstance_change(
     dk_injury_status_by_player_id: dict[str, str | None],
     *,
     departed_share_floor: float = DEPARTED_SHARE_FLOOR,
+    position_by_player_id: dict[str, str] | None = None,
 ) -> CircumstanceChange | None:
     """Finds the most consequential real, current-week injury circumstance at this `(team, role)`,
     or `None` when there isn't one.
@@ -107,11 +108,36 @@ def detect_injury_circumstance_change(
     `PlayerRoleShare.player_id` uses (nflverse `gsis_id`) -- a caller sourcing this from
     `PlayerProjection.dk_injury_status` (`projection/blend.py`) should key it by `canonical_id`,
     which equals `gsis_id` for these roles in the common case (ADR-0013).
+
+    `position_by_player_id`, when supplied (same gsis_id-space key -- e.g. built from the
+    reconciled `PlayerIdentity` pool's own real `position` field), is used ONLY to decide whether a
+    candidate can be the DEPARTED player -- a real position mismatch (a confirmed `"QB"`) means
+    this isn't a genuine RB/WR-role circumstance at all, just that backup QB's own usage pattern
+    (`usage_share.py`'s RB/WR role computation is plurality-of-volume, not position-filtered, that
+    module's own disclosed "Judgment call 2" -- a backup QB's kneel/scramble carries can genuinely
+    clear an RB-role `RoleShareResult`'s candidate list). This is a mechanical correctness check on
+    whether to fire a circumstance AT ALL, not an interpretive judgment.
+
+    **Deliberately NOT applied to `remaining`** (confirmed live 2026-09-19, then reconsidered same
+    day): an earlier version of this function also filtered `remaining` by position, silently
+    dropping an anomalous candidate (Carson Wentz, MIN's real backup QB) before the reasoning step
+    ever saw him. That's exactly the wrong instinct this project has been pushing back against --
+    deciding "this candidate doesn't count" in code is still a rule standing in for reasoning, just
+    a quieter one. `remaining` stays unfiltered; `synthesize_circumstance_pov` is instead given
+    real position data for every remaining candidate so the model can reason about an anomaly like
+    this itself (and say so in its own POV), rather than have it invisibly disappear upstream.
     """
     departed_candidate: PlayerRoleShare | None = None
     for candidate in role_share.candidates:
         status = dk_injury_status_by_player_id.get(candidate.player_id)
-        if status in EXCLUDED_INJURY_STATUSES and candidate.role_share_blended >= departed_share_floor:
+        is_real_role_position = (
+            position_by_player_id is None or position_by_player_id.get(candidate.player_id) != "QB"
+        )
+        if (
+            status in EXCLUDED_INJURY_STATUSES
+            and candidate.role_share_blended >= departed_share_floor
+            and is_real_role_position
+        ):
             departed_candidate = candidate
             break
     if departed_candidate is None:
@@ -190,17 +216,35 @@ class _MessagesClient(Protocol):
     def messages_create(self, *, model: str, max_tokens: int, messages: list[dict]) -> str: ...
 
 
-def _build_prompt(change: CircumstanceChange, articles: list[ArchivedArticle], *, max_article_chars: int) -> str:
-    departed = change.departed
+def _candidate_line(candidate: PlayerRoleShare, position_by_player_id: dict[str, str] | None) -> str:
+    """One candidate's real inputs, position included when known -- the model reasons about
+    whether a candidate's numbers deserve full weight (e.g. a backup QB's real position showing up
+    in an RB-role RoleShareResult, `usage_share.py`'s own disclosed non-position-filtered
+    computation) itself, from real data, rather than that judgment being made silently in code
+    before it ever sees the candidate. See `detect_injury_circumstance_change`'s docstring for why
+    `remaining` is deliberately NOT filtered by position the way `departed` detection is."""
+    position = (position_by_player_id or {}).get(candidate.player_id)
+    position_note = f", position {position}" if position else ""
+    tier_note = f", role tier {candidate.role_tier}" if candidate.role_tier else ""
+    return f"- {candidate.player_name or candidate.player_id}: {candidate.role_share_blended:.0%} trailing role share{tier_note}{position_note}"
+
+
+def _build_prompt(
+    change: CircumstanceChange,
+    articles: list[ArchivedArticle],
+    *,
+    max_article_chars: int,
+    position_by_player_id: dict[str, str] | None = None,
+) -> str:
     departed_line = (
-        f"- {departed.player_name or departed.player_id} ({change.departed_status}): "
-        f"{departed.role_share_blended:.0%} trailing role share"
-        + (f", role tier {departed.role_tier}" if departed.role_tier else "")
+        f"{_candidate_line(change.departed, position_by_player_id)} ({change.departed_status})"
     )
-    remaining_lines = "\n".join(
-        f"- {c.player_name or c.player_id}: {c.role_share_blended:.0%} trailing role share"
-        + (f", role tier {c.role_tier}" if c.role_tier else "")
-        for c in change.remaining
+    remaining_lines = "\n".join(_candidate_line(c, position_by_player_id) for c in change.remaining)
+    anomaly_instruction = (
+        "Where a listed candidate's own position looks out of place for this role (e.g. a QB "
+        "showing up with real trailing volume in an RB-role list -- that reflects scrambles/kneels, "
+        "not real backfield competition), say so explicitly and weigh their numbers accordingly in "
+        "your own reasoning, rather than treating every listed name as an equally real position-mate."
     )
     if articles:
         evidence_block = "\n\n".join(
@@ -230,9 +274,10 @@ Real Footballguys article coverage found for {change.team}:
 {evidence_block}
 
 Write a short (2-4 sentence) point of view on how {change.team} is likely to handle this backfield/
-role situation this week, and why. {evidence_instruction} Do not invent player names, stats, or
-sources not given above. Do not give betting or financial advice -- this is about expected on-field
-role/usage only. If the evidence is thin, say so plainly rather than overstating confidence."""
+role situation this week, and why. {evidence_instruction} {anomaly_instruction} Do not invent player
+names, stats, or sources not given above. Do not give betting or financial advice -- this is about
+expected on-field role/usage only. If the evidence is thin, say so plainly rather than overstating
+confidence."""
 
 
 def synthesize_circumstance_pov(
@@ -242,6 +287,7 @@ def synthesize_circumstance_pov(
     client: _MessagesClient,
     model: str = "claude-sonnet-5",
     max_article_chars: int = DEFAULT_MAX_ARTICLE_CHARS,
+    position_by_player_id: dict[str, str] | None = None,
 ) -> CircumstanceAssessment:
     """Calls `client.messages_create(...)` with a prompt grounded exclusively in `change` (the
     deterministic detection result) and `articles` (real archived Footballguys coverage, from
@@ -249,8 +295,16 @@ def synthesize_circumstance_pov(
     given. `client` is injected (a thin wrapper around `anthropic.Anthropic().messages.create`,
     see `build_anthropic_messages_client`), not constructed here, so this function is unit-testable
     against a fake without a real network call or API key.
+
+    `position_by_player_id`, when supplied (same gsis_id-space key as `detect_injury_circumstance_
+    change`'s own parameter), is shown alongside every candidate's real trailing-share numbers so
+    the model can reason about a position anomaly (a QB's volume showing up in an RB-role list)
+    itself -- see `_candidate_line`/`detect_injury_circumstance_change`'s docstring for why this
+    reasoning belongs here, in the synthesis step, rather than as a silent pre-filter upstream.
     """
-    prompt = _build_prompt(change, articles, max_article_chars=max_article_chars)
+    prompt = _build_prompt(
+        change, articles, max_article_chars=max_article_chars, position_by_player_id=position_by_player_id
+    )
     pov = client.messages_create(model=model, max_tokens=400, messages=[{"role": "user", "content": prompt}])
     return CircumstanceAssessment(
         pov=pov,
