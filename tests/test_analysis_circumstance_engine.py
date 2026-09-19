@@ -1,0 +1,242 @@
+import pytest
+
+from nfl_dfs.analysis.circumstance.engine import (
+    DEFAULT_MAX_TOKENS,
+    MessagesResult,
+    find_relevant_articles,
+    synthesize_circumstance,
+)
+from nfl_dfs.storage.footballguys_article_store import ArchivedArticle
+
+
+def _article(slug: str, title: str, text: str, *, published_date: str = "2026-09-18") -> ArchivedArticle:
+    return ArchivedArticle(
+        slug=slug,
+        url=f"https://www.footballguys.com/article/{slug}",
+        title=title,
+        author="Some Author",
+        published_date=published_date,
+        category_ids=[7],
+        tags=[],
+        text=text,
+        fetched_at="2026-09-18T12:00:00Z",
+    )
+
+
+# --------------------------------------------------------------------------------------------
+# find_relevant_articles -- team-generic, shared by every circumstance kind
+# --------------------------------------------------------------------------------------------
+
+
+def test_find_relevant_articles_matches_full_team_name_or_nickname() -> None:
+    vikings_article = _article("a1", "Minnesota Vikings backfield notes", "Some body text.")
+    nickname_only = _article("a2", "Week 2 waiver wire", "The Vikings are expected to lean on...")
+    unrelated = _article("a3", "Packers notes", "Nothing about MIN here.")
+
+    matches = find_relevant_articles("MIN", [vikings_article, nickname_only, unrelated])
+
+    assert vikings_article in matches
+    assert nickname_only in matches
+    assert unrelated not in matches
+
+
+def test_find_relevant_articles_most_recent_first() -> None:
+    older = _article("a1", "Vikings early notes", "text", published_date="2026-09-10")
+    newer = _article("a2", "Vikings latest", "text", published_date="2026-09-18")
+
+    matches = find_relevant_articles("MIN", [older, newer])
+
+    assert matches == [newer, older]
+
+
+def test_find_relevant_articles_respects_max_results() -> None:
+    articles = [_article(f"a{i}", "Vikings notes", "text", published_date=f"2026-09-{10+i:02d}") for i in range(8)]
+    matches = find_relevant_articles("MIN", articles, max_results=3)
+    assert len(matches) == 3
+
+
+def test_find_relevant_articles_empty_for_unrecognized_team() -> None:
+    assert find_relevant_articles("ZZZ", [_article("a1", "Vikings notes", "text")]) == []
+
+
+def test_find_relevant_articles_empty_when_no_match() -> None:
+    unrelated = _article("a1", "Packers notes", "Nothing about the other team.")
+    assert find_relevant_articles("MIN", [unrelated]) == []
+
+
+# --------------------------------------------------------------------------------------------
+# synthesize_circumstance -- tested against a minimal fake CircumstanceSource, not any real
+# detector's own dataclass, to confirm the engine is genuinely detector-agnostic (2026-09-19,
+# Chris: "I don't think reasoning should be limited to injuries").
+# --------------------------------------------------------------------------------------------
+
+
+class _FakeSource:
+    def __init__(
+        self,
+        *,
+        kind: str = "test_kind",
+        team: str = "MIN",
+        season: int = 2026,
+        week: int = 2,
+        subjects: list[str] | None = None,
+        facts: dict | None = None,
+        prompt_block: str = "- Some Player: a real fact",
+        instructions: str = "Some detector-specific guardrail text.",
+    ) -> None:
+        self._kind = kind
+        self._team = team
+        self._season = season
+        self._week = week
+        self._subjects = subjects or ["p1"]
+        self._facts = facts or {"x": 1}
+        self._prompt_block = prompt_block
+        self._instructions = instructions
+
+    def circumstance_kind(self) -> str:
+        return self._kind
+
+    def circumstance_team(self) -> str:
+        return self._team
+
+    def circumstance_season(self) -> int:
+        return self._season
+
+    def circumstance_week(self) -> int:
+        return self._week
+
+    def circumstance_subjects(self) -> list[str]:
+        return self._subjects
+
+    def circumstance_facts(self) -> dict:
+        return self._facts
+
+    def circumstance_prompt_block(self) -> str:
+        return self._prompt_block
+
+    def circumstance_instructions(self) -> str:
+        return self._instructions
+
+
+class _FakeMessagesClient:
+    """Records the exact prompt it was called with -- no network, no real API key needed."""
+
+    def __init__(self, text: str, *, input_tokens: int = 100, output_tokens: int = 50, thinking_tokens: int = 0) -> None:
+        self.text = text
+        self.input_tokens = input_tokens
+        self.output_tokens = output_tokens
+        self.thinking_tokens = thinking_tokens
+        self.last_call: dict | None = None
+
+    def messages_create(self, *, model: str, max_tokens: int, messages: list[dict]) -> MessagesResult:
+        self.last_call = {"model": model, "max_tokens": max_tokens, "messages": messages}
+        return MessagesResult(
+            self.text,
+            input_tokens=self.input_tokens,
+            output_tokens=self.output_tokens,
+            thinking_tokens=self.thinking_tokens,
+        )
+
+
+def test_synthesize_circumstance_returns_real_text_and_metadata() -> None:
+    client = _FakeMessagesClient("Jones should see an expanded workhorse role this week.")
+    articles = [_article("a1", "Vikings backfield notes", "Jones expected to see more work.")]
+
+    assessment = synthesize_circumstance(_FakeSource(), articles, client=client)
+
+    assert assessment.pov == "Jones should see an expanded workhorse role this week."
+    assert assessment.kind == "test_kind"
+    assert assessment.model == "claude-sonnet-5"
+    assert assessment.evidence_article_titles == ["Vikings backfield notes"]
+    assert assessment.generated_at  # a real timestamp was stamped, not left blank
+
+
+def test_synthesize_circumstance_carries_real_token_usage() -> None:
+    client = _FakeMessagesClient("pov text", input_tokens=5074, output_tokens=770, thinking_tokens=200)
+    assessment = synthesize_circumstance(_FakeSource(), [], client=client)
+
+    assert assessment.input_tokens == 5074
+    assert assessment.output_tokens == 770
+    assert assessment.thinking_tokens == 200
+
+
+def test_synthesize_circumstance_prompt_includes_source_prompt_block_and_instructions() -> None:
+    client = _FakeMessagesClient("pov text")
+    source = _FakeSource(prompt_block="- Real Fact Line", instructions="Unique guardrail sentence XYZ.")
+
+    synthesize_circumstance(source, [], client=client)
+
+    prompt = client.last_call["messages"][0]["content"]
+    assert "Real Fact Line" in prompt
+    assert "Unique guardrail sentence XYZ." in prompt
+    assert "MIN" in prompt
+    assert "test_kind" in prompt
+
+
+def test_synthesize_circumstance_prompt_discloses_when_no_articles_found() -> None:
+    client = _FakeMessagesClient("pov text")
+    synthesize_circumstance(_FakeSource(), [], client=client)
+
+    prompt = client.last_call["messages"][0]["content"]
+    assert "No archived Footballguys articles mention this team" in prompt
+    assert "do not imply you read any coverage" in prompt
+
+
+def test_synthesize_circumstance_prompt_includes_article_text_when_found() -> None:
+    client = _FakeMessagesClient("pov text")
+    articles = [_article("a1", "Vikings backfield notes", "Real excerpt body text about the backfield.")]
+    synthesize_circumstance(_FakeSource(), articles, client=client)
+
+    prompt = client.last_call["messages"][0]["content"]
+    assert "Vikings backfield notes" in prompt
+    assert "Real excerpt body text about the backfield." in prompt
+
+
+def test_synthesize_circumstance_prompt_requires_reliability_judgment_before_writing() -> None:
+    # The whole point of an LLM step over a template: it must judge whether the real inputs given
+    # actually support a meaningful conclusion, not just narrate whatever numbers it's handed. This
+    # is genuinely detector-agnostic -- lives in the shared engine, not any one detector's prompt.
+    client = _FakeMessagesClient("pov text")
+    synthesize_circumstance(_FakeSource(), [], client=client)
+
+    prompt = client.last_call["messages"][0]["content"]
+    assert "judge how reliable each input actually is" in prompt
+    assert "whole point" in prompt and "just printing the numbers" in prompt
+    assert 'calibrated "there isn' in prompt  # explicitly permits/prefers a low-confidence answer
+
+
+def test_synthesize_circumstance_custom_model_is_passed_through() -> None:
+    client = _FakeMessagesClient("pov text")
+    assessment = synthesize_circumstance(_FakeSource(), [], client=client, model="claude-opus-5")
+
+    assert client.last_call["model"] == "claude-opus-5"
+    assert assessment.model == "claude-opus-5"
+
+
+def test_synthesize_circumstance_default_max_tokens_is_passed_through() -> None:
+    client = _FakeMessagesClient("pov text")
+    synthesize_circumstance(_FakeSource(), [], client=client)
+
+    assert client.last_call["max_tokens"] == DEFAULT_MAX_TOKENS
+
+
+def test_synthesize_circumstance_custom_max_tokens_is_passed_through() -> None:
+    client = _FakeMessagesClient("pov text")
+    synthesize_circumstance(_FakeSource(), [], client=client, max_tokens=1234)
+
+    assert client.last_call["max_tokens"] == 1234
+
+
+def test_synthesize_circumstance_raises_loudly_on_empty_response() -> None:
+    # Confirmed live 2026-09-19: an under-budgeted max_tokens gets entirely consumed by extended
+    # thinking, returning an empty string with no error -- this must never ship silently as a blank
+    # CircumstanceAssessment (an empty box in the dashboard with no indication anything went wrong).
+    client = _FakeMessagesClient("")
+    with pytest.raises(RuntimeError, match="empty response"):
+        synthesize_circumstance(_FakeSource(), [], client=client)
+
+
+def test_synthesize_circumstance_raises_on_whitespace_only_response() -> None:
+    client = _FakeMessagesClient("   \n  ")
+    with pytest.raises(RuntimeError, match="empty response"):
+        synthesize_circumstance(_FakeSource(), [], client=client)

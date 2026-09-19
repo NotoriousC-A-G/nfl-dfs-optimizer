@@ -97,7 +97,7 @@ from datetime import datetime
 
 import pandas as pd
 
-from nfl_dfs.analysis.injury_circumstance import CircumstanceAssessment
+from nfl_dfs.analysis.circumstance import CircumstanceAssessment
 from nfl_dfs.ceiling.signals import (
     COMPONENT_A_SCALE,
     CeilingSignal,
@@ -205,10 +205,9 @@ _QB_RUSHING_PROFILE_NOT_APPLICABLE_REASON = (
 )
 
 _NO_CIRCUMSTANCE_ASSESSMENT_REASON = (
-    "no injury-driven circumstance change was detected/synthesized for this player this week -- "
-    "either circumstance_assessments_by_gsis_id wasn't supplied to this composer call, this player "
-    "has no resolvable gsis_id, or no teammate at their role with real trailing volume is currently "
-    "OUT/IR (analysis/injury_circumstance.py)."
+    "no real circumstance change was detected/synthesized for this player this week -- either "
+    "circumstance_assessments_by_gsis_id wasn't supplied to this composer call, this player has no "
+    "resolvable gsis_id, or no detector (analysis/circumstance/) fired for them this week."
 )
 
 _NO_OWNERSHIP_REASON = (
@@ -510,10 +509,9 @@ class PlayerDetailRecord:
     qb_rushing_profile: TrailingQbRushingProfile | None
     qb_rushing_profile_reason: str | None
 
-    # analysis/injury_circumstance.py, Chris's explicit 2026-09-19 direction: a synthesized point
-    # of view on how this player's role changes because a same-role teammate with real trailing
-    # volume is out this week -- see CircumstanceAssessment's own docstring for what it is and
-    # isn't grounded in.
+    # analysis/circumstance/, Chris's explicit 2026-09-19 direction (later generalized beyond
+    # injuries): a synthesized point of view on a real, detected circumstance affecting this
+    # player -- see CircumstanceAssessment's own docstring for what it is and isn't grounded in.
     circumstance_assessment: CircumstanceAssessment | None = None
     circumstance_assessment_reason: str | None = None
 
@@ -1078,9 +1076,9 @@ def _circumstance_assessment(
 ) -> tuple[CircumstanceAssessment | None, str | None]:
     """Joined via `identity.nflverse_gsis_id` -- same gsis_id-space key every other trailing-stat
     section in this module already uses. `circumstance_assessments_by_gsis_id` is keyed to exactly
-    the players a real `CircumstanceChange`'s `remaining` list names (`analysis/
-    injury_circumstance.py`) -- a caller builds this dict once per slate, not per player, so a
-    shared assessment naturally appears on every affected teammate's row without recomputing it."""
+    the players a detector's own `circumstance_subjects()` names (`analysis/circumstance/`, any
+    detector kind) -- a caller builds this dict once per slate, not per player, so a shared
+    assessment naturally appears on every affected player's row without recomputing it."""
     if gsis_id is None:
         return None, _NO_CIRCUMSTANCE_ASSESSMENT_REASON
     assessment = (circumstance_assessments_by_gsis_id or {}).get(gsis_id)

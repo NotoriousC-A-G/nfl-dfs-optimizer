@@ -902,10 +902,11 @@ def test_stack_context_rb_candidate_does_not_leak_across_home_away_sides():
 
 
 def test_circumstance_assessment_present_when_supplied_for_this_player():
-    from nfl_dfs.analysis.injury_circumstance import CircumstanceAssessment
+    from nfl_dfs.analysis.circumstance import CircumstanceAssessment
 
     identity = _identity("00-6", "Aaron Jones", "RB", "MIN", gsis_id="gsis-jones")
     assessment = CircumstanceAssessment(
+        kind="injury",
         pov="Jones should see an expanded role.",
         model="claude-sonnet-5",
         generated_at="2026-09-19T12:00:00+00:00",
@@ -930,15 +931,19 @@ def test_circumstance_assessment_none_with_reason_when_not_supplied():
         identity, SEASON, WEEK, team="MIN", position="RB", opponent_team_this_week="CHI"
     )
     assert record.circumstance_assessment is None
-    assert "no injury-driven circumstance change" in record.circumstance_assessment_reason
+    assert "no real circumstance change" in record.circumstance_assessment_reason
 
 
 def test_circumstance_assessment_none_when_dict_supplied_but_this_player_not_a_key():
-    from nfl_dfs.analysis.injury_circumstance import CircumstanceAssessment
+    from nfl_dfs.analysis.circumstance import CircumstanceAssessment
 
     identity = _identity("00-8", "Some Other Player", "RB", "MIN", gsis_id="gsis-not-affected")
     assessment = CircumstanceAssessment(
-        pov="pov text", model="claude-sonnet-5", generated_at="2026-09-19T12:00:00+00:00", evidence_article_titles=[]
+        kind="injury",
+        pov="pov text",
+        model="claude-sonnet-5",
+        generated_at="2026-09-19T12:00:00+00:00",
+        evidence_article_titles=[],
     )
     record = build_player_detail_record(
         identity,
