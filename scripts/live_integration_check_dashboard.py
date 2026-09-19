@@ -497,6 +497,58 @@ def main() -> None:
         return
     print(f"Generated {len(lineups)} lineup(s). Core stack teams: {[lu.core_stack_team for lu in lineups]}\n")
 
+    print("=== Solving 6 NflAgentConstructor lineups (Phase B5, additive -- not a replacement) ===")
+    from nfl_dfs.agents import (
+        agents_with_suspiciously_empty_deltas,
+        build_signal_bundle,
+        chalk_anchor_matches_baseline,
+        generate_agent_lineups,
+        pairwise_lineup_overlap,
+        summarize_agent_deltas,
+    )
+
+    # implied_total_by_team isn't fetched until the Odds API section below (it needs the real
+    # spreads/totals pull that section makes) -- passed empty here, a real, disclosed limitation:
+    # every agent's edge_condition="high_total" gate (Explosion/Shootout) fails closed this run,
+    # same "never fabricate" posture as every other nullable signal in this project. Every other
+    # signal this bundle needs (ceiling/leverage/matchup/stack context, including
+    # close_spread-gated candidates, which read StackContext.home_spread -- already real by this
+    # point via the StackProfile block above) is genuinely available here.
+    agent_signal_bundle = build_signal_bundle(
+        identities,
+        ceiling_signals_by_gsis_id=ceiling_signals_by_gsis_id,
+        leverage_by_native_id=leverage_by_native_id,
+        matchup_context_by_canonical_id=matchup_context_by_canonical_id,
+        stack_profiles=stack_profiles,
+        implied_total_by_team={},
+    )
+    try:
+        agent_results = generate_agent_lineups(pool, agent_signal_bundle)
+    except LineupGenerationError as exc:
+        print(f"  LineupGenerationError: {exc}")
+        agent_results = []
+
+    if agent_results:
+        for stats in summarize_agent_deltas(agent_results):
+            print(
+                f"  {stats.agent_id}: {stats.n_players_affected} player(s) affected, "
+                f"delta sum={stats.delta_sum:+.2f} min={stats.delta_min:+.2f} "
+                f"max={stats.delta_max:+.2f} mean={stats.delta_mean:+.2f}"
+            )
+        empty_agents = agents_with_suspiciously_empty_deltas(agent_results)
+        if empty_agents:
+            print(
+                f"  WARNING: {empty_agents} produced an all-zero delta this run -- likely a wiring "
+                "gap, not a legitimate 'nothing to say this week' (check signal_bundle inputs above)."
+            )
+        overlap = pairwise_lineup_overlap(agent_results)
+        print(f"  Pairwise lineup player-overlap: {overlap}")
+        chalk_ok = chalk_anchor_matches_baseline(agent_results, lineups[0])
+        print(f"  Chalk Anchor matches plain best-projection baseline: {chalk_ok}")
+        if not chalk_ok:
+            print("  WARNING: Chalk Anchor should be provably inert -- this indicates a real bug.")
+    print()
+
     weekly = build_weekly_output(lineups, identities, stack_profiles)
 
     # ------------------------------------------------------------------------------------------
