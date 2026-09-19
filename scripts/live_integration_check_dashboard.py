@@ -547,6 +547,17 @@ def main() -> None:
         print(f"  Chalk Anchor matches plain best-projection baseline: {chalk_ok}")
         if not chalk_ok:
             print("  WARNING: Chalk Anchor should be provably inert -- this indicates a real bug.")
+        print()
+        for r in agent_results:
+            slot_order = ("QB", "RB1", "RB2", "WR1", "WR2", "WR3", "TE", "FLEX", "DST")
+            roster = ", ".join(
+                f"{slot}:{r.lineup.slots[slot].display_name}({r.lineup.slots[slot].team})"
+                for slot in slot_order
+            )
+            print(
+                f"  [{r.agent.display_name}] ${r.lineup.total_salary} / "
+                f"{r.lineup.total_projected_points:.1f}pts -- {roster}"
+            )
     print()
 
     weekly = build_weekly_output(lineups, identities, stack_profiles)
