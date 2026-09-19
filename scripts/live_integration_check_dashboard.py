@@ -301,11 +301,13 @@ def main() -> None:
 
     from nfl_dfs.analysis.circumstance import (
         build_anthropic_messages_client,
+        detect_depth_chart_divergence,
         detect_injury_circumstance_change,
         detect_matchup_extreme_circumstance,
         find_relevant_articles,
         synthesize_circumstance,
     )
+    from nfl_dfs.ingestion.nflverse_depth_charts import fetch_current_depth_chart
     from nfl_dfs.storage.circumstance_cache_store import FilesystemCircumstanceCache
     from nfl_dfs.storage.footballguys_article_store import read_all_articles
 
@@ -382,12 +384,27 @@ def main() -> None:
         is not None
     ]
 
+    print("  Fetching real current NFL depth chart (nflverse)...")
+    depth_chart_entries = fetch_current_depth_chart(SEASON)
+    print(f"  {len(depth_chart_entries)} real skill-position depth-chart entries (most recent snapshot).")
+    depth_chart_divergences = [
+        divergence
+        for role_share in role_share_results
+        if (
+            divergence := detect_depth_chart_divergence(
+                depth_chart_entries, role_share, position_by_player_id=position_by_gsis_id
+            )
+        )
+        is not None
+    ]
+
     print(
         f"  {len(circumstance_changes)} real injury circumstance(s), "
-        f"{len(matchup_extreme_changes)} real matchup-extreme circumstance(s) detected."
+        f"{len(matchup_extreme_changes)} real matchup-extreme circumstance(s), "
+        f"{len(depth_chart_divergences)} real depth-chart divergence(s) detected."
     )
 
-    if circumstance_changes or matchup_extreme_changes:
+    if circumstance_changes or matchup_extreme_changes or depth_chart_divergences:
         if config.anthropic_api_key:
             anthropic_client = build_anthropic_messages_client(config.anthropic_api_key)
             archived_articles = read_all_articles()
@@ -408,6 +425,14 @@ def main() -> None:
                     f"({extreme.matchup.combined_multiplier:.3f}x, {direction})"
                 )
                 _run_synthesis(extreme, relevant_articles, label=label)
+            for divergence in depth_chart_divergences:
+                relevant_articles = find_relevant_articles(divergence.team, archived_articles)
+                label = (
+                    f"{divergence.team} {divergence.role} depth-chart divergence: depth chart says "
+                    f"{divergence.depth_chart_leader.player_name}, usage leads with "
+                    f"{divergence.usage_leader.player_name or divergence.usage_leader.player_id}"
+                )
+                _run_synthesis(divergence, relevant_articles, label=label)
             print(
                 f"  {circumstance_stats['real_calls']} real API call(s), {circumstance_stats['cache_hits']} cache "
                 f"hit(s) -- {circumstance_stats['input_tokens']} input / {circumstance_stats['output_tokens']} "
@@ -427,6 +452,12 @@ def main() -> None:
                 print(
                     f"    {extreme.team} {extreme.position}: {extreme.player_name} vs {extreme.matchup.opponent}, "
                     f"{extreme.matchup.combined_multiplier:.3f}x"
+                )
+            for divergence in depth_chart_divergences:
+                print(
+                    f"    {divergence.team} {divergence.role}: depth chart says "
+                    f"{divergence.depth_chart_leader.player_name}, usage leads with "
+                    f"{divergence.usage_leader.player_name or divergence.usage_leader.player_id}"
                 )
     print()
 
