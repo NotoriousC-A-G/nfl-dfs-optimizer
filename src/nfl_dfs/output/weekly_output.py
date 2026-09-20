@@ -56,6 +56,7 @@ def build_weekly_output(
     stack_profiles: list[StackProfile] | None = None,
     *,
     include_contest_columns: bool = False,
+    lineup_labels: list[str] | None = None,
 ) -> WeeklyOutput:
     """Produce the full weekly deliverable from the real pipeline's already-computed objects.
 
@@ -64,11 +65,17 @@ def build_weekly_output(
     stack_profiles`, if omitted, produces every rationale via the "no StackProfile available"
     fallback path (`output/rationale.py`) rather than raising -- a caller who hasn't computed any
     `StackProfile`s yet still gets a complete, honestly-labeled `WeeklyOutput`.
+
+    `lineup_labels` (2026-09-20, Chris: "have you not named the agents? I want to track
+    performance for each one") -- positionally matched to `lineups`
+    (`e.g. [r.agent.display_name for r in agent_results]`), threaded into each
+    `LineupRationale.agent_label` (see that field's own docstring). `None` (the default) preserves
+    the plain "Lineup N" labeling every existing caller already gets.
     """
     stack_profiles = stack_profiles if stack_profiles is not None else []
 
     exposure_report = build_exposure_report(lineups)
-    rationales = build_lineup_rationales(lineups, stack_profiles)
+    rationales = build_lineup_rationales(lineups, stack_profiles, agent_labels=lineup_labels)
     dk_csv = export_lineups_to_dk_csv(
         lineups, identities, include_contest_columns=include_contest_columns
     )

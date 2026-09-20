@@ -145,3 +145,50 @@ def test_build_lineup_rationales_is_one_indexed_and_covers_every_lineup():
     assert rationales[1].text.startswith("Lineup 2:")
     assert rationales[0].thesis_is_anchored is True
     assert rationales[1].stack_profile_game_id is None
+
+
+# --- agent_label (2026-09-20, Chris: "have you not named the agents?") --------------------------
+
+
+def test_build_lineup_rationale_uses_agent_label_in_header_when_supplied():
+    lineup = _lineup(core_stack_team="MIA")
+    rationale = build_lineup_rationale(lineup, 3, [], agent_label="Arbitrageur")
+    assert rationale.agent_label == "Arbitrageur"
+    assert rationale.text.startswith("Arbitrageur:")
+    assert "Lineup 3:" not in rationale.text
+
+
+def test_build_lineup_rationale_falls_back_to_plain_lineup_n_without_a_label():
+    lineup = _lineup(core_stack_team="MIA")
+    rationale = build_lineup_rationale(lineup, 3, [])
+    assert rationale.agent_label is None
+    assert rationale.text.startswith("Lineup 3:")
+
+
+def test_build_lineup_rationales_threads_agent_labels_positionally():
+    lineup_a = _lineup(core_stack_team="KC")
+    lineup_b = _lineup(core_stack_team="MIA")
+    profile = _profile(home_team="KC", away_team="BUF")
+
+    rationales = build_lineup_rationales(
+        [lineup_a, lineup_b], [profile], agent_labels=["Chalk Anchor", "Game Script Architect"]
+    )
+
+    assert rationales[0].agent_label == "Chalk Anchor"
+    assert rationales[0].text.startswith("Chalk Anchor:")
+    assert rationales[1].agent_label == "Game Script Architect"
+    assert rationales[1].text.startswith("Game Script Architect:")
+    # lineup_index is still the real 1-based position, independent of the display label.
+    assert [r.lineup_index for r in rationales] == [1, 2]
+
+
+def test_build_lineup_rationales_without_agent_labels_is_unchanged():
+    lineup_a = _lineup(core_stack_team="KC")
+    lineup_b = _lineup(core_stack_team="MIA")
+    profile = _profile(home_team="KC", away_team="BUF")
+
+    rationales = build_lineup_rationales([lineup_a, lineup_b], [profile])
+
+    assert all(r.agent_label is None for r in rationales)
+    assert rationales[0].text.startswith("Lineup 1:")
+    assert rationales[1].text.startswith("Lineup 2:")

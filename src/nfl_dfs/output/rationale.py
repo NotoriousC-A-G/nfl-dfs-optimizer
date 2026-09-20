@@ -59,6 +59,13 @@ class LineupRationale:
     # (i.e. a real pivot_to exists for this team specifically) -- False for the "away-side, no
     # anchored thesis" case and for the "no StackProfile at all" case (where it's meaningless).
     thesis_is_anchored: bool
+    # A real, caller-supplied identity for this lineup (2026-09-20, Chris: "have you not named
+    # the agents? I want to track performance for each one") -- e.g. an NflAgentConstructor's own
+    # display_name, when `lineups` came from `agents.orchestrate.generate_agent_lineups`. `None`
+    # for any caller that doesn't have a real per-lineup identity to supply (e.g. the retired
+    # bucket-target generator) -- never a fabricated label, and `text`/rendering both fall back to
+    # the plain positional "Lineup N" they always used before this field existed.
+    agent_label: str | None = None
 
 
 def _core_stack_display(lineup: Lineup) -> str:
@@ -97,11 +104,13 @@ def _find_stack_profile_for_team(
 
 
 def build_lineup_rationale(
-    lineup: Lineup, lineup_index: int, stack_profiles: list[StackProfile]
+    lineup: Lineup, lineup_index: int, stack_profiles: list[StackProfile], agent_label: str | None = None
 ) -> LineupRationale:
     """Build one lineup's rationale. `lineup_index` is a caller-supplied 1-based label (e.g.
-    position in the generated set) used only for the text's own "Lineup N:" prefix -- purely
-    cosmetic, not a join key.
+    position in the generated set) used for the text's own header -- purely cosmetic, not a join
+    key. `agent_label` (e.g. an `NflAgentConstructor.display_name`), when supplied, replaces the
+    generic "Lineup N" header with this lineup's real identity -- see `LineupRationale.agent_label`
+    for why this exists.
 
     Three real outcomes, each stated plainly rather than blurred together:
     1. A home-anchored `StackProfile` exists for `lineup.core_stack_team` -- reuse its real
@@ -115,8 +124,9 @@ def build_lineup_rationale(
        no correlation/game-environment thesis available to cite.
     """
     stack_display = _core_stack_display(lineup)
+    header_label = agent_label if agent_label is not None else f"Lineup {lineup_index}"
     header = (
-        f"Lineup {lineup_index}: {stack_display} ({lineup.core_stack_team} core stack, "
+        f"{header_label}: {stack_display} ({lineup.core_stack_team} core stack, "
         f"${lineup.total_salary:,} salary, {lineup.total_projected_points:.1f} projected pts)."
     )
 
@@ -135,6 +145,7 @@ def build_lineup_rationale(
             text=f"{header} {body}",
             stack_profile_game_id=None,
             thesis_is_anchored=False,
+            agent_label=agent_label,
         )
 
     profile, is_anchor = match
@@ -166,13 +177,21 @@ def build_lineup_rationale(
         text=f"{header} {body}",
         stack_profile_game_id=profile.game_id,
         thesis_is_anchored=is_anchor,
+        agent_label=agent_label,
     )
 
 
 def build_lineup_rationales(
-    lineups: list[Lineup], stack_profiles: list[StackProfile]
+    lineups: list[Lineup], stack_profiles: list[StackProfile], agent_labels: list[str] | None = None
 ) -> list[LineupRationale]:
-    """`build_lineup_rationale` for a full generated set, 1-indexed in generation order."""
+    """`build_lineup_rationale` for a full generated set, 1-indexed in generation order.
+    `agent_labels`, when supplied, must be the same length as `lineups` and positionally matched
+    (`agent_labels[i]` labels `lineups[i]`) -- e.g.
+    `[r.agent.display_name for r in agent_results]`. `None` (the default) preserves the plain
+    "Lineup N" labeling every existing caller already gets.
+    """
+    labels: list[str | None] = list(agent_labels) if agent_labels is not None else [None] * len(lineups)
     return [
-        build_lineup_rationale(lineup, i, stack_profiles) for i, lineup in enumerate(lineups, start=1)
+        build_lineup_rationale(lineup, i, stack_profiles, agent_label=label)
+        for i, (lineup, label) in enumerate(zip(lineups, labels), start=1)
     ]

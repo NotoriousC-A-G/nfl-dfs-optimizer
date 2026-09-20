@@ -109,6 +109,17 @@ def _weekly_output_with_three_lineups():
     return build_weekly_output(lineups, identities), lineups
 
 
+def _weekly_output_with_agent_labels():
+    # 2026-09-20, Chris: "have you not named the agents? I want to track performance for each
+    # one" -- same shape as _weekly_output_with_three_lineups, but with real per-lineup labels.
+    lineups = [_lineup("1", "AAA"), _lineup("2", "FFF"), _lineup("3", "GGG")]
+    identities = []
+    for lineup in lineups:
+        identities.extend(_identity_for(p) for p in lineup.players)
+    labels = ["Chalk Anchor", "Arbitrageur", "Volatility Engine"]
+    return build_weekly_output(lineups, identities, lineup_labels=labels), lineups
+
+
 def _ges(team, *, is_available=True, composite=71.0, weather_applies=False, injury_flag=None):
     weather = ComponentScore(
         label="Weather",
@@ -860,6 +871,27 @@ def test_lineup_membership_badge_shows_which_lineups_a_player_appears_in():
     html = render_dashboard_html(weekly_output, [record])
 
     assert "In L1" in html
+
+
+def test_lineup_card_shows_the_real_agent_name_when_labels_are_supplied():
+    weekly_output, _ = _weekly_output_with_agent_labels()
+
+    html = render_dashboard_html(weekly_output, [], [])
+
+    assert "Chalk Anchor" in html
+    assert "Arbitrageur" in html
+    assert "Volatility Engine" in html
+    assert "Lineup 1:" not in html  # the plain positional label is fully replaced, not appended
+
+
+def test_lineup_membership_badge_shows_the_real_agent_name_when_labels_are_supplied():
+    weekly_output, lineups = _weekly_output_with_agent_labels()
+    lineup_1_qb = lineups[0].slots["QB"]
+    record = _fully_populated_player_detail(lineup_1_qb.canonical_id, lineup_1_qb.display_name, lineup_1_qb.team)
+
+    html = render_dashboard_html(weekly_output, [record])
+
+    assert "In Chalk Anchor" in html
 
 
 # --------------------------------------------------------------------------------------------

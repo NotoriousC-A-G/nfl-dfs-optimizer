@@ -587,7 +587,10 @@ def main() -> None:
     lineups = [r.lineup for r in agent_results]  # the 6 agent lineups ARE the dashboard's lineup
     # set now -- every downstream consumer (build_weekly_output, dup-risk reads, the HTML lineup
     # tab) is agnostic to how a Lineup was generated, so nothing further needs to change below.
-    weekly = build_weekly_output(lineups, identities, stack_profiles)
+    agent_display_names = [r.agent.display_name for r in agent_results]  # real per-lineup identity
+    # (2026-09-20, Chris: "have you not named the agents? I want to track performance for each
+    # one") -- threaded into the dashboard/rationale text instead of the plain "Lineup N" label.
+    weekly = build_weekly_output(lineups, identities, stack_profiles, lineup_labels=agent_display_names)
 
     # ------------------------------------------------------------------------------------------
     # Fetched early (ADR-0027) so PlayerDetailRecords below can join real StackProfile/injury/

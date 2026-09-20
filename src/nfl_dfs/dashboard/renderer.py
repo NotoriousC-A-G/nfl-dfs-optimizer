@@ -336,11 +336,11 @@ def _leverage_badge() -> str:
     )
 
 
-def _in_lineup_badges(canonical_id: str, lineup_membership: dict[str, list[int]]) -> str:
-    indices = lineup_membership.get(canonical_id)
-    if not indices:
+def _in_lineup_badges(canonical_id: str, lineup_membership: dict[str, list[str]]) -> str:
+    labels = lineup_membership.get(canonical_id)
+    if not labels:
         return ""
-    label = ", ".join(f"L{i}" for i in indices)
+    label = ", ".join(labels)
     return _badge(f"In {label}", "badge-lineup", "Appears in this generated lineup set.")
 
 
@@ -410,7 +410,13 @@ def _render_lineups_tab(
     cards = []
     for i, lineup in enumerate(lineups):
         rationale = rationales_by_position[i]
-        label = rationale.lineup_index if rationale is not None else i + 1
+        # A real per-lineup identity (2026-09-20, Chris: "have you not named the agents?"), when
+        # the caller supplied one -- e.g. an NflAgentConstructor's own display_name -- else the
+        # plain positional "Lineup N" label every prior dashboard render already used.
+        if rationale is not None and rationale.agent_label is not None:
+            label_display = rationale.agent_label
+        else:
+            label_display = f"Lineup {rationale.lineup_index if rationale is not None else i + 1}"
         notes_html = ""
         if lineup.notes:
             notes_html = (
@@ -428,7 +434,7 @@ def _render_lineups_tab(
         dup_risk_html = _render_dup_risk_line((dup_risk_by_lineup or {}).get(i))
         cards.append(
             f'<div class="lineup-card">'
-            f'<div class="lineup-head">Lineup {label} '
+            f'<div class="lineup-head">{_esc(label_display)} '
             f'<span class="meta">{_fmt_money(lineup.total_salary)} salary &middot; '
             f"{_fmt_num(lineup.total_projected_points, 1)} projected pts &middot; "
             f"core stack: {_esc(lineup.core_stack_team)}</span></div>"
@@ -1304,7 +1310,7 @@ _SORTABLE_COLUMNS: tuple[tuple[int, str, str], ...] = (
 
 
 def _render_player_detail_tab(
-    player_details: list[PlayerDetailRecord], lineup_membership: dict[str, list[int]]
+    player_details: list[PlayerDetailRecord], lineup_membership: dict[str, list[str]]
 ) -> str:
     if not player_details:
         return '<div class="empty-state">No player-detail records supplied.</div>'
@@ -1733,13 +1739,20 @@ _PAGE_TEMPLATE = """<!doctype html>
 """
 
 
-def _build_lineup_membership(weekly_output: WeeklyOutput) -> dict[str, list[int]]:
-    """`canonical_id -> [1-based lineup indices it appears in]`, for the Player Detail tab's
-    "In L1/L2/L3" cross-reference badge."""
-    membership: dict[str, list[int]] = {}
+def _build_lineup_membership(weekly_output: WeeklyOutput) -> dict[str, list[str]]:
+    """`canonical_id -> [real labels of every lineup it appears in]`, for the Player Detail tab's
+    "In ..." cross-reference badge. A real per-lineup identity (2026-09-20, Chris: "have you not
+    named the agents?"), e.g. an NflAgentConstructor's own `display_name`, when the matching
+    `LineupRationale.agent_label` supplied one -- else the plain positional `"L{i}"` this badge
+    always used before that field existed.
+    """
+    rationales_by_position = list(weekly_output.rationales)
+    membership: dict[str, list[str]] = {}
     for i, lineup in enumerate(weekly_output.lineups, start=1):
+        rationale = rationales_by_position[i - 1] if i - 1 < len(rationales_by_position) else None
+        label = rationale.agent_label if (rationale is not None and rationale.agent_label) else f"L{i}"
         for player in lineup.players:
-            membership.setdefault(player.canonical_id, []).append(i)
+            membership.setdefault(player.canonical_id, []).append(label)
     return membership
 
 
