@@ -144,6 +144,25 @@ def save_agent_results(rows: list[AgentResultRow], *, path: Path | None = None) 
     return results_path
 
 
+def overwrite_agent_results(rows: list[AgentResultRow], *, path: Path | None = None) -> Path:
+    """Replaces the ENTIRE file with exactly `rows` -- the backfill counterpart to `save_agent_
+    results`'s append-only forward log. Used by `tracking/agent_results_collector.py` to write
+    back `total_dk_score`/`lineup_rank` once a week's games settle: the caller reads every row
+    (via `read_agent_results`), replaces the ones it just scored, and passes the FULL set back
+    here. Atomic (write-then-`os.replace`), same posture as every other write in this module and
+    this project's other storage modules."""
+    results_path = path if path is not None else AGENT_RESULTS_PATH
+    results_path.parent.mkdir(parents=True, exist_ok=True)
+    tmp_path = results_path.with_suffix(results_path.suffix + ".tmp")
+    with open(tmp_path, "w", newline="") as f:
+        writer = csv.DictWriter(f, fieldnames=FIELDNAMES)
+        writer.writeheader()
+        for row in rows:
+            writer.writerow(_row_to_csv_dict(row))
+    os.replace(tmp_path, results_path)
+    return results_path
+
+
 def read_agent_results(
     *, season: int | None = None, week: int | None = None, path: Path | None = None
 ) -> list[AgentResultRow]:

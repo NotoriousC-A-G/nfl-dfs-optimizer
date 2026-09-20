@@ -34,6 +34,7 @@ from nfl_dfs.composition.lineup_dup_risk import assess_lineup_dup_risk, build_pr
 from nfl_dfs.composition.player_detail import build_gsis_to_pff_id_map, build_player_detail_record
 from nfl_dfs.config import config
 from nfl_dfs.dashboard.renderer import SlateGameRow, write_dashboard_html
+from nfl_dfs.storage.slate_snapshot_store import save_slate_snapshot
 from nfl_dfs.game_environment.score import (
     GameEnvironmentScore,
     ImpliedTotalInput,
@@ -889,6 +890,16 @@ def main() -> None:
     os.makedirs("dashboard_output", exist_ok=True)
     write_dashboard_html(out_path, weekly, player_details, slate_games, dup_risk_by_lineup=dup_risk_by_lineup)
     print(f"\nWrote real dashboard HTML to {out_path}")
+
+    # Persist the real run's full state (player pool + agent lineups + stack profiles) so a
+    # future postmortem/retrospective layer has something durable to build on -- previously this
+    # entire in-memory state was discarded the moment the process exited (2026-09-20, Chris:
+    # "build the persistence layer", after reviewing the sister MLB project's own postmortem
+    # system and finding it's all built on top of exactly this kind of snapshot).
+    snapshot_path = save_slate_snapshot(
+        SEASON, WEEK, player_details=player_details, agent_results=agent_results, stack_profiles=stack_profiles
+    )
+    print(f"Wrote real slate snapshot to {snapshot_path}")
 
 
 if __name__ == "__main__":
