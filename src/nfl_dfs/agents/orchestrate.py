@@ -1,8 +1,19 @@
 """`generate_agent_lineups`: solve one lineup per `NflAgentConstructor` from the SAME pool
-(NflAgentConstructor Phase B5) -- each agent gets its own independent ILP solve via
-`optimizer/lineup.py`'s `objective_delta_by_id` hook (PR B1), no no-good-cut interaction between
-agents (a stack Chalk Anchor picks is fair game for Volatility Engine too; only each agent's OWN
-prior lineups, if a caller ever asked for more than one per agent, would be cut).
+(NflAgentConstructor Phase B5) -- each agent gets its own ILP solve via `optimizer/lineup.py`'s
+`objective_delta_by_id` hook (PR B1), WITH a cross-agent no-good cut: every earlier agent's core
+stack (this run, in `agents` order) is forbidden from every later agent's solve, via
+`generate_lineups`' `seed_core_stacks` param. This is the exact same no-good-cut technique
+`generate_lineups`' own `n > 1` loop already uses to keep ONE agent's multiple lineups distinct,
+just extended across agents.
+
+**Why this exists (real finding, not a hypothetical):** the first live run of this feature (six
+agents, real week 2 2026 slate) produced only 2 distinct core stacks across 6 agents -- Chalk
+Anchor/Matchup Purist/Explosion-Shootout all landed on the same QB+WR combo, and Game Script
+Architect/Arbitrageur both landed on a different single shared combo. Chris's own framing:
+"you're modeling outcomes and the range of outcomes, [it's] not that narrow" -- the whole point of
+six agents is to sample a real range of correlated-outcome theses; two (or four) of them silently
+collapsing onto the identical stack defeats that. A skinny stack repeating alongside a different
+main stack is a normal, deliberate DFS pattern; six agents landing on two stacks total is not.
 
 Also provides the "verification-first" diagnostics the approved plan calls for -- built into this
 module (not deferred to Phase C's tracking data) after the sister MLB project's own real history:
@@ -21,7 +32,7 @@ from nfl_dfs.agents.constructor import NflAgentConstructor
 from nfl_dfs.agents.registry import CHALK_ANCHOR, NFL_AGENTS
 from nfl_dfs.agents.scoring import compute_agent_objective_delta
 from nfl_dfs.agents.signal_bundle import SignalBundle
-from nfl_dfs.optimizer.lineup import Lineup, generate_lineups
+from nfl_dfs.optimizer.lineup import Lineup, LineupGenerationError, generate_lineups
 from nfl_dfs.projection.blend import PlayerProjection
 
 
@@ -35,6 +46,7 @@ class AgentLineupResult:
     agent: NflAgentConstructor
     lineup: Lineup
     delta_by_canonical_id: dict[str, float]
+    core_stack_forced_unique: bool
 
 
 def generate_agent_lineups(
@@ -42,18 +54,45 @@ def generate_agent_lineups(
     signal_bundle: SignalBundle,
     agents: Sequence[NflAgentConstructor] | None = None,
 ) -> list[AgentLineupResult]:
-    """One independent `generate_lineups(pool, n=1, objective_delta_by_id=...)` solve per agent
-    (`NFL_AGENTS` if `agents` isn't supplied). Raises `LineupGenerationError` (propagated straight
-    from `generate_lineups`, not swallowed) if `pool` is infeasible at all -- every agent shares
-    the same roster/salary/stack constraints, so an infeasible pool fails identically for all of
-    them; there is no per-agent feasibility difference to catch here.
+    """One `generate_lineups(pool, n=1, objective_delta_by_id=...)` solve per agent (`NFL_AGENTS`
+    if `agents` isn't supplied), each seeded with every EARLIER agent's `core_stack` (this run, in
+    `agents` order) as an extra no-good cut -- so two different agents can no longer silently land
+    on the identical QB+pass-catcher combination. The first agent in the list (`Chalk Anchor` by
+    default) always solves unconstrained, since it's the control/baseline and must stay the true
+    best-projection build, not a diversity-adjusted one.
+
+    Raises `LineupGenerationError` (propagated straight from `generate_lineups`, not swallowed) if
+    `pool` is infeasible at all -- every agent shares the same roster/salary/stack constraints, so
+    an infeasible pool fails identically for all of them regardless of any diversity seed.
+
+    A LATER agent can, in principle, run out of legal distinct-core-stack rosters once enough
+    earlier agents have claimed one each (astronomically unlikely on a real ~13-game slate with
+    ~26 team-side QB options, but not impossible on a thin slate) -- when that happens for one
+    specific agent, this falls back to that agent's own unconstrained solve rather than dropping
+    it from the run entirely (`core_stack_forced_unique=False` on that one result marks it).
     """
     resolved_agents = list(agents) if agents is not None else NFL_AGENTS
     results: list[AgentLineupResult] = []
+    used_core_stacks: list[frozenset[str]] = []
     for agent in resolved_agents:
         delta = compute_agent_objective_delta(agent, pool, signal_bundle)
-        lineup = generate_lineups(pool, n=1, objective_delta_by_id=delta)[0]
-        results.append(AgentLineupResult(agent=agent, lineup=lineup, delta_by_canonical_id=delta))
+        try:
+            lineup = generate_lineups(
+                pool, n=1, objective_delta_by_id=delta, seed_core_stacks=used_core_stacks
+            )[0]
+            forced_unique = True
+        except LineupGenerationError:
+            lineup = generate_lineups(pool, n=1, objective_delta_by_id=delta)[0]
+            forced_unique = False
+        results.append(
+            AgentLineupResult(
+                agent=agent,
+                lineup=lineup,
+                delta_by_canonical_id=delta,
+                core_stack_forced_unique=forced_unique,
+            )
+        )
+        used_core_stacks.append(lineup.core_stack)
     return results
 
 
@@ -137,3 +176,14 @@ def chalk_anchor_matches_baseline(
     if chalk is None:
         return False
     return {p.canonical_id for p in chalk.lineup.players} == {p.canonical_id for p in baseline_lineup.players}
+
+
+def distinct_core_stack_count(results: list[AgentLineupResult]) -> int:
+    """How many of `results`' core stacks are actually distinct -- the direct, at-a-glance proof
+    the cross-agent no-good cut is doing its job. With the cut in place this should equal
+    `len(results)` on any real slate with enough team/QB options (every agent's
+    `core_stack_forced_unique` is `True`); a value below that (only possible when at least one
+    agent's cut had to be dropped via the infeasibility fallback -- see `generate_agent_lineups`'
+    own docstring) is worth a second look, not silently accepted.
+    """
+    return len({r.lineup.core_stack for r in results})

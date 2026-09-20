@@ -4,6 +4,7 @@ from nfl_dfs.agents.constructor import NflAgentConstructor
 from nfl_dfs.agents.orchestrate import (
     agents_with_suspiciously_empty_deltas,
     chalk_anchor_matches_baseline,
+    distinct_core_stack_count,
     generate_agent_lineups,
     pairwise_lineup_overlap,
     summarize_agent_deltas,
@@ -55,6 +56,28 @@ def _synthetic_pool() -> list[PlayerProjection]:
         _p("rb_c1", "RB", "CCC", 3800, 8.5),
         _p("rb_d1", "RB", "DDD", 3600, 7.5),
     ]
+
+
+def _many_teams_pool(n_teams: int = 8) -> list[PlayerProjection]:
+    """`n_teams` distinct teams, each with a full QB+2WR+TE+2RB+DST set at slate-legal salaries --
+    deep enough real diversity that 6 agents can each land on a genuinely distinct real
+    QB+pass-catcher core stack, unlike the small 2-team `_synthetic_pool` above (which is used
+    deliberately for the diversity-exhausted fallback test instead).
+    """
+    players: list[PlayerProjection] = []
+    for i in range(n_teams):
+        team = f"T{i}"
+        base = 20.0 - i * 0.3  # slight spread so each team's stack is a genuinely different optimum
+        players += [
+            _p(f"qb_{team}", "QB", team, 7000, base),
+            _p(f"wr1_{team}", "WR", team, 6500, base - 3),
+            _p(f"wr2_{team}", "WR", team, 5500, base - 6),
+            _p(f"te_{team}", "TE", team, 4000, base - 9),
+            _p(f"rb1_{team}", "RB", team, 6000, base - 4),
+            _p(f"rb2_{team}", "RB", team, 4500, base - 8),
+            _p(f"dst_{team}", "DST", team, 2500, base - 12),
+        ]
+    return players
 
 
 def _leverage(ownership_percentile: float) -> LeverageAssessment:
@@ -130,6 +153,63 @@ def test_generate_agent_lineups_propagates_lineup_generation_error_for_an_infeas
     bundle = SignalBundle(signals_by_canonical_id={})
     with pytest.raises(LineupGenerationError):
         generate_agent_lineups(tiny_pool, bundle)
+
+
+# --------------------------------------------------------------------------------------------
+# Cross-agent core-stack diversity (Chris, 2026-09-20: 4 of 6 agents converged onto just 2
+# distinct core stacks on the first real live run -- "you're modeling outcomes and the range of
+# outcomes, not that narrow"). generate_agent_lineups must forbid a later agent from repeating an
+# earlier agent's exact QB+pass-catcher combination whenever the pool has enough real diversity to
+# support it, and must degrade gracefully (never crash the whole run) when it doesn't.
+# --------------------------------------------------------------------------------------------
+
+
+def test_generate_agent_lineups_gives_every_agent_a_distinct_core_stack_on_a_diverse_pool():
+    pool = _many_teams_pool(n_teams=8)
+    bundle = SignalBundle(signals_by_canonical_id={p.canonical_id: PlayerSignals(None, None, None, None) for p in pool})
+    results = generate_agent_lineups(pool, bundle)
+    assert len(results) == len(NFL_AGENTS)
+    assert distinct_core_stack_count(results) == len(results)
+    assert all(r.core_stack_forced_unique for r in results)
+
+
+def test_generate_agent_lineups_falls_back_gracefully_when_diversity_is_exhausted():
+    # A single QB with exactly 3 WR + 1 TE (its whole team's pass-catcher room, no substitutes
+    # anywhere in the pool) forces WR=3/TE=1/RB=3 every solve, per the roster-count constraints --
+    # so this pool has exactly ONE real core stack achievable, ever. Confirms the run still
+    # completes for all 6 agents (never raises) and marks every agent after the first via
+    # core_stack_forced_unique=False rather than silently pretending the cut succeeded.
+    only_stack_pool = [
+        _p("qb_x", "QB", "XXX", 7000, 24.0),
+        _p("wr_x1", "WR", "XXX", 6500, 18.0),
+        _p("wr_x2", "WR", "XXX", 5500, 14.0),
+        _p("wr_x3", "WR", "XXX", 4500, 11.0),
+        _p("te_x", "TE", "XXX", 4000, 9.0),
+        _p("rb_y1", "RB", "YYY", 5500, 13.0),
+        _p("rb_y2", "RB", "YYY", 4500, 10.0),
+        _p("rb_z1", "RB", "ZZZ", 3500, 8.0),
+        _p("dst_y", "DST", "YYY", 2500, 7.0),
+    ]
+    bundle = SignalBundle(
+        signals_by_canonical_id={p.canonical_id: PlayerSignals(None, None, None, None) for p in only_stack_pool}
+    )
+    results = generate_agent_lineups(only_stack_pool, bundle)
+    assert len(results) == len(NFL_AGENTS)
+    assert distinct_core_stack_count(results) == 1
+    assert any(not r.core_stack_forced_unique for r in results)
+    assert results[0].core_stack_forced_unique is True  # Chalk Anchor is never cut
+
+
+def test_chalk_anchor_always_solves_unconstrained_first():
+    # Chalk Anchor must stay the TRUE best-projection baseline -- never diversity-adjusted, even
+    # though it's still the first entry a later agent's cut is seeded from.
+    pool = _many_teams_pool(n_teams=8)
+    bundle = SignalBundle(signals_by_canonical_id={p.canonical_id: PlayerSignals(None, None, None, None) for p in pool})
+    results = generate_agent_lineups(pool, bundle)
+    baseline = generate_lineups(pool, n=1)[0]
+    chalk = next(r for r in results if r.agent.agent_id == "chalk_anchor")
+    assert chalk.core_stack_forced_unique is True
+    assert {p.canonical_id for p in chalk.lineup.players} == {p.canonical_id for p in baseline.players}
 
 
 # --------------------------------------------------------------------------------------------
