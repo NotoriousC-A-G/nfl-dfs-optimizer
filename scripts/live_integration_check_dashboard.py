@@ -530,7 +530,11 @@ def main() -> None:
     )
     try:
         agent_results = generate_agent_lineups(
-            pool, agent_signal_bundle, dup_risk_table=dup_risk_table, game_count=len(dk_slate.games)
+            pool,
+            agent_signal_bundle,
+            dup_risk_table=dup_risk_table,
+            game_count=len(dk_slate.games),
+            opponent_of=opponent_of,
         )
     except LineupGenerationError as exc:
         print(f"LineupGenerationError: {exc}")
@@ -552,7 +556,7 @@ def main() -> None:
     print(f"  Pairwise lineup player-overlap: {overlap}")
     from nfl_dfs.optimizer.lineup import generate_lineups
 
-    baseline_lineup = generate_lineups(pool, n=1)[0]
+    baseline_lineup = generate_lineups(pool, n=1, opponent_of=opponent_of)[0]
     chalk_ok = chalk_anchor_matches_baseline(agent_results, baseline_lineup)
     print(f"  Chalk Anchor matches plain best-projection baseline: {chalk_ok}")
     if not chalk_ok:

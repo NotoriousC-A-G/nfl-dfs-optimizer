@@ -113,6 +113,86 @@ EXCLUDED_INJURY_STATUSES = frozenset({"IR", "OUT"})
 # when two candidate rosters are within a small fraction of a point of each other.
 _GAME_ENVIRONMENT_NUDGE_WEIGHT = 1e-4
 
+# Section 7's DST-correlation soft penalty/bonus (Chris, 2026-09-20, after a real generated
+# lineup rostered a JAX QB+WR stack alongside the Broncos DST -- DEN being JAX's actual opponent
+# this week): "No hard rule against RB or WR facing the opposing DST in the same lineup, but the
+# correlation model should price that matchup as negative" (PRD Section 7). Extended here to every
+# offensive position (QB/RB/WR/TE), not just the PRD's own illustrative RB/WR examples -- the same
+# real mechanism (a player's fantasy output is anti-correlated with a strong defensive performance
+# from the team they're facing) applies identically regardless of position, and QB is the anchor
+# of every stack this project builds. Also extended with a real, complementary positive term
+# (Chris: "it would make sense to use JAX own D in that stack") -- a stack's OWN team's DST is a
+# real, viable correlated build (a comfortable win can mean the stacked offense scores AND that
+# same team's defense gets stops/takeaways), scaled smaller than the penalty since it's a softer,
+# more optional signal than the negative one is a reason to avoid.
+#
+# Both are disclosed DRAFT magnitudes (ADR-0019/0020 convention), not backtested -- scaled to the
+# pool's own real blended_projection IQR (never a fixed constant), the same magnitude discipline
+# `agents/scoring.py` already established, reused here via a local `_pool_iqr` rather than an
+# import (this module is lower-level than `agents/*`; importing from it would invert that
+# dependency).
+_OPPONENT_DST_PENALTY_IQR_FRACTION = 0.5
+_SAME_TEAM_DST_BONUS_IQR_FRACTION = 0.2
+
+
+def _pool_iqr(players: list[PlayerProjection]) -> float:
+    """The candidate pool's own real `blended_projection` interquartile range -- 0.0 (never
+    fabricated) if fewer than 4 players have a usable projection. Same computation
+    `agents/scoring.py`'s own `_pool_iqr` uses, duplicated (not imported) to avoid a dependency
+    inversion -- `optimizer/lineup.py` is lower-level than `agents/*`.
+    """
+    import statistics
+
+    values = sorted(p.blended_projection for p in players if p.blended_projection is not None)
+    if len(values) < 4:
+        return 0.0
+    q1, _, q3 = statistics.quantiles(values, n=4)
+    return q3 - q1
+
+
+def _dst_correlation_terms(
+    players: list[PlayerProjection], x: dict[str, pulp.LpVariable], opponent_of: dict[str, str]
+) -> tuple[list, list]:
+    """Real, PRD Section 7 DST-correlation objective terms plus the ILP constraints that linearize
+    them -- both binary-variable PRODUCTS (`x[dst] AND x[player]`), which pulp can't express
+    directly, so each real pair gets a standard AND-linearization: a new binary `z`, constrained
+    `z <= x[dst]`, `z <= x[player]`, `z >= x[dst] + x[player] - 1` (so `z` is forced to exactly
+    `x[dst] * x[player]` at any integer-feasible solution), contributing `+/-magnitude * z` to the
+    objective. Returns `(objective_terms, constraints)` -- the caller adds the first into its own
+    objective `lpSum` and each of the second via its own `prob +=` call, in that order (pulp
+    requires the objective to be the first `prob +=` call on a fresh `LpProblem`).
+
+    Only real (DST, opposing- or same-team player) pairs that both exist in `players` get a `z` --
+    never every team in the league, just this pool's own real candidates, keeping this bounded
+    (one real NFL slate's DST count times its own real roster depth, not O(teams^2)).
+    """
+    iqr = _pool_iqr(players)
+    if iqr <= 0.0:
+        return [], []
+    penalty = _OPPONENT_DST_PENALTY_IQR_FRACTION * iqr
+    bonus = _SAME_TEAM_DST_BONUS_IQR_FRACTION * iqr
+
+    objective_terms = []
+    constraints = []
+    dsts = [p for p in players if p.position == "DST"]
+    for dst in dsts:
+        opponent_team = opponent_of.get(dst.team)
+        for p in players:
+            if p.position == "DST":
+                continue
+            if p.team == opponent_team:
+                magnitude = -penalty
+            elif p.team == dst.team:
+                magnitude = bonus
+            else:
+                continue
+            z = pulp.LpVariable(f"corr_{dst.canonical_id}_{p.canonical_id}", cat="Binary")
+            constraints.append(z <= x[dst.canonical_id])
+            constraints.append(z <= x[p.canonical_id])
+            constraints.append(z >= x[dst.canonical_id] + x[p.canonical_id] - 1)
+            objective_terms.append(magnitude * z)
+    return objective_terms, constraints
+
 # ADR-0035/0037: dup-risk-aware lineup generation's real, backtested bucket thresholds -- see
 # `generate_dup_risk_aware_lineups`' own docstring below for the full mechanism and
 # `docs/adr/0037-dup-risk-aware-lineup-generation.md` for the backtest that set these exact
@@ -247,11 +327,13 @@ def _solve_single_lineup(
     game_environment_scores: dict[str, float] | None,
     *,
     objective_delta_by_id: dict[str, float] | None = None,
+    opponent_of: dict[str, str] | None = None,
 ) -> Lineup | None:
     """One ILP solve: maximize total blended projection subject to PRD Section 3's roster/salary
-    rules, Section 7's QB+pass-catcher stack rule, and a no-good cut per already-generated
-    lineup's core stack. Returns `None` (never raises) when this specific solve is infeasible --
-    `generate_lineups` decides what that means (first-solve infeasibility vs. cuts exhausted).
+    rules, Section 7's QB+pass-catcher stack rule, a no-good cut per already-generated lineup's
+    core stack, and (when `opponent_of` is supplied) Section 7's DST-correlation soft penalty.
+    Returns `None` (never raises) when this specific solve is infeasible -- `generate_lineups`
+    decides what that means (first-solve infeasibility vs. cuts exhausted).
 
     `objective_delta_by_id` (NflAgentConstructor Phase B) is an optional per-player adjustment
     added to the objective only -- it never touches `blended_projection` itself or the returned
@@ -259,6 +341,13 @@ def _solve_single_lineup(
     only influence WHICH lineup gets selected, never what gets reported as its real projected
     points. A missing `canonical_id` in the dict contributes 0.0, same "no entry, no effect"
     convention as `game_environment_scores.get(...)` above.
+
+    `opponent_of` (team -> this week's real opponent team) turns on Section 7's DST-correlation
+    term -- see `_dst_correlation_terms`' own docstring for the real finding that prompted this
+    (Chris, 2026-09-20: a real generated lineup rostered a JAX QB+WR stack alongside the Broncos
+    DST, DEN being JAX's actual opponent -- directly anti-correlated, and the exact gap
+    `optimizer/lineup.py`'s own module docstring had disclosed as deferred). `None` (the default)
+    preserves this function's exact prior behavior -- no correlation term, byte-identical solves.
     """
     players = list(pool_by_id.values())
     ids = [p.canonical_id for p in players]
@@ -274,7 +363,13 @@ def _solve_single_lineup(
             term += objective_delta_by_id.get(p.canonical_id, 0.0)
         return term
 
-    prob += pulp.lpSum(objective_term(p) * x[p.canonical_id] for p in players)
+    correlation_terms, correlation_constraints = (
+        _dst_correlation_terms(players, x, opponent_of) if opponent_of else ([], [])
+    )
+
+    prob += pulp.lpSum(objective_term(p) * x[p.canonical_id] for p in players) + pulp.lpSum(correlation_terms)
+    for constraint in correlation_constraints:
+        prob += constraint
 
     # Roster size and salary cap (PRD Section 3).
     prob += pulp.lpSum(x[pid] for pid in ids) == ROSTER_SIZE
@@ -347,6 +442,7 @@ def generate_lineups(
     *,
     objective_delta_by_id: dict[str, float] | None = None,
     seed_core_stacks: list[frozenset[str]] | None = None,
+    opponent_of: dict[str, str] | None = None,
 ) -> list[Lineup]:
     """Generate up to `n` distinct-core-stack lineups from a `build_projection_pool` output.
 
@@ -373,6 +469,10 @@ def generate_lineups(
     silently land on the identical QB+pass-catcher combination the way `n > 1` already guarantees
     within one call. Defaults to `None` (no extra cuts), so existing single-call behavior is
     unaffected.
+
+    `opponent_of` (PRD Section 7's DST-correlation term, 2026-09-20) -- see
+    `_dst_correlation_terms`' own docstring. `None` (the default) preserves this function's exact
+    prior behavior.
     """
     import warnings
 
@@ -387,6 +487,7 @@ def generate_lineups(
             previous_core_stacks,
             game_environment_scores,
             objective_delta_by_id=objective_delta_by_id,
+            opponent_of=opponent_of,
         )
         if lineup is None:
             if i == 0:
@@ -531,6 +632,7 @@ def generate_dup_risk_aware_lineups(
     game_environment_scores: dict[str, float] | None = None,
     objective_delta_by_id: dict[str, float] | None = None,
     n_lineups: int = 3,
+    opponent_of: dict[str, str] | None = None,
 ) -> list[DupRiskAwareLineup]:
     """ADR-0035's design (built ADR-0037, generalized 2026-09-20 -- see below) -- **post-hoc
     candidate selection over an oversampled pool, NOT a hard ownership cap and NOT a linear
@@ -578,13 +680,15 @@ def generate_dup_risk_aware_lineups(
 
     `objective_delta_by_id` (NflAgentConstructor Phase B) -- see `_solve_single_lineup`'s
     docstring. Applies to every oversampled candidate before selection, same as
-    `game_environment_scores`.
+    `game_environment_scores`. `opponent_of` (PRD Section 7's DST-correlation term) -- see
+    `_dst_correlation_terms`' own docstring; also applies to every oversampled candidate.
     """
     candidates = generate_lineups(
         pool,
         n=oversample_size,
         game_environment_scores=game_environment_scores,
         objective_delta_by_id=objective_delta_by_id,
+        opponent_of=opponent_of,
     )
     return _select_dup_risk_aware_lineups(
         candidates, projected_ownership_by_canonical_id, dup_risk_table, n_lineups=n_lineups
