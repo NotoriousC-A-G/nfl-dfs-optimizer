@@ -1,5 +1,8 @@
+from dataclasses import replace
+
 from nfl_dfs.storage.agent_results_store import (
     AgentResultRow,
+    overwrite_agent_results,
     read_agent_results,
     save_agent_results,
 )
@@ -124,3 +127,27 @@ def test_players_tuple_round_trips_in_roster_order(tmp_path):
 
     result = read_agent_results(path=path)[0]
     assert result.players == ("Trevor Lawrence (QB-JAX)", "Bijan Robinson (RB-ATL)")
+
+
+def test_overwrite_agent_results_replaces_entire_file(tmp_path):
+    path = tmp_path / "agent_results.csv"
+    save_agent_results([_row("chalk_anchor", "Chalk Anchor"), _row("operator", "L1")], path=path)
+
+    kept_and_updated = [
+        replace(row, total_dk_score=99.0) if row.agent_id == "operator" else None
+        for row in read_agent_results(path=path)
+    ]
+    new_rows = [r for r in kept_and_updated if r is not None]
+    overwrite_agent_results(new_rows, path=path)
+
+    results = read_agent_results(path=path)
+    assert len(results) == 1
+    assert results[0].agent_id == "operator"
+    assert results[0].total_dk_score == 99.0
+
+
+def test_overwrite_agent_results_is_atomic_no_tmp_file_left_behind(tmp_path):
+    path = tmp_path / "agent_results.csv"
+    overwrite_agent_results([_row("chalk_anchor", "Chalk Anchor")], path=path)
+    assert list(tmp_path.glob("*.tmp")) == []
+    assert path.exists()
