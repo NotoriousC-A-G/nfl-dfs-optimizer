@@ -424,15 +424,47 @@ def _avg_projected_ownership(
     return sum(values) / len(values), len(values)
 
 
+@dataclass(frozen=True)
+class DupRiskAwareLineup:
+    """One lineup from `generate_dup_risk_aware_lineups`, plus the real bucket/target bookkeeping
+    needed to know whether it actually achieved the leverage tier it was built for -- or is the
+    best available real alternative once that tier wasn't reachable (Chris, 2026-09-20: "loosen
+    the restriction but flag it" -- every requested slot gets a REAL, distinct lineup whenever the
+    oversampled pool has any spare candidate left, never silently omitted; `met_target` is how a
+    caller tells the two cases apart instead of a slot just quietly not existing).
+    """
+
+    lineup: Lineup
+    target_bucket: int | None  # None for the Lineup-1-equivalent slot (no ownership target at all)
+    achieved_bucket: int | None  # None if avg ownership couldn't be computed for this lineup
+    met_target: bool  # True iff target_bucket is None, or achieved_bucket is real and <= it
+
+
+def _target_buckets_for_slot_count(n_lineups: int) -> tuple[int | None, ...]:
+    """The real, disclosed target bucket per requested slot. Slots 1-3 are exactly ADR-0035's own
+    backtested design (`None` for the unconstrained best build, `LINEUP_2_MAX_BUCKET`,
+    `LINEUP_3_MAX_BUCKET`) -- the only three targets this project has real backtest evidence for.
+    Any slot beyond 3 (Chris, 2026-09-20: "I want more than 3 lineups to choose from") spreads
+    across the remaining real bucket range in descending order -- a disclosed DRAFT extrapolation,
+    not independently backtested the way the first three are; ADR-0035's own bucket 0-2 finding
+    (all three statistically tied on dup rate) is the only evidence this project has about buckets
+    below 7, so buckets 3-6 here are a reasonable, undocumented middle ground, not a validated claim.
+    """
+    all_targets: list[int | None] = [None, LINEUP_2_MAX_BUCKET, LINEUP_3_MAX_BUCKET, 6, 5, 4, 3, 1, 0]
+    return tuple(all_targets[:n_lineups])
+
+
 def _select_dup_risk_aware_lineups(
     candidates: list[Lineup],
     projected_ownership_by_canonical_id: dict[str, float],
     dup_risk_table: DupRiskLookupTable,
-) -> list[Lineup]:
+    *,
+    n_lineups: int = 3,
+) -> list[DupRiskAwareLineup]:
     """Pure selection logic over an already-generated, already-distinct-core-stack `candidates`
-    list (ADR-0035's final resolved rule) -- separated from `generate_dup_risk_aware_lineups`'
-    own ILP-driving wrapper so this rule can be unit-tested directly against hand-built `Lineup`/
-    `DupRiskLookupTable` fixtures, without an actual `pulp` solve.
+    list -- separated from `generate_dup_risk_aware_lineups`' own ILP-driving wrapper so this rule
+    can be unit-tested directly against hand-built `Lineup`/`DupRiskLookupTable` fixtures, without
+    an actual `pulp` solve.
 
     `candidates` is assumed ranked best-to-worst by `total_projected_points`, which
     `generate_lineups` always produces by construction: each successive no-good cut only adds
@@ -440,13 +472,23 @@ def _select_dup_risk_aware_lineups(
     one specific core-stack combination, never relaxes anything), so solve `i`'s feasible region
     is a strict subset of solve `i-1`'s -- solve `i`'s optimum can therefore never exceed solve
     `i-1`'s. No separate re-sort is needed or performed here.
+
+    For each target slot after the first: the best real, unused-core-stack candidate whose bucket
+    clears the target is picked when one exists (`met_target=True`). When none does, this NO
+    LONGER omits the slot -- the best real, unused-core-stack candidate overall is picked instead,
+    preferring whichever comes CLOSEST to the target bucket (ties broken by real points), and
+    `met_target=False` discloses that it's a fallback, not the genuine leverage tier requested.
+    A slot is only ever truly absent when the oversampled pool has no distinct-core-stack candidate
+    left at all to give it (`oversample_size < n_lineups`, or diversity genuinely exhausted).
     """
     if not candidates:
         return []
 
+    targets = _target_buckets_for_slot_count(n_lineups)
+
     lineup_1 = candidates[0]
     used_core_stacks = {lineup_1.core_stack}
-    result = [lineup_1]
+    result = [DupRiskAwareLineup(lineup=lineup_1, target_bucket=None, achieved_bucket=None, met_target=True)]
 
     classified: list[tuple[Lineup, int]] = []
     for candidate in candidates[1:]:
@@ -457,23 +499,25 @@ def _select_dup_risk_aware_lineups(
         bucket, _, _ = classify_avg_ownership(avg_own, dup_risk_table)
         classified.append((candidate, bucket))
 
-    lineup_2 = next(
-        (c for c, b in classified if b <= LINEUP_2_MAX_BUCKET and c.core_stack not in used_core_stacks), None
-    )
-    if lineup_2 is None:
-        lineup_2 = next(
-            (c for c, b in classified if b <= LINEUP_2_FALLBACK_BUCKET and c.core_stack not in used_core_stacks), None
-        )
-    if lineup_2 is not None:
-        result.append(lineup_2)
-        used_core_stacks.add(lineup_2.core_stack)
+    for target in targets[1:]:
+        available = [(c, b) for c, b in classified if c.core_stack not in used_core_stacks]
+        if not available:
+            break  # genuinely no distinct-core-stack candidate left -- not a fabricated slot.
 
-    lineup_3 = next(
-        (c for c, b in classified if b <= LINEUP_3_MAX_BUCKET and c.core_stack not in used_core_stacks), None
-    )
-    if lineup_3 is not None:
-        result.append(lineup_3)
-        used_core_stacks.add(lineup_3.core_stack)
+        on_target = [c for c, b in available if b <= target]
+        # LINEUP_2's own real, backtested fallback (bucket<=8) only applies to that exact slot --
+        # ADR-0035 never validated a fallback for any other target, so it isn't generalized here.
+        if not on_target and target == LINEUP_2_MAX_BUCKET:
+            on_target = [c for c, b in available if b <= LINEUP_2_FALLBACK_BUCKET]
+
+        if on_target:
+            chosen = on_target[0]  # `available` preserves candidates' original best-to-worst order
+            achieved = next(b for c, b in available if c is chosen)
+            result.append(DupRiskAwareLineup(lineup=chosen, target_bucket=target, achieved_bucket=achieved, met_target=True))
+        else:
+            chosen, achieved = min(available, key=lambda cb: (abs(cb[1] - target), -cb[0].total_projected_points))
+            result.append(DupRiskAwareLineup(lineup=chosen, target_bucket=target, achieved_bucket=achieved, met_target=False))
+        used_core_stacks.add(result[-1].lineup.core_stack)
 
     return result
 
@@ -486,41 +530,40 @@ def generate_dup_risk_aware_lineups(
     oversample_size: int = DEFAULT_OVERSAMPLE_SIZE,
     game_environment_scores: dict[str, float] | None = None,
     objective_delta_by_id: dict[str, float] | None = None,
-) -> list[Lineup]:
-    """ADR-0035's fully-resolved design, built (ADR-0037) -- **post-hoc candidate selection over
-    an oversampled pool, NOT a hard ownership cap and NOT a linear penalty in the ILP objective**
-    (both explicitly rejected by ADR-0035's design review: ownership distributions shift
-    slate-to-slate, and the real relationship is a flat region followed by a sharp cliff, not a
-    smooth gradient a single linear coefficient could represent).
+    n_lineups: int = 3,
+) -> list[DupRiskAwareLineup]:
+    """ADR-0035's design (built ADR-0037, generalized 2026-09-20 -- see below) -- **post-hoc
+    candidate selection over an oversampled pool, NOT a hard ownership cap and NOT a linear
+    penalty in the ILP objective** (both explicitly rejected by ADR-0035's design review:
+    ownership distributions shift slate-to-slate, and the real relationship is a flat region
+    followed by a sharp cliff, not a smooth gradient a single linear coefficient could represent).
 
     Generates `oversample_size` distinct-core-stack candidates via `generate_lineups` (the exact
     same no-good-cut mechanism, just run further -- ADR-0035's own "15-25 candidates instead of
     3"), classifies each candidate's average projected ownership through `dup_risk_table` (the
-    same production `DupRiskLookupTable` ADR-0034's dashboard read already uses), then selects the
-    final lineups by ADR-0035's real, backtested rule:
+    same production `DupRiskLookupTable` ADR-0034's dashboard read already uses), then selects
+    `n_lineups` final lineups via `_select_dup_risk_aware_lineups` -- see that function's own
+    docstring for the real per-slot rule, including ADR-0035's exact backtested targets for the
+    first 3 slots and the disclosed-draft extrapolation for any slot beyond that.
 
-    - **Lineup 1**: the single best candidate by `total_projected_points`, no ownership
-      consideration -- identical to `generate_lineups`' own first lineup.
-    - **Lineup 2**: best-`total_projected_points` candidate with ownership bucket
-      `<= LINEUP_2_MAX_BUCKET` (7); falls back to `<= LINEUP_2_FALLBACK_BUCKET` (8) only if
-      nothing qualifies at <= 7 -- bucket 8 is explicitly NOT the primary target (ADR-0035: real
-      dup-rate cost, unreliable points benefit once checked season-by-season).
-    - **Lineup 3**: best-`total_projected_points` candidate with ownership bucket
-      `<= LINEUP_3_MAX_BUCKET` (2) -- buckets 0-2 are statistically tied on dup rate, so this is
-      whichever of them scores best, never forced to the literal ownership floor (PRD Section 7:
-      "none of the 3 should be... a pure max-leverage punt").
+    **Generalized 2026-09-20 (Chris: "I want more than 3 lineups to choose from" / "loosen the
+    restriction but flag it") from the original hard-coded 3-lineup, silently-omit-on-miss design:**
+    every requested slot now gets a REAL, distinct lineup whenever the oversampled pool has any
+    spare candidate, even if it doesn't clear its target ownership bucket -- each returned
+    `DupRiskAwareLineup.met_target` discloses whether it's the genuine article or the closest real
+    fallback, instead of a slot just silently not existing.
 
     A candidate whose average projected ownership can't be computed (fewer than
     `MIN_OWNERSHIP_COVERAGE` of its 9 players resolve in `projected_ownership_by_canonical_id`) is
-    excluded from Lineup 2/3 selection entirely -- never guessed into a bucket. Every returned
+    excluded from bucket-target selection entirely -- never guessed into a bucket. Every returned
     lineup has a distinct core stack from every other (guaranteed by construction: all candidates
     come from the same no-good-cut-generated, pairwise-distinct pool).
 
     Raises `LineupGenerationError` under the same conditions `generate_lineups` does (no feasible
-    lineup at all). If the oversampled pool can't produce a bucket-qualifying candidate for
-    Lineup 2 or 3 -- a thin slate, or genuinely no low-ownership build exists -- that lineup is
-    simply omitted from the returned list (`generate_lineups`' own "diversity exhausted, not an
-    error" posture), so this function can return 1, 2, or 3 lineups.
+    lineup at all). A slot is only genuinely absent from the result when the oversampled pool has
+    no distinct-core-stack candidate left to give it at all (`oversample_size < n_lineups`, or
+    diversity truly exhausted) -- so this function can return fewer than `n_lineups` lineups in
+    that specific case, but never merely because a target bucket wasn't reached.
 
     **A disclosed assumption, not a proven equivalence (ADR-0035 Consequences, precondition 1):**
     the backtest that resolved the bucket thresholds above defined a "strong" lineup using REAL,
@@ -543,4 +586,6 @@ def generate_dup_risk_aware_lineups(
         game_environment_scores=game_environment_scores,
         objective_delta_by_id=objective_delta_by_id,
     )
-    return _select_dup_risk_aware_lineups(candidates, projected_ownership_by_canonical_id, dup_risk_table)
+    return _select_dup_risk_aware_lineups(
+        candidates, projected_ownership_by_canonical_id, dup_risk_table, n_lineups=n_lineups
+    )

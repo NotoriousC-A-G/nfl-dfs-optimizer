@@ -489,20 +489,61 @@ def main() -> None:
     n_with_real_z = sum(1 for s in ceiling_signals_by_gsis_id.values() if s.shrunk_z_score is not None)
     print(f"  {len(ceiling_signals_by_gsis_id)} player(s) with a Component A signal, {n_with_real_z} with a real (gated-in) shrunk_z_score\n")
 
-    print("=== Solving for up to 3 dup-risk-aware lineups (ADR-0035/0037) ===")
+    # Chris, 2026-09-20: "I want more than 3 lineups to choose from" -- a disclosed draft count,
+    # not itself backtested (only the first 3 real ADR-0035 target buckets are); see
+    # optimizer.lineup._target_buckets_for_slot_count's own docstring for what slots 4-5 target.
+    N_DUP_RISK_AWARE_LINEUPS = 5
+
+    print(f"=== Solving for up to {N_DUP_RISK_AWARE_LINEUPS} dup-risk-aware lineups (ADR-0035/0037, generalized 2026-09-20) ===")
     try:
         if dup_risk_table is not None:
-            lineups = generate_dup_risk_aware_lineups(pool, projected_ownership_by_canonical_id, dup_risk_table)
+            graded_lineups = generate_dup_risk_aware_lineups(
+                pool, projected_ownership_by_canonical_id, dup_risk_table, n_lineups=N_DUP_RISK_AWARE_LINEUPS
+            )
         else:
-            # No real dup-risk table this pull -- fall back to plain best-3-by-projection rather
+            # No real dup-risk table this pull -- fall back to plain best-N-by-projection rather
             # than blocking the whole dashboard build on a table that couldn't be built.
-            from nfl_dfs.optimizer.lineup import generate_lineups
+            from nfl_dfs.optimizer.lineup import DupRiskAwareLineup, generate_lineups
 
-            lineups = generate_lineups(pool, n=3)
+            graded_lineups = [
+                DupRiskAwareLineup(lineup=lu, target_bucket=None, achieved_bucket=None, met_target=True)
+                for lu in generate_lineups(pool, n=N_DUP_RISK_AWARE_LINEUPS)
+            ]
     except LineupGenerationError as exc:
         print(f"LineupGenerationError: {exc}")
         return
+    lineups = [g.lineup for g in graded_lineups]  # plain Lineup list -- every existing downstream
+    # consumer (build_weekly_output, dup-risk reads, the agent-lineup baseline) is unaffected.
     print(f"Generated {len(lineups)} lineup(s). Core stack teams: {[lu.core_stack_team for lu in lineups]}\n")
+
+    print("Computing real GPP grades (Chris, 2026-09-20: 'the MLB lineups give each a GPP grade')...")
+    from nfl_dfs.analysis.gpp_grade import compute_gpp_grade, compute_max_ceiling_weighted_total
+    from nfl_dfs.composition.player_detail import _ceiling_multiplier
+
+    ceiling_multiplier_by_canonical_id: dict[str, float] = {}
+    for identity in identities:
+        cm, _ = _ceiling_multiplier(identity.nflverse_gsis_id, identity.position, ceiling_signals_by_gsis_id)
+        if cm is not None:
+            ceiling_multiplier_by_canonical_id[identity.canonical_id] = cm
+    print(f"  {len(ceiling_multiplier_by_canonical_id)} player(s) with a real ceiling_multiplier feeding the grade")
+
+    max_ceiling_weighted_total = compute_max_ceiling_weighted_total(pool, ceiling_multiplier_by_canonical_id)
+    game_count = len(dk_slate.games)
+    for g in graded_lineups:
+        grade = compute_gpp_grade(
+            g.lineup,
+            projected_ownership_by_canonical_id=projected_ownership_by_canonical_id,
+            ceiling_multiplier_by_canonical_id=ceiling_multiplier_by_canonical_id,
+            max_ceiling_weighted_total=max_ceiling_weighted_total,
+            game_count=game_count,
+        )
+        target_desc = "anchor, no target" if g.target_bucket is None else f"target bucket<={g.target_bucket}"
+        fallback_note = "" if g.met_target else "  [FALLBACK -- target not reached]"
+        print(
+            f"  [{g.lineup.core_stack_team}] {target_desc}, achieved bucket={g.achieved_bucket} "
+            f"-> grade {grade.grade} ({grade.detail}){fallback_note}"
+        )
+    print()
 
     print("=== Solving 6 NflAgentConstructor lineups (Phase B5, additive -- not a replacement) ===")
     from nfl_dfs.agents import (
