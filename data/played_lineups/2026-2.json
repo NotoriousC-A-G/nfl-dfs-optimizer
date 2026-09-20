@@ -1,0 +1,199 @@
+{
+  "season": 2026,
+  "week": 2,
+  "logged_at": "2026-09-20T17:11:04.236553+00:00",
+  "lineups": [
+    {
+      "label": "L1",
+      "players": [
+        {
+          "display_name": "Caleb Williams",
+          "position": "QB",
+          "team": "CHI",
+          "salary": 6800
+        },
+        {
+          "display_name": "Bijan Robinson",
+          "position": "RB",
+          "team": "ATL",
+          "salary": 8200
+        },
+        {
+          "display_name": "Derrick Henry",
+          "position": "RB",
+          "team": "BAL",
+          "salary": 7200
+        },
+        {
+          "display_name": "Justin Jefferson",
+          "position": "WR",
+          "team": "MIN",
+          "salary": 7800
+        },
+        {
+          "display_name": "Luther Burden III",
+          "position": "WR",
+          "team": "CHI",
+          "salary": 5700
+        },
+        {
+          "display_name": "Jaylin Noel",
+          "position": "WR",
+          "team": "HOU",
+          "salary": 3700
+        },
+        {
+          "display_name": "Colston Loveland",
+          "position": "TE",
+          "team": "CHI",
+          "salary": 5000
+        },
+        {
+          "display_name": "Darren Waller",
+          "position": "TE",
+          "team": "CAR",
+          "salary": 3100
+        },
+        {
+          "display_name": "Jaguars",
+          "position": "DST",
+          "team": "JAX",
+          "salary": 2400
+        }
+      ],
+      "source_agent_label": null,
+      "edits": [
+        {
+          "player_out": "Caleb Douglas",
+          "player_in": "Jaylin Noel",
+          "note": "swapped before lock, per Chris"
+        }
+      ],
+      "total_salary": 49900
+    },
+    {
+      "label": "L2",
+      "players": [
+        {
+          "display_name": "Jayden Daniels",
+          "position": "QB",
+          "team": "WAS",
+          "salary": 6300
+        },
+        {
+          "display_name": "Bijan Robinson",
+          "position": "RB",
+          "team": "ATL",
+          "salary": 8200
+        },
+        {
+          "display_name": "Christian McCaffrey",
+          "position": "RB",
+          "team": "SF",
+          "salary": 8000
+        },
+        {
+          "display_name": "George Pickens",
+          "position": "WR",
+          "team": "DAL",
+          "salary": 6300
+        },
+        {
+          "display_name": "Terry McLaurin",
+          "position": "WR",
+          "team": "WAS",
+          "salary": 5200
+        },
+        {
+          "display_name": "Matthew Golden",
+          "position": "WR",
+          "team": "GB",
+          "salary": 4700
+        },
+        {
+          "display_name": "Dalton Schultz",
+          "position": "TE",
+          "team": "HOU",
+          "salary": 3200
+        },
+        {
+          "display_name": "Aaron Jones Sr.",
+          "position": "RB",
+          "team": "MIN",
+          "salary": 5100
+        },
+        {
+          "display_name": "Jaguars",
+          "position": "DST",
+          "team": "JAX",
+          "salary": 2400
+        }
+      ],
+      "source_agent_label": null,
+      "edits": [],
+      "total_salary": 49400
+    },
+    {
+      "label": "L3",
+      "players": [
+        {
+          "display_name": "Baker Mayfield",
+          "position": "QB",
+          "team": "TB",
+          "salary": 5600
+        },
+        {
+          "display_name": "Derrick Henry",
+          "position": "RB",
+          "team": "BAL",
+          "salary": 7200
+        },
+        {
+          "display_name": "Breece Hall",
+          "position": "RB",
+          "team": "NYJ",
+          "salary": 6200
+        },
+        {
+          "display_name": "Emeka Egbuka",
+          "position": "WR",
+          "team": "TB",
+          "salary": 6400
+        },
+        {
+          "display_name": "Matthew Golden",
+          "position": "WR",
+          "team": "GB",
+          "salary": 4700
+        },
+        {
+          "display_name": "K.C. Concepcion Jr.",
+          "position": "WR",
+          "team": "CLE",
+          "salary": 4100
+        },
+        {
+          "display_name": "Mark Andrews",
+          "position": "TE",
+          "team": "BAL",
+          "salary": 4400
+        },
+        {
+          "display_name": "Christian McCaffrey",
+          "position": "RB",
+          "team": "SF",
+          "salary": 8000
+        },
+        {
+          "display_name": "Ravens",
+          "position": "DST",
+          "team": "BAL",
+          "salary": null
+        }
+      ],
+      "source_agent_label": null,
+      "edits": [],
+      "total_salary": null
+    }
+  ]
+}
