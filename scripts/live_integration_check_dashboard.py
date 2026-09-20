@@ -55,7 +55,7 @@ from nfl_dfs.normalization.crosswalk import fetch_crosswalk
 from nfl_dfs.normalization.injury_lookup import team_injuries
 from nfl_dfs.normalization.matcher import reconcile_week
 from nfl_dfs.normalization.registry import PlayerRegistry
-from nfl_dfs.optimizer.lineup import EXCLUDED_INJURY_STATUSES, LineupGenerationError, generate_dup_risk_aware_lineups
+from nfl_dfs.optimizer.lineup import EXCLUDED_INJURY_STATUSES, LineupGenerationError
 from nfl_dfs.output.weekly_output import build_weekly_output
 from nfl_dfs.ownership.leverage import build_leverage_assessments
 from nfl_dfs.composition.player_detail import _pff_native_id_for_identity
@@ -489,63 +489,20 @@ def main() -> None:
     n_with_real_z = sum(1 for s in ceiling_signals_by_gsis_id.values() if s.shrunk_z_score is not None)
     print(f"  {len(ceiling_signals_by_gsis_id)} player(s) with a Component A signal, {n_with_real_z} with a real (gated-in) shrunk_z_score\n")
 
-    # Chris, 2026-09-20: "I want more than 3 lineups to choose from" -- a disclosed draft count,
-    # not itself backtested (only the first 3 real ADR-0035 target buckets are); see
-    # optimizer.lineup._target_buckets_for_slot_count's own docstring for what slots 4-5 target.
-    N_DUP_RISK_AWARE_LINEUPS = 5
-
-    print(f"=== Solving for up to {N_DUP_RISK_AWARE_LINEUPS} dup-risk-aware lineups (ADR-0035/0037, generalized 2026-09-20) ===")
-    try:
-        if dup_risk_table is not None:
-            graded_lineups = generate_dup_risk_aware_lineups(
-                pool, projected_ownership_by_canonical_id, dup_risk_table, n_lineups=N_DUP_RISK_AWARE_LINEUPS
-            )
-        else:
-            # No real dup-risk table this pull -- fall back to plain best-N-by-projection rather
-            # than blocking the whole dashboard build on a table that couldn't be built.
-            from nfl_dfs.optimizer.lineup import DupRiskAwareLineup, generate_lineups
-
-            graded_lineups = [
-                DupRiskAwareLineup(lineup=lu, target_bucket=None, achieved_bucket=None, met_target=True)
-                for lu in generate_lineups(pool, n=N_DUP_RISK_AWARE_LINEUPS)
-            ]
-    except LineupGenerationError as exc:
-        print(f"LineupGenerationError: {exc}")
-        return
-    lineups = [g.lineup for g in graded_lineups]  # plain Lineup list -- every existing downstream
-    # consumer (build_weekly_output, dup-risk reads, the agent-lineup baseline) is unaffected.
-    print(f"Generated {len(lineups)} lineup(s). Core stack teams: {[lu.core_stack_team for lu in lineups]}\n")
-
-    print("Computing real GPP grades (Chris, 2026-09-20: 'the MLB lineups give each a GPP grade')...")
-    from nfl_dfs.analysis.gpp_grade import compute_gpp_grade, compute_max_ceiling_weighted_total
-    from nfl_dfs.composition.player_detail import _ceiling_multiplier
-
-    ceiling_multiplier_by_canonical_id: dict[str, float] = {}
-    for identity in identities:
-        cm, _ = _ceiling_multiplier(identity.nflverse_gsis_id, identity.position, ceiling_signals_by_gsis_id)
-        if cm is not None:
-            ceiling_multiplier_by_canonical_id[identity.canonical_id] = cm
-    print(f"  {len(ceiling_multiplier_by_canonical_id)} player(s) with a real ceiling_multiplier feeding the grade")
-
-    max_ceiling_weighted_total = compute_max_ceiling_weighted_total(pool, ceiling_multiplier_by_canonical_id)
-    game_count = len(dk_slate.games)
-    for g in graded_lineups:
-        grade = compute_gpp_grade(
-            g.lineup,
-            projected_ownership_by_canonical_id=projected_ownership_by_canonical_id,
-            ceiling_multiplier_by_canonical_id=ceiling_multiplier_by_canonical_id,
-            max_ceiling_weighted_total=max_ceiling_weighted_total,
-            game_count=game_count,
-        )
-        target_desc = "anchor, no target" if g.target_bucket is None else f"target bucket<={g.target_bucket}"
-        fallback_note = "" if g.met_target else "  [FALLBACK -- target not reached]"
-        print(
-            f"  [{g.lineup.core_stack_team}] {target_desc}, achieved bucket={g.achieved_bucket} "
-            f"-> grade {grade.grade} ({grade.detail}){fallback_note}"
-        )
-    print()
-
-    print("=== Solving 6 NflAgentConstructor lineups (Phase B5, additive -- not a replacement) ===")
+    # ------------------------------------------------------------------------------------------
+    # 2026-09-20: the 6 NflAgentConstructor lineups are now the dashboard's PRIMARY lineup set,
+    # replacing the separate ownership-bucket-TARGETING mechanism (`generate_dup_risk_aware_
+    # lineups`, ADR-0035/0037) that used to feed it. Chris: "if we have 6 agents, in theory we
+    # should get 6 lineups" -- rather than two parallel, uncoordinated candidate sets (an arbitrary
+    # N from blind oversample-then-classify, and 6 from real, thesis-driven agents), each agent's
+    # own real preference axes now organically produce whatever ownership/ceiling profile its
+    # lineup lands in -- read DESCRIPTIVELY (achieved_bucket, gpp_grade below), never targeted by a
+    # blind search. `generate_dup_risk_aware_lineups`/`_select_dup_risk_aware_lineups` and
+    # `analysis/gpp_grade.py` are NOT deleted -- both are real, tested, reusable (the grading
+    # module in particular is reused directly below) -- just no longer the live script's primary
+    # generation path.
+    # ------------------------------------------------------------------------------------------
+    print("=== Solving 6 NflAgentConstructor lineups (now the dashboard's primary lineup set) ===")
     from nfl_dfs.agents import (
         agents_with_suspiciously_empty_deltas,
         build_signal_bundle,
@@ -572,52 +529,60 @@ def main() -> None:
         implied_total_by_team={},
     )
     try:
-        agent_results = generate_agent_lineups(pool, agent_signal_bundle)
+        agent_results = generate_agent_lineups(
+            pool, agent_signal_bundle, dup_risk_table=dup_risk_table, game_count=len(dk_slate.games)
+        )
     except LineupGenerationError as exc:
-        print(f"  LineupGenerationError: {exc}")
-        agent_results = []
+        print(f"LineupGenerationError: {exc}")
+        return
 
-    if agent_results:
-        for stats in summarize_agent_deltas(agent_results):
-            print(
-                f"  {stats.agent_id}: {stats.n_players_affected} player(s) affected, "
-                f"delta sum={stats.delta_sum:+.2f} min={stats.delta_min:+.2f} "
-                f"max={stats.delta_max:+.2f} mean={stats.delta_mean:+.2f}"
-            )
-        empty_agents = agents_with_suspiciously_empty_deltas(agent_results)
-        if empty_agents:
-            print(
-                f"  WARNING: {empty_agents} produced an all-zero delta this run -- likely a wiring "
-                "gap, not a legitimate 'nothing to say this week' (check signal_bundle inputs above)."
-            )
-        overlap = pairwise_lineup_overlap(agent_results)
-        print(f"  Pairwise lineup player-overlap: {overlap}")
-        chalk_ok = chalk_anchor_matches_baseline(agent_results, lineups[0])
-        print(f"  Chalk Anchor matches plain best-projection baseline: {chalk_ok}")
-        if not chalk_ok:
-            print("  WARNING: Chalk Anchor should be provably inert -- this indicates a real bug.")
-        n_distinct = distinct_core_stack_count(agent_results)
-        print(f"  Distinct core stacks: {n_distinct}/{len(agent_results)}")
-        not_forced = [r.agent.agent_id for r in agent_results if not r.core_stack_forced_unique]
-        if not_forced:
-            print(
-                f"  NOTE: {not_forced} couldn't get a real distinct core stack this run -- the "
-                "cross-agent diversity cut was dropped for these (diversity genuinely exhausted "
-                "on this pool, not a wiring bug -- see generate_agent_lineups' own docstring)."
-            )
-        print()
-        for r in agent_results:
-            slot_order = ("QB", "RB1", "RB2", "WR1", "WR2", "WR3", "TE", "FLEX", "DST")
-            roster = ", ".join(
-                f"{slot}:{r.lineup.slots[slot].display_name}({r.lineup.slots[slot].team})"
-                for slot in slot_order
-            )
-            print(
-                f"  [{r.agent.display_name}] ${r.lineup.total_salary} / "
-                f"{r.lineup.total_projected_points:.1f}pts -- {roster}"
-            )
+    for stats in summarize_agent_deltas(agent_results):
+        print(
+            f"  {stats.agent_id}: {stats.n_players_affected} player(s) affected, "
+            f"delta sum={stats.delta_sum:+.2f} min={stats.delta_min:+.2f} "
+            f"max={stats.delta_max:+.2f} mean={stats.delta_mean:+.2f}"
+        )
+    empty_agents = agents_with_suspiciously_empty_deltas(agent_results)
+    if empty_agents:
+        print(
+            f"  WARNING: {empty_agents} produced an all-zero delta this run -- likely a wiring "
+            "gap, not a legitimate 'nothing to say this week' (check signal_bundle inputs above)."
+        )
+    overlap = pairwise_lineup_overlap(agent_results)
+    print(f"  Pairwise lineup player-overlap: {overlap}")
+    from nfl_dfs.optimizer.lineup import generate_lineups
+
+    baseline_lineup = generate_lineups(pool, n=1)[0]
+    chalk_ok = chalk_anchor_matches_baseline(agent_results, baseline_lineup)
+    print(f"  Chalk Anchor matches plain best-projection baseline: {chalk_ok}")
+    if not chalk_ok:
+        print("  WARNING: Chalk Anchor should be provably inert -- this indicates a real bug.")
+    n_distinct = distinct_core_stack_count(agent_results)
+    print(f"  Distinct core stacks: {n_distinct}/{len(agent_results)}")
+    not_forced = [r.agent.agent_id for r in agent_results if not r.core_stack_forced_unique]
+    if not_forced:
+        print(
+            f"  NOTE: {not_forced} couldn't get a real distinct core stack this run -- the "
+            "cross-agent diversity cut was dropped for these (diversity genuinely exhausted "
+            "on this pool, not a wiring bug -- see generate_agent_lineups' own docstring)."
+        )
+    print()
+    for r in agent_results:
+        slot_order = ("QB", "RB1", "RB2", "WR1", "WR2", "WR3", "TE", "FLEX", "DST")
+        roster = ", ".join(
+            f"{slot}:{r.lineup.slots[slot].display_name}({r.lineup.slots[slot].team})"
+            for slot in slot_order
+        )
+        grade_desc = f"grade {r.gpp_grade.grade} ({r.gpp_grade.detail})" if r.gpp_grade is not None else "grade n/a"
+        print(
+            f"  [{r.agent.display_name}] ${r.lineup.total_salary} / "
+            f"{r.lineup.total_projected_points:.1f}pts / bucket={r.achieved_bucket} / {grade_desc} -- {roster}"
+        )
     print()
 
+    lineups = [r.lineup for r in agent_results]  # the 6 agent lineups ARE the dashboard's lineup
+    # set now -- every downstream consumer (build_weekly_output, dup-risk reads, the HTML lineup
+    # tab) is agnostic to how a Lineup was generated, so nothing further needs to change below.
     weekly = build_weekly_output(lineups, identities, stack_profiles)
 
     # ------------------------------------------------------------------------------------------
@@ -898,9 +863,9 @@ def main() -> None:
     print("Building real dup-risk read for each generated lineup (ADR-0033/0034)...")
     dup_risk_by_lineup: dict[int, object] = {}
     if dup_risk_table is not None:
-        # Reuses the same dup-risk table built earlier for ADR-0035/0037's generation-time
-        # selection -- this is a second, independent read (the lineup's REAL selected players,
-        # not the candidate-pool average `generate_dup_risk_aware_lineups` used internally), not
+        # Reuses the same dup-risk table `generate_agent_lineups` already used for its own
+        # descriptive `achieved_bucket` read above -- this is a second, independent read (a real
+        # `LineupDupRiskAssessment` with historical dup-rate context, not just a bucket index), not
         # a redundant rebuild of the table itself.
         dup_risk_by_lineup = {
             i: assess_lineup_dup_risk(lineup, identities, leverage_by_native_id, dup_risk_table)
