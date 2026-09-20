@@ -89,6 +89,7 @@ def generate_agent_lineups(
     *,
     dup_risk_table: DupRiskLookupTable | None = None,
     game_count: int | None = None,
+    opponent_of: dict[str, str] | None = None,
 ) -> list[AgentLineupResult]:
     """One `generate_lineups(pool, n=1, objective_delta_by_id=...)` solve per agent (`NFL_AGENTS`
     if `agents` isn't supplied), each seeded with every EARLIER agent's `core_stack` (this run, in
@@ -101,6 +102,11 @@ def generate_agent_lineups(
     `achieved_bucket`/`gpp_grade` to every result (see `AgentLineupResult`'s own docstring) --
     `compute_max_ceiling_weighted_total` (one extra real ILP solve) runs ONCE per pool here, never
     per-agent, since it's a property of the pool, not of any one agent's build.
+
+    `opponent_of` (PRD Section 7's DST-correlation term, 2026-09-20 -- see `optimizer.lineup.
+    _dst_correlation_terms`' own docstring) threads through to every agent's own solve, so no
+    agent -- including Chalk Anchor -- can silently pair its own stack with the DST it's playing
+    against. This is a real correctness fix every agent should get, not a per-agent preference.
 
     Raises `LineupGenerationError` (propagated straight from `generate_lineups`, not swallowed) if
     `pool` is infeasible at all -- every agent shares the same roster/salary/stack constraints, so
@@ -124,11 +130,15 @@ def generate_agent_lineups(
         delta = compute_agent_objective_delta(agent, pool, signal_bundle)
         try:
             lineup = generate_lineups(
-                pool, n=1, objective_delta_by_id=delta, seed_core_stacks=used_core_stacks
+                pool,
+                n=1,
+                objective_delta_by_id=delta,
+                seed_core_stacks=used_core_stacks,
+                opponent_of=opponent_of,
             )[0]
             forced_unique = True
         except LineupGenerationError:
-            lineup = generate_lineups(pool, n=1, objective_delta_by_id=delta)[0]
+            lineup = generate_lineups(pool, n=1, objective_delta_by_id=delta, opponent_of=opponent_of)[0]
             forced_unique = False
 
         achieved_bucket = None

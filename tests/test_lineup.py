@@ -1,3 +1,4 @@
+import pulp
 import pytest
 
 from nfl_dfs.analysis.dup_risk_calibration import DupRiskLookupTable
@@ -164,6 +165,99 @@ def test_no_good_cut_does_not_forbid_individual_player_reuse():
     # how small this synthetic pool is -- the assertion is just that repetition is *possible*,
     # i.e. the cut isn't accidentally wiping the whole roster each time.
     assert len(shared_across_all_three) >= 1
+
+
+# --------------------------------------------------------------------------------------------
+# opponent_of -- PRD Section 7's DST-correlation term (Chris, 2026-09-20: a real generated lineup
+# rostered a JAX QB+WR stack alongside the Broncos DST, DEN being JAX's real opponent that week --
+# directly anti-correlated, and the exact gap this module's own docstring had disclosed as
+# deferred). This fixture reproduces that exact failure mode: AAA's stack is the single best real
+# combo in the pool, and BBB's DST is priced slightly ABOVE AAA's own DST -- so a correlation-BLIND
+# solve picks AAA's stack + the OPPOSING (BBB) DST, same shape as the real bug.
+# --------------------------------------------------------------------------------------------
+
+
+def _dst_correlation_pool() -> list[PlayerProjection]:
+    return [
+        _p("qb_a", "QB", "AAA", 7500, 26.0),  # the single best stack in the pool
+        _p("wr_a1", "WR", "AAA", 7000, 20.0),
+        _p("wr_a2", "WR", "AAA", 6000, 14.0),
+        _p("te_a1", "TE", "AAA", 4500, 10.0),
+        _p("rb_a1", "RB", "AAA", 6500, 15.0),
+        _p("rb_a2", "RB", "AAA", 5000, 11.0),
+        _p("dst_a", "DST", "AAA", 3000, 7.5),  # AAA's own DST -- slightly cheaper raw projection
+        _p("qb_b", "QB", "BBB", 7200, 18.0),
+        _p("wr_b1", "WR", "BBB", 6800, 14.0),
+        _p("wr_b2", "WR", "BBB", 5800, 11.0),
+        _p("te_b1", "TE", "BBB", 4200, 8.0),
+        _p("rb_b1", "RB", "BBB", 6200, 12.0),
+        _p("rb_b2", "RB", "BBB", 4800, 9.0),
+        _p("dst_b", "DST", "BBB", 3000, 8.0),  # BBB's DST -- slightly HIGHER raw projection
+        _p("wr_c1", "WR", "CCC", 3500, 8.0),
+        _p("wr_c2", "WR", "CCC", 3200, 7.0),
+        _p("te_c1", "TE", "CCC", 2800, 5.0),
+        _p("rb_c1", "RB", "CCC", 3800, 8.5),
+        _p("rb_d1", "RB", "DDD", 3600, 7.5),
+    ]
+
+
+def test_no_opponent_of_reproduces_the_real_bug_stack_paired_with_opposing_dst():
+    pool = _dst_correlation_pool()
+    baseline = generate_lineups(pool, n=1)[0]
+    stack_team = next(p for p in baseline.players if p.position == "QB").team
+    dst = next(p for p in baseline.players if p.position == "DST")
+    # Confirms the fixture actually reproduces the real failure mode before testing the fix.
+    assert stack_team == "AAA"
+    assert dst.canonical_id == "dst_b"  # BBB's DST -- AAA's real opponent
+
+
+def test_opponent_of_avoids_pairing_a_stack_with_its_opponents_dst():
+    pool = _dst_correlation_pool()
+    aware = generate_lineups(pool, n=1, opponent_of={"AAA": "BBB", "BBB": "AAA"})[0]
+    stack_team = next(p for p in aware.players if p.position == "QB").team
+    dst = next(p for p in aware.players if p.position == "DST")
+    assert stack_team == "AAA"
+    assert dst.canonical_id == "dst_a"  # switched to AAA's OWN DST, same real stack otherwise
+    non_dst_ids = {p.canonical_id for p in aware.players if p.position != "DST"}
+    baseline_non_dst_ids = {
+        p.canonical_id for p in generate_lineups(pool, n=1)[0].players if p.position != "DST"
+    }
+    assert non_dst_ids == baseline_non_dst_ids  # only the DST choice changed
+
+
+def test_opponent_of_none_is_byte_identical_to_omitted():
+    pool = _dst_correlation_pool()
+    omitted = generate_lineups(pool, n=1)
+    explicit_none = generate_lineups(pool, n=1, opponent_of=None)
+    assert [lu.core_stack for lu in omitted] == [lu.core_stack for lu in explicit_none]
+    assert [{p.canonical_id for p in lu.players} for lu in omitted] == [
+        {p.canonical_id for p in lu.players} for lu in explicit_none
+    ]
+
+
+def test_dst_correlation_terms_creates_a_real_negative_and_positive_pair():
+    from nfl_dfs.optimizer.lineup import _dst_correlation_terms
+
+    pool = _dst_correlation_pool()
+    x = {p.canonical_id: pulp.LpVariable(p.canonical_id, cat="Binary") for p in pool}
+    terms, constraints = _dst_correlation_terms(pool, x, {"AAA": "BBB", "BBB": "AAA"})
+    assert len(terms) > 0
+    assert len(constraints) == len(terms) * 3  # 3 linearization constraints per real pair
+
+
+def test_dst_correlation_terms_produces_no_penalty_when_opponent_of_has_no_real_entry():
+    # _dst_correlation_terms itself doesn't gate on opponent_of being non-empty (that guard lives
+    # at the caller -- see test_opponent_of_none_is_byte_identical_to_omitted); called directly
+    # with {}, opponent_of.get(team) is always None, so no PENALTY term can ever fire (nothing
+    # matches "the opponent's team"), but the same-team BONUS still legitimately fires -- it only
+    # needs a DST's own team, never the opponent.
+    from nfl_dfs.optimizer.lineup import _dst_correlation_terms
+
+    pool = _dst_correlation_pool()
+    x = {p.canonical_id: pulp.LpVariable(p.canonical_id, cat="Binary") for p in pool}
+    terms, constraints = _dst_correlation_terms(pool, x, {})
+    assert len(terms) > 0
+    assert len(constraints) == len(terms) * 3
 
 
 # --------------------------------------------------------------------------------------------

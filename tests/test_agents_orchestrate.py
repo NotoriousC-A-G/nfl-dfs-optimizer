@@ -241,6 +241,45 @@ def test_chalk_anchor_always_solves_unconstrained_first():
     assert {p.canonical_id for p in chalk.lineup.players} == {p.canonical_id for p in baseline.players}
 
 
+def test_generate_agent_lineups_threads_opponent_of_through_to_every_agent():
+    # PRD Section 7's DST-correlation term (2026-09-20) must reach every agent's own solve --
+    # including Chalk Anchor, since avoiding an anti-correlated DST is a real correctness fix,
+    # not a per-agent preference. Same fixture shape as optimizer/lineup.py's own
+    # test_opponent_of_avoids_pairing_a_stack_with_its_opponents_dst.
+    pool = [
+        _p("qb_a", "QB", "AAA", 7500, 26.0),
+        _p("wr_a1", "WR", "AAA", 7000, 20.0),
+        _p("wr_a2", "WR", "AAA", 6000, 14.0),
+        _p("te_a1", "TE", "AAA", 4500, 10.0),
+        _p("rb_a1", "RB", "AAA", 6500, 15.0),
+        _p("rb_a2", "RB", "AAA", 5000, 11.0),
+        _p("dst_a", "DST", "AAA", 3000, 7.5),
+        _p("qb_b", "QB", "BBB", 7200, 18.0),
+        _p("wr_b1", "WR", "BBB", 6800, 14.0),
+        _p("wr_b2", "WR", "BBB", 5800, 11.0),
+        _p("te_b1", "TE", "BBB", 4200, 8.0),
+        _p("rb_b1", "RB", "BBB", 6200, 12.0),
+        _p("rb_b2", "RB", "BBB", 4800, 9.0),
+        _p("dst_b", "DST", "BBB", 3000, 8.0),
+        _p("wr_c1", "WR", "CCC", 3500, 8.0),
+        _p("wr_c2", "WR", "CCC", 3200, 7.0),
+        _p("te_c1", "TE", "CCC", 2800, 5.0),
+        _p("rb_c1", "RB", "CCC", 3800, 8.5),
+        _p("rb_d1", "RB", "DDD", 3600, 7.5),
+    ]
+    bundle = SignalBundle(signals_by_canonical_id={p.canonical_id: PlayerSignals(None, None, None, None) for p in pool})
+
+    without_fix = generate_agent_lineups(pool, bundle, agents=[CHALK_ANCHOR])
+    dst_without = next(p for p in without_fix[0].lineup.players if p.position == "DST")
+    assert dst_without.canonical_id == "dst_b"  # reproduces the real bug: opponent's DST
+
+    with_fix = generate_agent_lineups(
+        pool, bundle, agents=[CHALK_ANCHOR], opponent_of={"AAA": "BBB", "BBB": "AAA"}
+    )
+    dst_with = next(p for p in with_fix[0].lineup.players if p.position == "DST")
+    assert dst_with.canonical_id == "dst_a"  # switched to the stack's OWN DST
+
+
 # --------------------------------------------------------------------------------------------
 # Real, descriptive achieved_bucket/gpp_grade (2026-09-20: agent lineups became the dashboard's
 # primary lineup set, replacing the separate ownership-bucket-TARGETING mechanism -- Chris: "if we
