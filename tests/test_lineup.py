@@ -345,7 +345,8 @@ def test_select_dup_risk_aware_lineups_picks_best_points_candidate_within_each_b
     ownership.update(_ownership_for(fifth, 5.0, n_covered_players=MIN_OWNERSHIP_COVERAGE))
 
     result = _select_dup_risk_aware_lineups(candidates, ownership, table)
-    assert result == [best, second, fourth]
+    assert [r.lineup for r in result] == [best, second, fourth]
+    assert all(r.met_target for r in result)
 
 
 def test_select_dup_risk_aware_lineups_falls_back_to_bucket_8_only_when_nothing_clears_bucket_7():
@@ -358,7 +359,12 @@ def test_select_dup_risk_aware_lineups_falls_back_to_bucket_8_only_when_nothing_
     ownership.update(_ownership_for(fallback, 85.0, n_covered_players=MIN_OWNERSHIP_COVERAGE))
 
     result = _select_dup_risk_aware_lineups(candidates, ownership, table)
-    assert result == [best, fallback]  # bucket-8 fallback used for lineup 2; no lineup 3 available.
+    # bucket-8 fallback used for lineup 2 -- ADR-0035's OWN backtested fallback, so this still
+    # counts as met_target=True (it's the documented secondary target, not a generic fallback);
+    # no candidate left at all for lineup 3.
+    assert [r.lineup for r in result] == [best, fallback]
+    assert result[1].met_target is True
+    assert result[1].achieved_bucket == 8
 
 
 def test_select_dup_risk_aware_lineups_excludes_candidates_below_the_ownership_coverage_floor():
@@ -373,7 +379,7 @@ def test_select_dup_risk_aware_lineups_excludes_candidates_below_the_ownership_c
     ownership.update(_ownership_for(real, 5.0, n_covered_players=MIN_OWNERSHIP_COVERAGE))
 
     result = _select_dup_risk_aware_lineups(candidates, ownership, table)
-    assert result == [best, real]  # `thin` skipped entirely for lineup 2/3, despite better points.
+    assert [r.lineup for r in result] == [best, real]  # `thin` skipped entirely, despite better points.
 
 
 def test_select_dup_risk_aware_lineups_never_reuses_a_core_stack_across_slots():
@@ -389,8 +395,8 @@ def test_select_dup_risk_aware_lineups_never_reuses_a_core_stack_across_slots():
     ownership.update(_ownership_for(next_best_low, 15.0, n_covered_players=MIN_OWNERSHIP_COVERAGE))
 
     result = _select_dup_risk_aware_lineups(candidates, ownership, table)
-    assert result == [best, double_qualifier, next_best_low]
-    assert len({lu.core_stack for lu in result}) == 3
+    assert [r.lineup for r in result] == [best, double_qualifier, next_best_low]
+    assert len({r.lineup.core_stack for r in result}) == 3
 
 
 def test_select_dup_risk_aware_lineups_empty_candidates_returns_empty_list():
@@ -398,7 +404,10 @@ def test_select_dup_risk_aware_lineups_empty_candidates_returns_empty_list():
     assert _select_dup_risk_aware_lineups([], {}, table) == []
 
 
-def test_select_dup_risk_aware_lineups_omits_lineup_2_and_3_when_nothing_qualifies():
+def test_select_dup_risk_aware_lineups_falls_back_with_met_target_false_when_nothing_qualifies():
+    # Chris, 2026-09-20: "loosen the restriction but flag it" -- a candidate that can't clear its
+    # target bucket is no longer silently omitted; it's returned as the closest real fallback,
+    # with met_target=False disclosing that it isn't the genuine leverage tier.
     table = _fake_dup_risk_table(tuple(float(10 * i) for i in range(1, 10)))  # 10 buckets, 0-9.
     best = _fake_lineup("best", 100.0)
     chalky = _fake_lineup("chalky", 90.0)
@@ -408,7 +417,34 @@ def test_select_dup_risk_aware_lineups_omits_lineup_2_and_3_when_nothing_qualifi
     ownership = _ownership_for(chalky, 1000.0, n_covered_players=MIN_OWNERSHIP_COVERAGE)
 
     result = _select_dup_risk_aware_lineups(candidates, ownership, table)
-    assert result == [best]  # neither lineup 2 nor lineup 3 exists this run.
+    assert [r.lineup for r in result] == [best, chalky]  # chalky is now included, not omitted...
+    assert result[0].met_target is True  # lineup 1 (the anchor) has no target to miss
+    assert result[1].met_target is False  # ...but flagged as not meeting the lineup-2 target
+    assert result[1].target_bucket == LINEUP_2_MAX_BUCKET
+    assert result[1].achieved_bucket == 9
+    # No candidate left at all for lineup 3 -- chalky was the only other real candidate, and it's
+    # already used, so that slot is genuinely absent (never a fabricated 4th entry).
+    assert len(result) == 2
+
+
+def test_select_dup_risk_aware_lineups_n_lineups_generalizes_beyond_three():
+    table = _fake_dup_risk_table(tuple(float(10 * i) for i in range(1, 10)))  # 10 buckets, 0-9.
+    best = _fake_lineup("best", 100.0)
+    b7 = _fake_lineup("b7", 90.0)
+    b2 = _fake_lineup("b2", 85.0)
+    b6 = _fake_lineup("b6", 80.0)
+    b5 = _fake_lineup("b5", 75.0)
+    candidates = [best, b7, b2, b6, b5]
+    ownership: dict[str, float] = {}
+    ownership.update(_ownership_for(b7, 75.0, n_covered_players=MIN_OWNERSHIP_COVERAGE))  # bucket 7
+    ownership.update(_ownership_for(b2, 25.0, n_covered_players=MIN_OWNERSHIP_COVERAGE))  # bucket 2
+    ownership.update(_ownership_for(b6, 65.0, n_covered_players=MIN_OWNERSHIP_COVERAGE))  # bucket 6
+    ownership.update(_ownership_for(b5, 55.0, n_covered_players=MIN_OWNERSHIP_COVERAGE))  # bucket 5
+
+    result = _select_dup_risk_aware_lineups(candidates, ownership, table, n_lineups=5)
+    assert len(result) == 5
+    assert [r.lineup for r in result] == [best, b7, b2, b6, b5]
+    assert all(r.met_target for r in result)
 
 
 def test_generate_dup_risk_aware_lineups_matches_plain_generation_when_every_candidate_is_bucket_zero():
@@ -424,7 +460,8 @@ def test_generate_dup_risk_aware_lineups_matches_plain_generation_when_every_can
 
     plain = generate_lineups(pool, n=3)
     aware = generate_dup_risk_aware_lineups(pool, ownership, table, oversample_size=3)
-    assert [lu.core_stack for lu in aware] == [lu.core_stack for lu in plain]
+    assert [r.lineup.core_stack for r in aware] == [lu.core_stack for lu in plain]
+    assert all(r.met_target for r in aware)
 
 
 def test_generate_dup_risk_aware_lineups_raises_on_an_infeasible_pool():
@@ -503,9 +540,9 @@ def test_generate_dup_risk_aware_lineups_threads_objective_delta_by_id_through()
     boosted_id = next(
         p.canonical_id
         for p in pool
-        if p.canonical_id not in {bp.canonical_id for bp in baseline[0].players}
+        if p.canonical_id not in {bp.canonical_id for bp in baseline[0].lineup.players}
     )
     boosted = generate_dup_risk_aware_lineups(
         pool, ownership, table, oversample_size=3, objective_delta_by_id={boosted_id: 1000.0}
     )
-    assert boosted_id in {p.canonical_id for p in boosted[0].players}
+    assert boosted_id in {p.canonical_id for p in boosted[0].lineup.players}
