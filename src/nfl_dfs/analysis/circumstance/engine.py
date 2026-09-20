@@ -36,7 +36,6 @@ from datetime import date, datetime, timezone
 from typing import Protocol
 
 from nfl_dfs.ingestion.odds_api import TEAM_NAME_TO_ABBR
-from nfl_dfs.storage.footballguys_article_store import ArchivedArticle
 
 _ABBR_TO_FULL_NAME: dict[str, str] = {abbr: full for full, abbr in TEAM_NAME_TO_ABBR.items()}
 
@@ -71,7 +70,23 @@ _WEEK_TAG_RE = re.compile(r"(?i)^week\s*(\d+)$")
 _WEEK_MENTION_RE = re.compile(r"(?i)\bweek\s*(\d+)\b")
 
 
-def _article_week(article: ArchivedArticle) -> int | None:
+class ArticleEvidence(Protocol):
+    """Structural interface any article-evidence source implements (added 2026-09-20 when
+    RotoGrinders became a second real source alongside Footballguys -- `storage/
+    footballguys_article_store.ArchivedArticle` and `storage/rotogrinders_article_store.
+    RotoGrindersArchivedArticle` both satisfy this without either needing to inherit from
+    anything, same structural-typing style as `CircumstanceSource` above). `find_relevant_articles`
+    accepts a mixed list from multiple sources -- everything below only ever reads these four
+    fields, never anything source-specific.
+    """
+
+    title: str
+    published_date: str | None
+    tags: list[str]
+    text: str
+
+
+def _article_week(article: ArticleEvidence) -> int | None:
     """Best-effort REAL week number this article is ABOUT (not just when it was published) --
     prefers the clean `"week N"` tag (confirmed live 2026-09-19: present on ~82% of real September
     2026 articles, exact values `"week 1"`/`"week 2"`), falling back to a "week N" mention in the
@@ -93,33 +108,42 @@ _FANDUEL_TITLE_RE = re.compile(r"(?i)\bfanduel\b")
 _DRAFTKINGS_TITLE_RE = re.compile(r"(?i)\bdraftkings\b")
 
 
-def _is_fanduel_specific(article: ArchivedArticle) -> bool:
-    """True when this article's own TITLE identifies it as FanDuel-platform-specific content (real
-    "Cracking FanDuel"/"FanDuel GPP Guide"/"FanDuel Top 10" style pieces -- different salary cap,
-    different scoring/bonus rules than DraftKings). Confirmed live 2026-09-19: title is a clean,
-    reliable signal for this -- zero real archived articles have both "FanDuel" and "DraftKings" in
-    the title. TAGS are deliberately NOT used for this check: many genuinely DK-specific pieces
-    ("DraftKings Thursday Showdown", "Vegas Value Chart") are ALSO tagged "FanDuel" as a broad
-    cross-platform DFS tag, so a tag-based check would wrongly drop real DK-relevant content. This
-    project is DraftKings-only by design (Chris: "I primarily play on DraftKings"), so this is an
-    unconditional exclusion in `find_relevant_articles`, not an opt-in.
+def _is_fanduel_specific(article: ArticleEvidence) -> bool:
+    """True when this article's own TITLE identifies it as FanDuel-ONLY content, never mentioning
+    DraftKings at all (real "Cracking FanDuel"/"FanDuel GPP Guide"/"FanDuel Top 10" style pieces --
+    different salary cap, different scoring/bonus rules than DraftKings). Confirmed live
+    2026-09-19: among Footballguys' own archive, title is a clean, reliable signal for this -- zero
+    real Footballguys articles have both "FanDuel" and "DraftKings" in the title, so this check
+    never had to distinguish "FanDuel-only" from "mentions FanDuel too." That changed once
+    RotoGrinders became a second source (2026-09-20): its real "DraftKings & FanDuel Expert
+    Survey"-style titles genuinely name both, and this function correctly does NOT exclude them
+    (they're not FanDuel-ONLY) -- `RotoGrindersArchivedArticle.platform_mixed` is the separate,
+    dedicated signal for "this DOES mix platforms, weigh it accordingly," not a reason to also
+    make THIS function stricter. TAGS are deliberately NOT used for this check: many genuinely
+    DK-specific Footballguys pieces ("DraftKings Thursday Showdown", "Vegas Value Chart") are ALSO
+    tagged "FanDuel" as a broad cross-platform DFS tag, so a tag-based check would wrongly drop
+    real DK-relevant content. This project is DraftKings-only by design (Chris: "I primarily play
+    on DraftKings"), so this is an unconditional exclusion in `find_relevant_articles`, not an
+    opt-in.
     """
     return bool(_FANDUEL_TITLE_RE.search(article.title)) and not _DRAFTKINGS_TITLE_RE.search(article.title)
 
 
 def find_relevant_articles(
     team: str,
-    articles: list[ArchivedArticle],
+    articles: list[ArticleEvidence],
     *,
     max_results: int = DEFAULT_MAX_ARTICLES,
     week: int | None = None,
     as_of: date | None = None,
     recency_window_days: int = DEFAULT_RECENCY_WINDOW_DAYS,
-) -> list[ArchivedArticle]:
-    """Every archived Footballguys article (`storage/footballguys_article_store.py`) whose title or
-    body mentions `team` by its full name or nickname (e.g. "Minnesota Vikings" or "Vikings" for
-    "MIN") -- a real, blunt substring match, not semantic search; reuses `odds_api.py`'s
-    `TEAM_NAME_TO_ABBR` (ADR-0011 "reuse before inventing") rather than a new team-name table.
+) -> list[ArticleEvidence]:
+    """Every archived article (Footballguys, RotoGrinders, or any future `ArticleEvidence`
+    source -- callers merge multiple archives into one `articles` list, this function itself has
+    no source-specific logic) whose title or body mentions `team` by its full name or nickname
+    (e.g. "Minnesota Vikings" or "Vikings" for "MIN") -- a real, blunt substring match, not
+    semantic search; reuses `odds_api.py`'s `TEAM_NAME_TO_ABBR` (ADR-0011 "reuse before
+    inventing") rather than a new team-name table.
 
     **Always excludes FanDuel-platform-specific content** -- see `_is_fanduel_specific`. This
     project is DraftKings-only; FanDuel's salary/scoring rules differ enough that a FanDuel-specific
@@ -168,7 +192,7 @@ def find_relevant_articles(
     return matches[:max_results]
 
 
-def _matches_target_week(article: ArchivedArticle, week: int, *, as_of: date, window_days: int) -> bool:
+def _matches_target_week(article: ArticleEvidence, week: int, *, as_of: date, window_days: int) -> bool:
     if article.published_date:
         try:
             published = date.fromisoformat(article.published_date)
@@ -277,18 +301,35 @@ class CircumstanceCache(Protocol):
     def write(self, source: CircumstanceSource, assessment: CircumstanceAssessment) -> None: ...
 
 
-def _build_prompt(source: CircumstanceSource, articles: list[ArchivedArticle], *, max_article_chars: int) -> str:
+def _article_evidence_header(a: ArticleEvidence) -> str:
+    """`### Title (date)` plus a disclosed caveat when the source marks itself as not cleanly
+    DraftKings-specific (`platform_mixed`, added 2026-09-20 for RotoGrinders -- `getattr` with a
+    default rather than an `isinstance` check, so this stays source-agnostic: any future
+    `ArticleEvidence` source can opt into the same disclosure just by carrying this attribute,
+    without `engine.py` needing to know that source's concrete type).
+    """
+    header = f"### {a.title} ({a.published_date or 'undated'})"
+    if getattr(a, "platform_mixed", False):
+        header += " [NOTE: this source mixes DraftKings and FanDuel advice without separating " \
+            "which pick applies to which platform -- this project is DraftKings-only, so weigh " \
+            "any platform-specific detail here with real caution]"
+    return header
+
+
+def _build_prompt(source: CircumstanceSource, articles: list[ArticleEvidence], *, max_article_chars: int) -> str:
     team = source.circumstance_team()
     if articles:
         evidence_block = "\n\n".join(
-            f"### {a.title} ({a.published_date or 'undated'})\n{a.text[:max_article_chars]}" for a in articles
+            f"{_article_evidence_header(a)}\n{a.text[:max_article_chars]}" for a in articles
         )
         evidence_instruction = (
             "Ground your answer in the article excerpts above where they're relevant, and say which "
-            "article(s) informed any specific claim you make."
+            "article(s) informed any specific claim you make. Where an excerpt is flagged as mixing "
+            "DraftKings and FanDuel advice, treat any platform-specific claim from it with extra "
+            "skepticism rather than assuming it applies to DraftKings."
         )
     else:
-        evidence_block = "(No archived Footballguys articles mention this team.)"
+        evidence_block = "(No archived articles mention this team.)"
         evidence_instruction = (
             "No article coverage was found for this team. Say so explicitly, and base your answer "
             "ONLY on the real inputs above -- do not imply you read any coverage."
@@ -301,7 +342,7 @@ Real, current circumstance for {team}, {source.circumstance_season()} week {sour
 ({source.circumstance_kind()}):
 {source.circumstance_prompt_block()}
 
-Real Footballguys article coverage found for {team}:
+Real article coverage found for {team}:
 {evidence_block}
 
 FIRST, before writing anything, judge how reliable each input actually is -- this is the whole point
@@ -320,7 +361,7 @@ advice -- this is about expected on-field role/usage only."""
 
 def synthesize_circumstance(
     source: CircumstanceSource,
-    articles: list[ArchivedArticle],
+    articles: list[ArticleEvidence],
     *,
     client: _MessagesClient,
     model: str = "claude-sonnet-5",
@@ -330,7 +371,8 @@ def synthesize_circumstance(
     force_refresh: bool = False,
 ) -> CircumstanceAssessment:
     """Calls `client.messages_create(...)` with a prompt grounded exclusively in `source` (a
-    detector's own real detection result) and `articles` (real archived Footballguys coverage, from
+    detector's own real detection result) and `articles` (real archived article coverage from any
+    `ArticleEvidence` source -- Footballguys, RotoGrinders, or a mix, from
     `find_relevant_articles`) -- never asked to invent a player, a stat, or a source it wasn't
     given. `client` is injected (a thin wrapper around `anthropic.Anthropic().messages.create`, see
     `build_anthropic_messages_client`), not constructed here, so this function is unit-testable

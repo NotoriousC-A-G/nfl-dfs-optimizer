@@ -9,6 +9,7 @@ from nfl_dfs.analysis.circumstance.engine import (
     synthesize_circumstance,
 )
 from nfl_dfs.storage.footballguys_article_store import ArchivedArticle
+from nfl_dfs.storage.rotogrinders_article_store import RotoGrindersArchivedArticle
 
 
 def _article(
@@ -24,6 +25,29 @@ def _article(
         tags=tags or [],
         text=text,
         fetched_at="2026-09-18T12:00:00Z",
+    )
+
+
+def _rg_article(
+    slug: str,
+    title: str,
+    text: str,
+    *,
+    published_date: str = "2026-09-18",
+    platform_mixed: bool = True,
+    is_gated: bool = False,
+) -> RotoGrindersArchivedArticle:
+    return RotoGrindersArchivedArticle(
+        slug=slug,
+        url=f"https://rotogrinders.com/articles/{slug}",
+        title=title,
+        author="Some Author",
+        published_date=published_date,
+        tags=[],
+        text=text,
+        fetched_at="2026-09-18T12:00:00Z",
+        is_gated=is_gated,
+        platform_mixed=platform_mixed,
     )
 
 
@@ -291,7 +315,7 @@ def test_synthesize_circumstance_prompt_discloses_when_no_articles_found() -> No
     synthesize_circumstance(_FakeSource(), [], client=client)
 
     prompt = client.last_call["messages"][0]["content"]
-    assert "No archived Footballguys articles mention this team" in prompt
+    assert "No archived articles mention this team" in prompt
     assert "do not imply you read any coverage" in prompt
 
 
@@ -431,3 +455,51 @@ def test_synthesize_circumstance_without_cache_always_calls_client() -> None:
     client = _FakeMessagesClient("pov text")
     synthesize_circumstance(_FakeSource(), [], client=client)  # cache=None, the default
     assert client.last_call is not None
+
+
+# --------------------------------------------------------------------------------------------
+# Multi-source article evidence (RotoGrinders added 2026-09-20 alongside Footballguys) --
+# find_relevant_articles/synthesize_circumstance must work over a MIXED list from both sources,
+# and a RotoGrinders article's platform_mixed flag must be disclosed in the synthesis prompt.
+# --------------------------------------------------------------------------------------------
+
+
+def test_find_relevant_articles_matches_across_footballguys_and_rotogrinders_together() -> None:
+    fb_article = _article("fb1", "Minnesota Vikings backfield notes", "Some body text.")
+    rg_article = _rg_article("rg1", "NFL DFS Picks: Vikings stack for Week 2", "Some body text.")
+    unrelated = _article("fb2", "Packers notes", "Nothing about MIN here.")
+
+    matches = find_relevant_articles("MIN", [fb_article, rg_article, unrelated])
+
+    assert {a.slug for a in matches} == {"fb1", "rg1"}
+
+
+def test_synthesize_circumstance_discloses_platform_mixed_rotogrinders_evidence() -> None:
+    client = _FakeMessagesClient("pov text")
+    mixed = _rg_article("rg1", "NFL DFS Picks: DK & FD Survey", "Some Vikings-relevant body text.")
+
+    synthesize_circumstance(_FakeSource(), [mixed], client=client)
+
+    prompt = client.last_call["messages"][0]["content"]
+    assert "mixes DraftKings and FanDuel advice" in prompt
+    assert "weigh any platform-specific detail here with real caution" in prompt
+
+
+def test_synthesize_circumstance_does_not_flag_a_footballguys_article_as_platform_mixed() -> None:
+    client = _FakeMessagesClient("pov text")
+    clean = _article("fb1", "Cracking DraftKings Week 2", "Some Vikings-relevant body text.")
+
+    synthesize_circumstance(_FakeSource(), [clean], client=client)
+
+    prompt = client.last_call["messages"][0]["content"]
+    assert "mixes DraftKings and FanDuel advice" not in prompt
+
+
+def test_synthesize_circumstance_does_not_flag_a_rotogrinders_article_marked_dk_only() -> None:
+    client = _FakeMessagesClient("pov text")
+    dk_only = _rg_article("rg1", "NFL DFS Picks: DraftKings-only cash plays", "Body text.", platform_mixed=False)
+
+    synthesize_circumstance(_FakeSource(), [dk_only], client=client)
+
+    prompt = client.last_call["messages"][0]["content"]
+    assert "mixes DraftKings and FanDuel advice" not in prompt

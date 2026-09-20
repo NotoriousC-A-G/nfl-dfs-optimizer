@@ -305,7 +305,8 @@ def main() -> None:
     )
     from nfl_dfs.ingestion.nflverse_depth_charts import fetch_current_depth_chart
     from nfl_dfs.storage.circumstance_cache_store import FilesystemCircumstanceCache
-    from nfl_dfs.storage.footballguys_article_store import read_all_articles
+    from nfl_dfs.storage.footballguys_article_store import read_all_articles as read_all_footballguys_articles
+    from nfl_dfs.storage.rotogrinders_article_store import read_all_articles as read_all_rotogrinders_articles
 
     # FORCE_CIRCUMSTANCE_REFRESH=1 bypasses the cache READ for this run (still writes the fresh
     # result) -- for when a caller knows new evidence landed that the cache key deliberately
@@ -403,8 +404,14 @@ def main() -> None:
     if circumstance_changes or matchup_extreme_changes or depth_chart_divergences:
         if config.anthropic_api_key:
             anthropic_client = build_anthropic_messages_client(config.anthropic_api_key)
-            archived_articles = read_all_articles()
-            print(f"  {len(archived_articles)} archived Footballguys article(s) available as evidence.")
+            fbg_articles = read_all_footballguys_articles()
+            rg_articles = read_all_rotogrinders_articles()
+            archived_articles = [*fbg_articles, *rg_articles]
+            n_platform_mixed = sum(1 for a in rg_articles if a.platform_mixed)
+            print(
+                f"  {len(fbg_articles)} archived Footballguys + {len(rg_articles)} archived "
+                f"RotoGrinders ({n_platform_mixed} platform-mixed) article(s) available as evidence."
+            )
             for change in circumstance_changes:
                 relevant_articles = find_relevant_articles(change.team, archived_articles, week=WEEK)
                 remaining_names = ", ".join(r.player_name or r.player_id for r in change.remaining)
