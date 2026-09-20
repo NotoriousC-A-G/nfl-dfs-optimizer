@@ -32,7 +32,15 @@ from nfl_dfs.agents.constructor import NflAgentConstructor
 from nfl_dfs.agents.registry import CHALK_ANCHOR, NFL_AGENTS
 from nfl_dfs.agents.scoring import compute_agent_objective_delta
 from nfl_dfs.agents.signal_bundle import SignalBundle
-from nfl_dfs.optimizer.lineup import Lineup, LineupGenerationError, generate_lineups
+from nfl_dfs.analysis.dup_risk_calibration import DupRiskLookupTable, classify_avg_ownership
+from nfl_dfs.analysis.gpp_grade import GppGrade, compute_gpp_grade, compute_max_ceiling_weighted_total
+from nfl_dfs.optimizer.lineup import (
+    MIN_OWNERSHIP_COVERAGE,
+    Lineup,
+    LineupGenerationError,
+    _avg_projected_ownership,
+    generate_lineups,
+)
 from nfl_dfs.projection.blend import PlayerProjection
 
 
@@ -41,18 +49,46 @@ class AgentLineupResult:
     """One agent's real generated lineup plus the exact delta dict that produced it -- the delta
     is kept alongside the lineup (not discarded after the solve) specifically so the verification
     functions below can inspect it without re-deriving it.
+
+    `achieved_bucket`/`gpp_grade` (added 2026-09-20, the same day the separate ownership-bucket-
+    *targeting* mechanism in `optimizer/lineup.py` was retired as the dashboard's primary lineup
+    source -- Chris: "if we have 6 agents, in theory we should get 6 lineups") are real,
+    DESCRIPTIVE reads of where this agent's own thesis-driven lineup actually landed -- never a
+    target this function tries to hit. An agent's ownership tier here is a genuine byproduct of
+    its own preference axes (Arbitrageur's `ownership_stance=-0.9` naturally produces a low-
+    ownership build), not a blind-oversample search for one. Both are `None` when the caller
+    didn't supply enough to compute them (`dup_risk_table`/`game_count` below) -- never guessed.
     """
 
     agent: NflAgentConstructor
     lineup: Lineup
     delta_by_canonical_id: dict[str, float]
     core_stack_forced_unique: bool
+    achieved_bucket: int | None = None
+    gpp_grade: GppGrade | None = None
+
+
+def _ownership_and_ceiling_from_signal_bundle(signal_bundle: SignalBundle) -> tuple[dict[str, float], dict[str, float]]:
+    """Real per-player projected ownership and `ceiling_multiplier`, read directly off the SAME
+    `SignalBundle` every agent's own delta already used -- no second source of truth, no re-fetch.
+    """
+    ownership: dict[str, float] = {}
+    ceiling: dict[str, float] = {}
+    for canonical_id, signals in signal_bundle.signals_by_canonical_id.items():
+        if signals.leverage is not None:
+            ownership[canonical_id] = signals.leverage.projected_ownership
+        if signals.ceiling_multiplier is not None:
+            ceiling[canonical_id] = signals.ceiling_multiplier
+    return ownership, ceiling
 
 
 def generate_agent_lineups(
     pool: list[PlayerProjection],
     signal_bundle: SignalBundle,
     agents: Sequence[NflAgentConstructor] | None = None,
+    *,
+    dup_risk_table: DupRiskLookupTable | None = None,
+    game_count: int | None = None,
 ) -> list[AgentLineupResult]:
     """One `generate_lineups(pool, n=1, objective_delta_by_id=...)` solve per agent (`NFL_AGENTS`
     if `agents` isn't supplied), each seeded with every EARLIER agent's `core_stack` (this run, in
@@ -60,6 +96,11 @@ def generate_agent_lineups(
     on the identical QB+pass-catcher combination. The first agent in the list (`Chalk Anchor` by
     default) always solves unconstrained, since it's the control/baseline and must stay the true
     best-projection build, not a diversity-adjusted one.
+
+    `dup_risk_table` and `game_count`, when both supplied, attach a real, descriptive
+    `achieved_bucket`/`gpp_grade` to every result (see `AgentLineupResult`'s own docstring) --
+    `compute_max_ceiling_weighted_total` (one extra real ILP solve) runs ONCE per pool here, never
+    per-agent, since it's a property of the pool, not of any one agent's build.
 
     Raises `LineupGenerationError` (propagated straight from `generate_lineups`, not swallowed) if
     `pool` is infeasible at all -- every agent shares the same roster/salary/stack constraints, so
@@ -72,6 +113,11 @@ def generate_agent_lineups(
     it from the run entirely (`core_stack_forced_unique=False` on that one result marks it).
     """
     resolved_agents = list(agents) if agents is not None else NFL_AGENTS
+    ownership_by_id, ceiling_by_id = _ownership_and_ceiling_from_signal_bundle(signal_bundle)
+    max_ceiling_weighted_total = (
+        compute_max_ceiling_weighted_total(pool, ceiling_by_id) if game_count is not None else None
+    )
+
     results: list[AgentLineupResult] = []
     used_core_stacks: list[frozenset[str]] = []
     for agent in resolved_agents:
@@ -84,12 +130,31 @@ def generate_agent_lineups(
         except LineupGenerationError:
             lineup = generate_lineups(pool, n=1, objective_delta_by_id=delta)[0]
             forced_unique = False
+
+        achieved_bucket = None
+        if dup_risk_table is not None:
+            avg_own, covered = _avg_projected_ownership(lineup, ownership_by_id)
+            if avg_own is not None and covered >= MIN_OWNERSHIP_COVERAGE:
+                achieved_bucket, _, _ = classify_avg_ownership(avg_own, dup_risk_table)
+
+        gpp_grade = None
+        if game_count is not None:
+            gpp_grade = compute_gpp_grade(
+                lineup,
+                projected_ownership_by_canonical_id=ownership_by_id,
+                ceiling_multiplier_by_canonical_id=ceiling_by_id,
+                max_ceiling_weighted_total=max_ceiling_weighted_total,
+                game_count=game_count,
+            )
+
         results.append(
             AgentLineupResult(
                 agent=agent,
                 lineup=lineup,
                 delta_by_canonical_id=delta,
                 core_stack_forced_unique=forced_unique,
+                achieved_bucket=achieved_bucket,
+                gpp_grade=gpp_grade,
             )
         )
         used_core_stacks.append(lineup.core_stack)

@@ -11,10 +11,19 @@ from nfl_dfs.agents.orchestrate import (
 )
 from nfl_dfs.agents.registry import CHALK_ANCHOR, NFL_AGENTS
 from nfl_dfs.agents.signal_bundle import PlayerSignals, SignalBundle
+from nfl_dfs.analysis.dup_risk_calibration import DupRiskLookupTable
 from nfl_dfs.composition.player_detail import StackContext
 from nfl_dfs.optimizer.lineup import LineupGenerationError, generate_lineups
 from nfl_dfs.ownership.leverage import LeverageAssessment
 from nfl_dfs.projection.blend import PlayerProjection
+
+
+def _fake_dup_risk_table(bucket_upper_bounds: tuple[float, ...]) -> DupRiskLookupTable:
+    n_buckets = len(bucket_upper_bounds) + 1
+    return DupRiskLookupTable(
+        seasons=(2023, 2024, 2025), n_rows=1000, bucket_upper_bounds=bucket_upper_bounds,
+        bucket_dup_rate={i: 0.01 * i for i in range(n_buckets)}, bucket_mean_lineup_ct={i: 1.0 for i in range(n_buckets)},
+    )
 
 
 def _p(canonical_id: str, position: str, team: str, salary: int, projection: float) -> PlayerProjection:
@@ -85,6 +94,26 @@ def _leverage(ownership_percentile: float) -> LeverageAssessment:
         native_id="rg1", name="t", position="WR", team="AAA", salary=6000, salary_decile=3,
         projected_ownership=15.0, ownership_percentile=ownership_percentile, baseline_ownership=None,
         ownership_vs_baseline=None, is_chalk=False, is_leverage=False, note="",
+    )
+
+
+def _leverage_with_ownership(projected_ownership: float) -> LeverageAssessment:
+    return LeverageAssessment(
+        native_id="rg1", name="t", position="WR", team="AAA", salary=6000, salary_decile=3,
+        projected_ownership=projected_ownership, ownership_percentile=0.5, baseline_ownership=None,
+        ownership_vs_baseline=None, is_chalk=False, is_leverage=False, note="",
+    )
+
+
+def _bundle_with_real_ownership_for_every_player(pool: list[PlayerProjection], own: float = 10.0) -> SignalBundle:
+    """Every player carries a real `leverage.projected_ownership` -- enough real coverage for
+    `_avg_projected_ownership` to clear `MIN_OWNERSHIP_COVERAGE` on any 9-player lineup drawn from
+    `pool`, so `achieved_bucket`/`gpp_grade` can be computed for real in a test.
+    """
+    return SignalBundle(
+        signals_by_canonical_id={
+            p.canonical_id: PlayerSignals(None, _leverage_with_ownership(own), None, None) for p in pool
+        }
     )
 
 
@@ -210,6 +239,53 @@ def test_chalk_anchor_always_solves_unconstrained_first():
     chalk = next(r for r in results if r.agent.agent_id == "chalk_anchor")
     assert chalk.core_stack_forced_unique is True
     assert {p.canonical_id for p in chalk.lineup.players} == {p.canonical_id for p in baseline.players}
+
+
+# --------------------------------------------------------------------------------------------
+# Real, descriptive achieved_bucket/gpp_grade (2026-09-20: agent lineups became the dashboard's
+# primary lineup set, replacing the separate ownership-bucket-TARGETING mechanism -- Chris: "if we
+# have 6 agents, in theory we should get 6 lineups". These reads are descriptive only: an agent's
+# own preference axes already produced whatever ownership tier its lineup landed in; nothing here
+# searches for or targets a bucket the way the retired mechanism did.
+# --------------------------------------------------------------------------------------------
+
+
+def test_generate_agent_lineups_leaves_bucket_and_grade_none_when_not_requested():
+    pool = _many_teams_pool(n_teams=8)
+    bundle = _bundle_with_real_ownership_for_every_player(pool)
+    results = generate_agent_lineups(pool, bundle)  # dup_risk_table/game_count both omitted
+    assert all(r.achieved_bucket is None for r in results)
+    assert all(r.gpp_grade is None for r in results)
+
+
+def test_generate_agent_lineups_computes_a_real_achieved_bucket_when_dup_risk_table_supplied():
+    pool = _many_teams_pool(n_teams=8)
+    bundle = _bundle_with_real_ownership_for_every_player(pool, own=10.0)
+    table = _fake_dup_risk_table((5.0, 15.0, 25.0, 35.0, 45.0, 55.0, 65.0, 75.0, 85.0))
+    results = generate_agent_lineups(pool, bundle, dup_risk_table=table)
+    # Every player is at a flat 10.0% ownership -> every lineup's real average is 10.0 -> bucket 1.
+    assert all(r.achieved_bucket == 1 for r in results)
+    assert all(r.gpp_grade is None for r in results)  # game_count still omitted
+
+
+def test_generate_agent_lineups_computes_a_real_gpp_grade_when_game_count_supplied():
+    pool = _many_teams_pool(n_teams=8)
+    bundle = _bundle_with_real_ownership_for_every_player(pool)
+    results = generate_agent_lineups(pool, bundle, game_count=13)
+    assert all(r.gpp_grade is not None for r in results)
+    assert all(r.gpp_grade.grade in {"A", "B", "C", "D"} for r in results)
+    assert all(r.achieved_bucket is None for r in results)  # dup_risk_table still omitted
+
+
+def test_generate_agent_lineups_gpp_grade_reflects_no_real_ceiling_signal_when_none_supplied():
+    # No PlayerSignals here carry a real ceiling_multiplier -- every grade's ceiling component
+    # must honestly disclose that, not silently assume a value.
+    pool = _many_teams_pool(n_teams=8)
+    bundle = _bundle_with_real_ownership_for_every_player(pool)
+    results = generate_agent_lineups(pool, bundle, game_count=13)
+    for r in results:
+        assert r.gpp_grade.ceiling_ratio is None
+        assert r.gpp_grade.ceiling_reason is not None
 
 
 # --------------------------------------------------------------------------------------------
