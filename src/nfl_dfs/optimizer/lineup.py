@@ -346,6 +346,7 @@ def generate_lineups(
     game_environment_scores: dict[str, float] | None = None,
     *,
     objective_delta_by_id: dict[str, float] | None = None,
+    seed_core_stacks: list[frozenset[str]] | None = None,
 ) -> list[Lineup]:
     """Generate up to `n` distinct-core-stack lineups from a `build_projection_pool` output.
 
@@ -363,13 +364,22 @@ def generate_lineups(
     `objective_delta_by_id` (NflAgentConstructor Phase B) -- see `_solve_single_lineup`'s
     docstring. Defaults to `None`, so an omitted/`None` call is byte-identical to today's
     behavior.
+
+    `seed_core_stacks` (NflAgentConstructor Phase B, cross-agent diversity) -- an optional list of
+    core stacks (same `frozenset[str]` shape as `Lineup.core_stack`) to forbid from the FIRST
+    solve onward, on top of whatever no-good cuts this call's own `n > 1` loop adds. Lets a caller
+    generating several INDEPENDENT single-lineup solves (`agents.orchestrate.generate_agent_lineups`)
+    thread every earlier solve's core stack in as an extra cut, so two different agents can't
+    silently land on the identical QB+pass-catcher combination the way `n > 1` already guarantees
+    within one call. Defaults to `None` (no extra cuts), so existing single-call behavior is
+    unaffected.
     """
     import warnings
 
     pool_by_id = _eligible_pool(pool)
 
     lineups: list[Lineup] = []
-    previous_core_stacks: list[frozenset[str]] = []
+    previous_core_stacks: list[frozenset[str]] = list(seed_core_stacks) if seed_core_stacks else []
 
     for i in range(n):
         lineup = _solve_single_lineup(

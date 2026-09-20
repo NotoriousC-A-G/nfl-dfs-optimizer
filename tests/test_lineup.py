@@ -167,6 +167,37 @@ def test_no_good_cut_does_not_forbid_individual_player_reuse():
 
 
 # --------------------------------------------------------------------------------------------
+# seed_core_stacks -- cross-call diversity (NflAgentConstructor: two independent generate_lineups
+# calls, e.g. two different agents, must not be free to land on the identical core stack)
+# --------------------------------------------------------------------------------------------
+
+
+def test_seed_core_stacks_forbids_a_stack_from_the_very_first_solve():
+    pool = _synthetic_pool()
+    unconstrained = generate_lineups(pool, n=1)[0]
+    seeded = generate_lineups(pool, n=1, seed_core_stacks=[unconstrained.core_stack])[0]
+    assert seeded.core_stack != unconstrained.core_stack
+
+
+def test_seed_core_stacks_none_is_byte_identical_to_omitted():
+    pool = _synthetic_pool()
+    omitted = generate_lineups(pool, n=1)
+    explicit_none = generate_lineups(pool, n=1, seed_core_stacks=None)
+    assert [lu.core_stack for lu in omitted] == [lu.core_stack for lu in explicit_none]
+
+
+def test_seed_core_stacks_combines_with_this_calls_own_no_good_cuts():
+    # A seeded cut plus this call's own n=2 internal no-good cut together must produce 3 total
+    # distinct core stacks (the seed, plus the 2 generated here) -- the seed isn't just consulted
+    # for the first solve and then dropped.
+    pool = _synthetic_pool()
+    first = generate_lineups(pool, n=1)[0]
+    seeded_pair = generate_lineups(pool, n=2, seed_core_stacks=[first.core_stack])
+    all_stacks = {first.core_stack, *[lu.core_stack for lu in seeded_pair]}
+    assert len(all_stacks) == 3
+
+
+# --------------------------------------------------------------------------------------------
 # Infeasibility -- fails gracefully, not a crash or a silently-invalid lineup
 # --------------------------------------------------------------------------------------------
 

@@ -502,6 +502,7 @@ def main() -> None:
         agents_with_suspiciously_empty_deltas,
         build_signal_bundle,
         chalk_anchor_matches_baseline,
+        distinct_core_stack_count,
         generate_agent_lineups,
         pairwise_lineup_overlap,
         summarize_agent_deltas,
@@ -547,6 +548,15 @@ def main() -> None:
         print(f"  Chalk Anchor matches plain best-projection baseline: {chalk_ok}")
         if not chalk_ok:
             print("  WARNING: Chalk Anchor should be provably inert -- this indicates a real bug.")
+        n_distinct = distinct_core_stack_count(agent_results)
+        print(f"  Distinct core stacks: {n_distinct}/{len(agent_results)}")
+        not_forced = [r.agent.agent_id for r in agent_results if not r.core_stack_forced_unique]
+        if not_forced:
+            print(
+                f"  NOTE: {not_forced} couldn't get a real distinct core stack this run -- the "
+                "cross-agent diversity cut was dropped for these (diversity genuinely exhausted "
+                "on this pool, not a wiring bug -- see generate_agent_lineups' own docstring)."
+            )
         print()
         for r in agent_results:
             slot_order = ("QB", "RB1", "RB2", "WR1", "WR2", "WR3", "TE", "FLEX", "DST")
