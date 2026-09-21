@@ -75,3 +75,59 @@ def test_settled_offensive_points_by_player_normalizes_crosswalk_team_codes():
     weekly = pd.DataFrame([_weekly_row(player_display_name="Jayden Reed", recent_team="GBP")])
     points = settled_offensive_points_by_player(weekly, 2026, 2)
     assert ("jayden reed", "GB") in points
+
+
+def test_fetch_weekly_player_stats_maps_renamed_columns_back(monkeypatch):
+    from nfl_dfs.ingestion import offense_actual_scoring as mod
+
+    seen = {}
+
+    def fake_read_parquet(url):
+        seen["url"] = url
+        return pd.DataFrame(
+            [{"player_display_name": "Some Guy", "team": "MIN", "passing_interceptions": 2, "week": 2}]
+        )
+
+    monkeypatch.setattr(mod.pd, "read_parquet", fake_read_parquet)
+
+    df = mod.fetch_weekly_player_stats(2026)
+
+    assert "stats_player_week_2026.parquet" in seen["url"]
+    assert list(df["recent_team"]) == ["MIN"]
+    assert list(df["interceptions"]) == [2]
+    assert "team" not in df.columns
+    assert "passing_interceptions" not in df.columns
+
+
+def test_fetch_weekly_player_stats_output_scores_through_dk_points_row(monkeypatch):
+    from nfl_dfs.ingestion import offense_actual_scoring as mod
+
+    row = _weekly_row(player_display_name="QB Guy", recent_team="MIN", passing_yards=250, passing_tds=2, interceptions=1)
+    # Simulate the new file's shape: renamed columns present under their NEW names.
+    new_shape = {k: v for k, v in row.items() if k not in ("recent_team", "interceptions")}
+    new_shape["team"] = "MIN"
+    new_shape["passing_interceptions"] = 1
+    monkeypatch.setattr(mod.pd, "read_parquet", lambda url: pd.DataFrame([new_shape]))
+
+    df = mod.fetch_weekly_player_stats(2026)
+    points = mod.settled_offensive_points_by_player(df, 2026, 2)
+
+    # 250*0.04 + 2*4 - 1 = 10 + 8 - 1 = 17
+    assert points[("qb guy", "MIN")] == 17.0
+
+
+def test_settled_offensive_points_by_player_maps_rams_la_to_lar():
+    weekly = pd.DataFrame([_weekly_row(player_display_name="Rams Guy", recent_team="LA")])
+    points = settled_offensive_points_by_player(weekly, 2026, 2)
+    assert ("rams guy", "LAR") in points
+
+
+def test_settled_offensive_points_by_player_skips_rows_with_null_display_name():
+    weekly = pd.DataFrame(
+        [
+            _weekly_row(player_display_name=None, recent_team="MIN", receptions=9),
+            _weekly_row(player_display_name="Real Guy", recent_team="MIN", receptions=1),
+        ]
+    )
+    points = settled_offensive_points_by_player(weekly, 2026, 2)
+    assert list(points.keys()) == [("real guy", "MIN")]
