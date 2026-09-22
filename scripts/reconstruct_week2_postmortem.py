@@ -31,6 +31,7 @@ from nfl_dfs.normalization.team_aliases import normalize_team
 from nfl_dfs.storage.agent_results_store import read_agent_results
 from nfl_dfs.storage.contest_results_store import read_contest_results
 from nfl_dfs.tracking.name_matching import normalize_player_name, parse_player_token
+from nfl_dfs.tracking.postmortem.retrospective import compute_process_grade, compute_signal_verdicts
 from nfl_dfs.tracking.season_record import compute_season_records
 
 SEASON = 2026
@@ -88,6 +89,47 @@ def parse_player_detail_table(text: str) -> dict[tuple[str, str], dict]:
                 "team": team,
                 "salary": int(sal.replace(",", "")),
                 "projected": None if proj == "N/A" else float(proj),
+            }
+    return by_key
+
+
+_OWNERSHIP_RE = re.compile(r"([\d.]+)% proj\s+vs\s+[\d.]+% baseline \([+-][\d.]+pt\)\s*(Chalk|Leverage)?")
+_GAME_ENV_RE = re.compile(r"Game Environment\s+([\d.]+)\s*/\s*100")
+_CEILING_VALUE_RE = re.compile(r"^([\d.]+)\s")  # only ever "N/A" in the real week 2 data (checked live)
+
+
+def parse_signal_fields(text: str) -> dict[tuple[str, str], dict]:
+    """Real ownership (chalk/leverage), game-environment composite score, and ceiling multiplier
+    per player -- the fields `tracking/postmortem/retrospective.py`'s real, already-tested
+    `compute_signal_verdicts` needs. Confirmed live before building this: ceiling_multiplier is
+    numerically populated for ZERO players in this week's real pool (Component A genuinely has no
+    signal yet this early in the season, exactly as that module's own docstring anticipated) --
+    every row below carries `ceiling_multiplier: None`, not a fabricated value.
+    """
+    by_key: dict[tuple[str, str], dict] = {}
+    for pat in (_PAT_INJURY, _PAT_TS):
+        for m in pat.finditer(text):
+            name, pos, team = m.group(1).strip(), m.group(2), m.group(3)
+            window = text[m.end() : m.end() + 1400]
+
+            own_m = _OWNERSHIP_RE.search(window)
+            projected_ownership = float(own_m.group(1)) if own_m else None
+            tag = own_m.group(2) if own_m else None
+
+            env_m = _GAME_ENV_RE.search(window)
+            game_environment = float(env_m.group(1)) if env_m else None
+
+            ceiling_m = _CEILING_VALUE_RE.match(window.split("N/A", 1)[0]) if "N/A" not in window[:5] else None
+
+            key = (normalize_player_name(name), team)
+            by_key[key] = {
+                "position": pos,
+                "team": team,
+                "projected_ownership": projected_ownership,
+                "is_chalk": tag == "Chalk",
+                "is_leverage": tag == "Leverage",
+                "game_environment": game_environment,
+                "ceiling_multiplier": float(ceiling_m.group(1)) if ceiling_m else None,
             }
     return by_key
 
@@ -217,15 +259,35 @@ def compute_stack_thesis_review(lineup_sections: list[dict]) -> list[dict]:
     return reviews
 
 
+def _stack_candidate_keys(rationales: dict[str, str], player_detail: dict[tuple[str, str], dict]) -> set[tuple[str, str]]:
+    """Real proxy for `stack_context.is_primary_stack_candidate`: a player counts as a stack
+    candidate here iff some agent actually named them as part of its own core stack (parsed from
+    that agent's real rationale text, same `_CORE_STACK_RE` `compute_stack_thesis_review` uses) --
+    not re-derived from `StackProfile`'s own viability numbers, which the HTML doesn't expose as a
+    clean boolean per player."""
+    keys = set()
+    for rationale in rationales.values():
+        m = _CORE_STACK_RE.search(rationale)
+        if not m:
+            continue
+        for name in m.group(1).split(" + "):
+            norm = normalize_player_name(name.strip())
+            for (pn, team) in player_detail:
+                if pn == norm:
+                    keys.add((pn, team))
+    return keys
+
+
 def main() -> None:
     text = _load_text()
     player_detail = parse_player_detail_table(text)
+    signal_fields = parse_signal_fields(text)
     rationales = parse_agent_rationales(text)
     dup_risk = parse_dup_risk(text)
     contest_results = read_contest_results(season=SEASON, week=WEEK)
     print(
-        f"Parsed {len(player_detail)} player-detail rows, {len(rationales)} rationales, "
-        f"{len(dup_risk)} dup-risk reads, {len(contest_results)} real contest entries."
+        f"Parsed {len(player_detail)} player-detail rows, {len(signal_fields)} signal-field rows, "
+        f"{len(rationales)} rationales, {len(dup_risk)} dup-risk reads, {len(contest_results)} real contest entries."
     )
 
     print("Fetching real settled data...")
@@ -239,6 +301,50 @@ def main() -> None:
         for r in aggregate_team_week_dst_points(pbp)
         if r.week == WEEK
     }
+
+    # Real process-grade / signal-verdict retrospective, using the ALREADY-BUILT, ALREADY-TESTED
+    # tracking/postmortem/retrospective.py functions -- not new ad hoc logic. Fed a reconstructed
+    # player pool (synthetic canonical_id, since the HTML carries no real one) instead of a real
+    # slate snapshot, since none exists for week 2.
+    stack_keys = _stack_candidate_keys(rationales, player_detail)
+    signal_pool = []
+    actual_by_canonical_id = {}
+    for key, detail in player_detail.items():
+        norm_name, team = key
+        canonical_id = f"html:{norm_name}:{team}"
+        sig = signal_fields.get(key, {})
+        position = detail["position"]
+        actual = dst_points.get(team) if position == "DST" else offensive_points.get(key)
+        if actual is not None:
+            actual_by_canonical_id[canonical_id] = actual
+        signal_pool.append(
+            {
+                "identity": {"canonical_id": canonical_id, "display_name": detail["display_name"]},
+                "team": team,
+                "position": position,
+                "salary": detail["salary"],
+                "projection": detail["projected"],
+                "ownership": (
+                    {
+                        "projected_ownership": sig.get("projected_ownership"),
+                        "is_chalk": sig.get("is_chalk", False),
+                        "is_leverage": sig.get("is_leverage", False),
+                    }
+                    if sig.get("projected_ownership") is not None
+                    else None
+                ),
+                "game_environment": (
+                    {"composite_score": sig.get("game_environment")} if sig.get("game_environment") is not None else None
+                ),
+                "stack_context": {"is_primary_stack_candidate": key in stack_keys},
+                "ceiling_multiplier": sig.get("ceiling_multiplier"),
+            }
+        )
+    verdicts = compute_signal_verdicts(signal_pool, actual_by_canonical_id)
+    process_grade = compute_process_grade(verdicts)
+    print(f"Process grade: {process_grade.letter} -- {process_grade.summary}")
+    for name, v in verdicts.items():
+        print(f"  {name}: {v['detail']} -> {'WORKED' if v['worked'] else 'DID NOT WORK'}")
 
     rows = read_agent_results(season=SEASON, week=WEEK)
     rostered_keys: set[tuple[str, str]] = set()
@@ -295,7 +401,9 @@ def main() -> None:
         f"{len(stack_review)} stack theses reviewed, {len(season_records)} season records."
     )
 
-    html = render(lineup_sections, missed, contest_results, exposure, positional, stack_review, season_records)
+    html = render(
+        lineup_sections, missed, contest_results, exposure, positional, stack_review, season_records, process_grade, verdicts
+    )
     with open(OUTPUT_PATH, "w") as f:
         f.write(html)
     print(f"Wrote {OUTPUT_PATH}")
@@ -378,7 +486,9 @@ def _lineup_hero(lineup_sections):
     return best, worst
 
 
-def render(lineup_sections, missed, contest_results, exposure, positional, stack_review, season_records) -> str:
+def render(
+    lineup_sections, missed, contest_results, exposure, positional, stack_review, season_records, process_grade, verdicts
+) -> str:
     best, worst = _lineup_hero(lineup_sections)
     total_entries = len(contest_results)
     cashed = sum(1 for c in contest_results if c.cashed)
@@ -493,6 +603,25 @@ def render(lineup_sections, missed, contest_results, exposure, positional, stack
         for r in stack_review
     )
 
+    if process_grade.letter == "N/A":
+        process_grade_html = f'<div class="card"><p class="muted">N/A -- {process_grade.summary}</p></div>'
+    else:
+        pills = "".join(f'<span class="badge badge-cash">{n}</span>' for n in process_grade.signal_names_hit)
+        pills += "".join(f'<span class="badge badge-miss">{n}</span>' for n in process_grade.signal_names_missed)
+        verdict_rows = "".join(
+            f"<tr><td>{v['signal']}</td><td>{v['detail']}</td>"
+            f"<td><span class='badge {'badge-cash' if v['worked'] else 'badge-miss'}'>{'WORKED' if v['worked'] else 'DID NOT WORK'}</span></td></tr>"
+            for v in verdicts.values()
+        )
+        process_grade_html = (
+            '<div class="card">'
+            f'<div class="hero-big" style="font-size:2.2rem;">{process_grade.letter}</div>'
+            f'<div class="hero-sub">{process_grade.summary}</div>'
+            f'<div style="margin:10px 0;">{pills}</div>'
+            "<table><thead><tr><th>Signal</th><th>Detail</th><th>Result</th></tr></thead>"
+            f"<tbody>{verdict_rows}</tbody></table></div>"
+        )
+
     by_lineup_contest_rows = "".join(
         f"<tr><td>{c.lineup_label}</td><td>{c.contest_name}</td><td class='num'>{c.entries:,}</td>"
         f"<td class='num'>{c.rank:,}</td><td class='num'>{c.rank / c.entries * 100:.1f}%</td>"
@@ -516,6 +645,8 @@ def render(lineup_sections, missed, contest_results, exposure, positional, stack
 <div class="section-label">Real Contest Results ({total_entries} entries, {cashed} cashed)</div>
 <div class="card"><table><thead><tr><th>Lineup</th><th>Contest</th><th>Entries</th><th>Rank</th><th>Percentile</th><th>FPTS</th><th>Result</th></tr></thead>
 <tbody>{by_lineup_contest_rows}</tbody></table></div>
+<div class="section-label">Did Our Decision Signals Actually Predict Outcomes? (real process grade)</div>
+{process_grade_html}
 <div class="section-label">What Went Right or Wrong -- Player Exposure (players in 3+ of our 9 lineups)</div>
 <div class="card"><table><thead><tr><th>Pos</th><th>Player</th><th>Team</th><th>Exposure</th><th>Proj</th><th>Actual</th><th>Delta</th></tr></thead>
 <tbody>{exposure_rows}</tbody></table></div>
