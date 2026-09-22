@@ -14,6 +14,7 @@ import warnings
 
 import nfl_data_py as nfl
 
+from nfl_dfs.ingestion.offense_actual_scoring import fetch_weekly_player_stats
 from nfl_dfs.storage.agent_results_store import read_agent_results
 from nfl_dfs.tracking.agent_results_collector import score_and_backfill_agent_results
 from nfl_dfs.tracking.agent_results_renderer import render_agent_performance_html
@@ -33,7 +34,7 @@ def main() -> None:
     print(f"Fetching real settled data for season={SEASON}...")
     with warnings.catch_warnings(record=True):
         warnings.simplefilter("always")
-        weekly = nfl.import_weekly_data([SEASON])
+        weekly = fetch_weekly_player_stats(SEASON)
         pbp = nfl.import_pbp_data([SEASON], include_participation=False)
 
     result = score_and_backfill_agent_results(SEASON, WEEK, weekly=weekly, pbp=pbp)

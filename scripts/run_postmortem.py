@@ -18,6 +18,7 @@ import warnings
 
 import nfl_data_py as nfl
 
+from nfl_dfs.ingestion.offense_actual_scoring import fetch_weekly_player_stats
 from nfl_dfs.tracking.postmortem.replay import run_postmortem
 from nfl_dfs.tracking.postmortem_renderer import render_postmortem_html
 
@@ -31,7 +32,7 @@ def main() -> None:
     print(f"Fetching real settled data for season={SEASON}...")
     with warnings.catch_warnings(record=True):
         warnings.simplefilter("always")
-        weekly = nfl.import_weekly_data([SEASON])
+        weekly = fetch_weekly_player_stats(SEASON)
         pbp = nfl.import_pbp_data([SEASON], include_participation=False)
 
     report = run_postmortem(SEASON, WEEK, weekly=weekly, pbp=pbp)
