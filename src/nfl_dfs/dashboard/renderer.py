@@ -86,16 +86,18 @@ condition that flips it -- if you can't, the signal doesn't earn screen space"),
   number), not a per-player-row lineup decision -- left out of this table, not off the dashboard's
   design space entirely (a future "Game Environment" tab, one row per team/game, is the more
   natural home for it).
-- **`matchup_this_week.own_unit_grade`/`opponent_unit_grade` -- excluded entirely, not just
-  hidden behind a reason string.** `MatchupContext` (ADR-0022 Round B, `matchup/context.py`) now
-  computes these -- team-level run-block/run-defense, pass-block/pass-rush, or opponent coverage
-  aggregates, position-dependent -- when a caller passes `matchup_facets` into
-  `build_player_detail_record`. This dashboard's own render pipeline does not yet thread those
-  already-fetched PFF grade facets through to that call, so the field still reads `None` here
-  today -- a real, scoped follow-up (thread `matchup_facets` through this module's data-assembly
-  step, then add the column), not evidence the formula itself is missing. Left off this table for
-  now rather than shown as a column of `None`s indistinguishable from genuinely missing data --
-  see `composition/player_detail.py`'s own `_MATCHUP_GRADE_NOTE`.
+- **`matchup_this_week.own_unit_grade`/`opponent_unit_grade` -- wired in 2026-09-22 (Chris:
+  "If we don't have that, what are we even doing?").** `MatchupContext` (ADR-0022 Round B,
+  `matchup/context.py`) computes these -- team-level run-block/run-defense, pass-block/pass-rush,
+  or opponent coverage aggregates, position-dependent -- from `matchup_facets`, the same
+  already-fetched PFF grade facets `live_integration_check_dashboard.py` was already pulling for
+  the projection-blend multiplier (`apply_matchup_context`) but not also handing to
+  `build_player_detail_record`. Now threaded through both the live script's call site and this
+  module's own expand-row rendering (`_render_unit_grade_cell`, under "Unit Matchup Grade"). Still
+  `None` with a real, stated reason (`unit_grade_reason`) whenever the underlying facet has no row
+  for the relevant team, or for a WR/TE's `own_unit_grade` specifically (no clean "own unit"
+  distinct from their own `receiving/scheme` row, by `resolve_own_opponent_unit_grades`'s own
+  design, not a gap) -- see `composition/player_detail.py`'s own `_MATCHUP_GRADE_NOTE`.
 - **`PlayerDetailRecord.notes`, `pff_native_id`** -- excluded from the visible table (the `reason`
   strings surfaced per-section already carry the substance of `notes`; `pff_native_id` is
   traceability/QA metadata, not a lineup-decision input) -- kept in the record itself for anyone
@@ -996,6 +998,29 @@ def _render_coverage_tendency_cell(matchup: MatchupThisWeek) -> str:
     )
 
 
+def _render_grade_line(label: str, grade) -> str:
+    if grade is None:
+        return ""
+    values = ", ".join(f"{k}: {v:.1f}" for k, v in grade.grades.items())
+    sub = f"{grade.player_game_count}g" if grade.player_game_count is not None else grade.population
+    return f'<div class="cell-main">{_esc(label)}: {values}</div><div class="cell-sub">{_esc(sub)} &middot; {_esc(grade.population)}</div>'
+
+
+def _render_unit_grade_cell(matchup: MatchupThisWeek) -> str:
+    """`own_unit_grade`/`opponent_unit_grade` -- ADR-0022 Round B, wired into the live dashboard
+    2026-09-22 (Chris: "If we don't have that, what are we even doing?" -- the underlying PFF
+    facet pull and MatchupContext grading were already live for the projection-blend multiplier;
+    this render function was the missing half). Position-dependent by construction, mirroring
+    `matchup.context.resolve_own_opponent_unit_grades`'s own real dispatch: RB/QB get both an own
+    and an opponent grade; WR/TE get opponent (coverage) only, `own_unit_grade` always `None` for
+    them by that function's own design, not a data gap here."""
+    if matchup.own_unit_grade is None and matchup.opponent_unit_grade is None:
+        return _na(matchup.unit_grade_reason)
+    own_html = _render_grade_line("Own unit", matchup.own_unit_grade)
+    opp_html = _render_grade_line(f"Opp ({_esc(matchup.opponent_team)})", matchup.opponent_unit_grade)
+    return own_html + opp_html
+
+
 def _render_game_environment_cell(record: PlayerDetailRecord) -> str:
     ge = record.game_environment
     if ge is None:
@@ -1217,6 +1242,7 @@ def _render_player_expand_content(record: PlayerDetailRecord) -> str:
     if record.own_scheme_splits.applicable:
         blocks.append(_expand_block("Own Scheme Split", _render_own_scheme_cell(record.own_scheme_splits)))
     blocks.append(_expand_block("Opp Coverage Faced", _render_coverage_tendency_cell(record.matchup_this_week)))
+    blocks.append(_expand_block("Unit Matchup Grade", _render_unit_grade_cell(record.matchup_this_week)))
     blocks.append(_expand_block("Game Environment", _render_game_environment_cell(record)))
     blocks.append(_expand_block("Slate Window", _render_slate_window_cell(record)))
     blocks.append(_expand_block("Injury", _render_injury_cell(record)))
@@ -1321,19 +1347,18 @@ def _render_player_detail_tab(
         "<p><strong>Default columns vs. row detail (ADR-0027):</strong> the visible grid is "
         "deliberately lean (identity, salary, projection, value, ownership/leverage, stack "
         "context) so a 300-600 row pool stays scannable -- click a row to expand the rest (role "
-        "share, snap share, red zone, own man/zone scheme split, opponent coverage faced, game "
-        "environment, slate window, injury). Skill-only sections (role/snap/red-zone) are simply "
-        "omitted from the expand for QB/DST rather than shown empty, and <code>own_scheme_splits"
-        "</code> is omitted whenever <code>applicable</code> is <code>False</code>.</p>"
-        "<p><strong>Still excluded from every row:</strong> "
-        "<code>matchup_this_week.own_unit_grade</code>/<code>opponent_unit_grade</code> "
-        "(team-level run-block/run-defense, pass-block/pass-rush, or opponent coverage grade, "
-        "per position) are computed by <code>MatchupContext</code> (ADR-0022 Round B, "
-        "<code>matchup/context.py</code>) when a caller supplies <code>matchup_facets</code> to "
-        "<code>build_player_detail_record</code> &mdash; but this dashboard's own render pipeline "
-        "does not yet thread those facet pulls through, so these fields still read as "
-        "<code>None</code> here specifically (not because the formula is unimplemented). Also "
-        "still out: a lineup-*set*-level ownership rollup (does the 3-lineup set actually span "
+        "share, snap share, red zone, own man/zone scheme split, opponent coverage faced, unit "
+        "matchup grade, game environment, slate window, injury). Skill-only sections (role/snap/"
+        "red-zone) are simply omitted from the expand for QB/DST rather than shown empty, and "
+        "<code>own_scheme_splits</code> is omitted whenever <code>applicable</code> is "
+        "<code>False</code>. <code>matchup_this_week.own_unit_grade</code>/"
+        "<code>opponent_unit_grade</code> (team-level run-block/run-defense, pass-block/pass-rush, "
+        "or opponent coverage grade, per position, from <code>MatchupContext</code> &mdash; "
+        "ADR-0022 Round B) are wired in as of 2026-09-22 under \"Unit Matchup Grade\" -- real "
+        "<code>None</code> with a stated reason whenever the underlying facet has no row for the "
+        "relevant team, or always <code>None</code> for a WR/TE's own_unit_grade specifically (no "
+        "clean \"own unit\" distinct from their own receiving/scheme row, by design, not a gap).</p>"
+        "<p><strong>Still out:</strong> a lineup-*set*-level ownership rollup (does the 3-lineup set actually span "
         "chalk-to-leverage). The Ceiling column (ADR-0028) is real but partial: RB/WR only, "
         "Component A (role-share boom-rate) only, both-experts-backtested-and-signed-off -- "
         "TE/QB/DST and Components B/C (red-zone boom-rate, depth-of-target) remain uncalibrated, "

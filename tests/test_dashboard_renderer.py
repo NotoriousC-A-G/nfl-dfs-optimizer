@@ -8,6 +8,8 @@ checks against the rendered HTML, matching this project's existing output-stage 
 
 from __future__ import annotations
 
+import dataclasses
+
 import pandas as pd
 import pytest
 
@@ -26,7 +28,7 @@ from nfl_dfs.composition.lineup_dup_risk import LineupDupRiskAssessment
 from nfl_dfs.correlation.stack_profile import classify_game_script_lean
 from nfl_dfs.dashboard.renderer import SlateGameRow, render_dashboard_html, write_dashboard_html
 from nfl_dfs.game_environment.score import ComponentScore, GameEnvironmentScore
-from nfl_dfs.ingestion.pff import TeamCoverageTendency
+from nfl_dfs.ingestion.pff import ResolvedGrade, TeamCoverageTendency
 from nfl_dfs.ingestion.qb_rushing_profile import TrailingQbRushingProfile
 from nfl_dfs.ingestion.receiving_profile import TrailingReceivingProfile
 from nfl_dfs.ingestion.snap_share import PlayerSnapShare
@@ -793,7 +795,13 @@ def test_empty_weekly_output_and_empty_player_pool_render_without_crashing():
     assert "No player-detail records supplied." in html
 
 
-def test_matchup_context_placeholder_is_explained_once_not_per_row():
+def test_unit_matchup_grade_renders_a_real_reason_when_not_supplied():
+    # Wired in 2026-09-22 (Chris: "If we don't have that, what are we even doing?") -- previously
+    # own_unit_grade/opponent_unit_grade were excluded from every row entirely and only explained
+    # once in the legend. Now the "Unit Matchup Grade" expand block renders per row for real,
+    # showing each player's own stated reason when the grade wasn't supplied (this fixture's
+    # `matchup_this_week` sets both to None with no reason -- the honest "no data supplied"
+    # fallback, not a blank cell or the literal text "None").
     weekly_output, _ = _weekly_output_with_three_lineups()
     players = [
         _fully_populated_player_detail("wr_a", "Player A", "AAA"),
@@ -803,12 +811,35 @@ def test_matchup_context_placeholder_is_explained_once_not_per_row():
 
     html = render_dashboard_html(weekly_output, players)
 
-    # The always-None own_unit_grade/opponent_unit_grade placeholder is explained once, in the
-    # tab legend -- not repeated as a per-row column (see module docstring's decision-relevance
-    # rationale for excluding it from the table entirely). With 3 player rows rendered, a
-    # per-row column would make this string appear 3+ times; the legend-only design keeps it to
-    # exactly one mention regardless of row count.
-    assert html.count("own_unit_grade") == 1
+    assert "Unit Matchup Grade" in html
+    assert html.count("no data supplied") >= 3  # once per player row, not just the legend
+
+
+def test_unit_matchup_grade_renders_real_grade_values_when_supplied():
+    weekly_output, _ = _weekly_output_with_three_lineups()
+    record = _fully_populated_player_detail("rb_a", "Real Grade RB", "AAA")
+    record = dataclasses.replace(
+        record,
+        position="RB",
+        matchup_this_week=dataclasses.replace(
+            record.matchup_this_week,
+            own_unit_grade=ResolvedGrade(
+                native_id="TEAM_AAA", position="TEAM_UNIT", grades={"grades_run_block": 72.5}, player_game_count=5,
+                population="cumulative_through_last_completed_week",
+            ),
+            opponent_unit_grade=ResolvedGrade(
+                native_id="TEAM_MIN", position="TEAM_UNIT", grades={"grades_run_defense": 61.0}, player_game_count=5,
+                population="cumulative_through_last_completed_week",
+            ),
+        ),
+    )
+
+    html = render_dashboard_html(weekly_output, [record])
+
+    assert "72.5" in html
+    assert "61.0" in html
+    assert "grades_run_block" in html
+    assert "grades_run_defense" in html
 
 
 # --------------------------------------------------------------------------------------------
