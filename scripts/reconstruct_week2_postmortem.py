@@ -439,18 +439,27 @@ def render(lineup_sections, missed, contest_results, exposure, positional, stack
         for p in missed[:20]
     )
 
-    # Season records (Chris: "we should build the agent and operator records") -- one row per
-    # agent_id, sorted by the same wins/top3/avg_delta ordering compute_season_records itself uses.
-    season_rows = "".join(
-        f"<tr><td>{AGENT_DISPLAY_NAME.get(r.agent_id, r.agent_id) if r.agent_id != 'operator' else 'Operator'}</td>"
-        f"<td class='num'>{r.wins}-{r.weeks_tracked - r.wins}</td>"
-        f"<td class='num'>{r.top_three}</td>"
-        f"<td class='num {'green' if (r.avg_delta or 0) > 0 else 'red'}'>{'' if r.avg_delta is None else f'{r.avg_delta:+.1f}'}</td>"
-        f"<td class='num'>{_fmt(r.best_week[1]) if r.best_week else '--'}"
-        f"{f' (wk{r.best_week[0]})' if r.best_week else ''}</td>"
-        f"<td class='num'>{f'{r.contest_cashes}/{r.contest_entries}' if r.agent_id == 'operator' else '--'}</td></tr>"
-        for r in season_records
-    )
+    # Season records (Chris: "we should build the agent and operator records," then "show L1/L2/L3
+    # individually," then "win... more like they would have cashed") -- one row per tracked entity
+    # (L1/L2/L3 individually + the 6 agents), "win" = weeks with >=1 real-or-estimated cash.
+    def _season_row(r):
+        label = AGENT_DISPLAY_NAME.get(r.agent_id, r.agent_id) if not r.is_operator_lineup else r.agent_id
+        basis_badge = (
+            '<span class="badge badge-cash" title="Real DK contest entries">real</span>'
+            if r.basis == "real"
+            else '<span class="badge badge-miss" title="Interpolated against the real contests you entered">est.</span>'
+        )
+        cash_record = f"{r.contest_cashes}/{r.contest_entries}" if r.contest_entries else "--"
+        return (
+            f"<tr><td>{label} {basis_badge}</td>"
+            f"<td class='num'>{r.wins}-{r.weeks_tracked - r.wins}</td>"
+            f"<td class='num'>{cash_record}</td>"
+            f"<td class='num {'green' if (r.avg_delta or 0) > 0 else 'red'}'>{'' if r.avg_delta is None else f'{r.avg_delta:+.1f}'}</td>"
+            f"<td class='num'>{_fmt(r.best_week[1]) if r.best_week else '--'}"
+            f"{f' (wk{r.best_week[0]})' if r.best_week else ''}</td></tr>"
+        )
+
+    season_rows = "".join(_season_row(r) for r in season_records)
 
     # Analysis: exposure (real decision impact, NOT deduped), positional bias (deduped, one vote
     # per distinct player), and each agent's own named stack thesis vs what it actually delivered.
@@ -497,9 +506,11 @@ def render(lineup_sections, missed, contest_results, exposure, positional, stack
 <div class="header"><h1>Week {WEEK} Postmortem</h1>
 <div class="meta">Season {SEASON} &middot; reconstructed from weekly_dashboard.html (no slate snapshot exists for week {WEEK})</div></div>
 {hero_html}
-<div class="section-label">Season Record (agents + operator, every week logged so far)</div>
-<div class="card"><table><thead><tr><th>Agent</th><th>W-L</th><th>Top 3</th><th>Avg Delta</th><th>Best Week</th><th>Contests Cashed</th></tr></thead>
-<tbody>{season_rows}</tbody></table></div>
+<div class="section-label">Season Record (L1/L2/L3 individually + the 6 agents, every week logged so far)</div>
+<div class="card"><table><thead><tr><th>Lineup / Agent</th><th>W-L (would-cash)</th><th>Cashed</th><th>Avg Delta</th><th>Best Week</th></tr></thead>
+<tbody>{season_rows}</tbody></table>
+<p style="font-size:0.72rem;color:var(--fg3);margin-top:8px;">"real" = your own DK contest entries. "est." = the agent was never actually entered -- cash outcome is interpolated against the SAME real contests you played that week (see contest_placement_estimate.py). Zero anchors some weeks (single-entry-only contests) means 0 entries shown, not a real 0% cash rate.</p>
+</div>
 <div class="section-label">Lineups</div>
 {''.join(sections_html)}
 <div class="section-label">Real Contest Results ({total_entries} entries, {cashed} cashed)</div>
