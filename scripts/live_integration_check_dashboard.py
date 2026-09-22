@@ -717,6 +717,7 @@ def main() -> None:
             team_coverage_tendency=coverage_tendency_by_team,
             game_environment_by_team=game_environment_by_team,
             projections_by_canonical_id=projections_by_canonical_id,
+            matchup_facets=matchup_facets,
             leverage_by_native_id=leverage_by_native_id,
             stack_profiles=stack_profiles,
             injury_by_canonical_id=injury_by_canonical_id,
