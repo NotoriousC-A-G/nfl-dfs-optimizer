@@ -113,26 +113,28 @@ EXCLUDED_INJURY_STATUSES = frozenset({"IR", "OUT"})
 # when two candidate rosters are within a small fraction of a point of each other.
 _GAME_ENVIRONMENT_NUDGE_WEIGHT = 1e-4
 
-# Section 7's DST-correlation soft penalty/bonus (Chris, 2026-09-20, after a real generated
-# lineup rostered a JAX QB+WR stack alongside the Broncos DST -- DEN being JAX's actual opponent
-# this week): "No hard rule against RB or WR facing the opposing DST in the same lineup, but the
+# Section 7's DST-correlation soft penalty (Chris, 2026-09-20, after a real generated lineup
+# rostered a JAX QB+WR stack alongside the Broncos DST -- DEN being JAX's actual opponent this
+# week): "No hard rule against RB or WR facing the opposing DST in the same lineup, but the
 # correlation model should price that matchup as negative" (PRD Section 7). Extended here to every
 # offensive position (QB/RB/WR/TE), not just the PRD's own illustrative RB/WR examples -- the same
 # real mechanism (a player's fantasy output is anti-correlated with a strong defensive performance
 # from the team they're facing) applies identically regardless of position, and QB is the anchor
-# of every stack this project builds. Also extended with a real, complementary positive term
-# (Chris: "it would make sense to use JAX own D in that stack") -- a stack's OWN team's DST is a
-# real, viable correlated build (a comfortable win can mean the stacked offense scores AND that
-# same team's defense gets stops/takeaways), scaled smaller than the penalty since it's a softer,
-# more optional signal than the negative one is a reason to avoid.
+# of every stack this project builds.
 #
-# Both are disclosed DRAFT magnitudes (ADR-0019/0020 convention), not backtested -- scaled to the
-# pool's own real blended_projection IQR (never a fixed constant), the same magnitude discipline
-# `agents/scoring.py` already established, reused here via a local `_pool_iqr` rather than an
-# import (this module is lower-level than `agents/*`; importing from it would invert that
+# There is deliberately NO same-team-DST bonus (ADR-0039). One was briefly present (2026-09-20 to
+# 2026-09-25, summed per stack player) and made "stack + its own DST" the default in every agent;
+# backtesting 71 real main slates (2020-2025) found own-team DST points uncorrelated with the
+# offense's (QB r=-0.013, top-3 WR/TE r=-0.054, team offense r=-0.044, 95% CI ~ +/-0.05 --
+# indistinguishable from a shuffled-DST control). Chris's original "use JAX's own D" remark was
+# specific to that one lineup, not a general rule.
+#
+# The penalty magnitude is a disclosed DRAFT (ADR-0019/0020 convention), not backtested -- scaled
+# to the pool's own real blended_projection IQR (never a fixed constant), the same magnitude
+# discipline `agents/scoring.py` already established, reused here via a local `_pool_iqr` rather
+# than an import (this module is lower-level than `agents/*`; importing from it would invert that
 # dependency).
 _OPPONENT_DST_PENALTY_IQR_FRACTION = 0.5
-_SAME_TEAM_DST_BONUS_IQR_FRACTION = 0.2
 
 
 def _pool_iqr(players: list[PlayerProjection]) -> float:
@@ -153,16 +155,16 @@ def _pool_iqr(players: list[PlayerProjection]) -> float:
 def _dst_correlation_terms(
     players: list[PlayerProjection], x: dict[str, pulp.LpVariable], opponent_of: dict[str, str]
 ) -> tuple[list, list]:
-    """Real, PRD Section 7 DST-correlation objective terms plus the ILP constraints that linearize
-    them -- both binary-variable PRODUCTS (`x[dst] AND x[player]`), which pulp can't express
+    """Real, PRD Section 7 opposing-DST penalty objective terms plus the ILP constraints that
+    linearize them -- both binary-variable PRODUCTS (`x[dst] AND x[player]`), which pulp can't express
     directly, so each real pair gets a standard AND-linearization: a new binary `z`, constrained
     `z <= x[dst]`, `z <= x[player]`, `z >= x[dst] + x[player] - 1` (so `z` is forced to exactly
-    `x[dst] * x[player]` at any integer-feasible solution), contributing `+/-magnitude * z` to the
+    `x[dst] * x[player]` at any integer-feasible solution), contributing `-penalty * z` to the
     objective. Returns `(objective_terms, constraints)` -- the caller adds the first into its own
     objective `lpSum` and each of the second via its own `prob +=` call, in that order (pulp
     requires the objective to be the first `prob +=` call on a fresh `LpProblem`).
 
-    Only real (DST, opposing- or same-team player) pairs that both exist in `players` get a `z` --
+    Only real (DST, opposing-team player) pairs that both exist in `players` get a `z` --
     never every team in the league, just this pool's own real candidates, keeping this bounded
     (one real NFL slate's DST count times its own real roster depth, not O(teams^2)).
     """
@@ -170,7 +172,6 @@ def _dst_correlation_terms(
     if iqr <= 0.0:
         return [], []
     penalty = _OPPONENT_DST_PENALTY_IQR_FRACTION * iqr
-    bonus = _SAME_TEAM_DST_BONUS_IQR_FRACTION * iqr
 
     objective_terms = []
     constraints = []
@@ -180,17 +181,13 @@ def _dst_correlation_terms(
         for p in players:
             if p.position == "DST":
                 continue
-            if p.team == opponent_team:
-                magnitude = -penalty
-            elif p.team == dst.team:
-                magnitude = bonus
-            else:
+            if opponent_team is None or p.team != opponent_team:
                 continue
             z = pulp.LpVariable(f"corr_{dst.canonical_id}_{p.canonical_id}", cat="Binary")
             constraints.append(z <= x[dst.canonical_id])
             constraints.append(z <= x[p.canonical_id])
             constraints.append(z >= x[dst.canonical_id] + x[p.canonical_id] - 1)
-            objective_terms.append(magnitude * z)
+            objective_terms.append(-penalty * z)
     return objective_terms, constraints
 
 # ADR-0035/0037: dup-risk-aware lineup generation's real, backtested bucket thresholds -- see
