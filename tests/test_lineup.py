@@ -235,29 +235,34 @@ def test_opponent_of_none_is_byte_identical_to_omitted():
     ]
 
 
-def test_dst_correlation_terms_creates_a_real_negative_and_positive_pair():
+def test_dst_correlation_terms_only_penalizes_the_opposing_teams_players():
     from nfl_dfs.optimizer.lineup import _dst_correlation_terms
 
     pool = _dst_correlation_pool()
     x = {p.canonical_id: pulp.LpVariable(p.canonical_id, cat="Binary") for p in pool}
     terms, constraints = _dst_correlation_terms(pool, x, {"AAA": "BBB", "BBB": "AAA"})
-    assert len(terms) > 0
+    # dst_a x 6 BBB offensive players + dst_b x 6 AAA offensive players; no same-team pairs (ADR-0039).
+    assert len(terms) == 12
     assert len(constraints) == len(terms) * 3  # 3 linearization constraints per real pair
 
 
-def test_dst_correlation_terms_produces_no_penalty_when_opponent_of_has_no_real_entry():
-    # _dst_correlation_terms itself doesn't gate on opponent_of being non-empty (that guard lives
-    # at the caller -- see test_opponent_of_none_is_byte_identical_to_omitted); called directly
-    # with {}, opponent_of.get(team) is always None, so no PENALTY term can ever fire (nothing
-    # matches "the opponent's team"), but the same-team BONUS still legitimately fires -- it only
-    # needs a DST's own team, never the opponent.
+def test_dst_correlation_terms_is_empty_when_opponent_of_has_no_real_entry():
+    # With no opponent known there is nothing to penalize, and (ADR-0039) no same-team bonus exists
+    # to fire in its place.
     from nfl_dfs.optimizer.lineup import _dst_correlation_terms
 
     pool = _dst_correlation_pool()
     x = {p.canonical_id: pulp.LpVariable(p.canonical_id, cat="Binary") for p in pool}
-    terms, constraints = _dst_correlation_terms(pool, x, {})
-    assert len(terms) > 0
-    assert len(constraints) == len(terms) * 3
+    assert _dst_correlation_terms(pool, x, {}) == ([], [])
+
+
+def test_no_same_team_dst_bonus_best_dst_wins_even_when_it_is_not_the_stacks_own():
+    # ADR-0039: a stack's own-team DST gets no bonus. dst_c (CCC, unrelated to either offense in
+    # the stack) out-projects AAA's own DST, so it must be chosen over dst_a.
+    pool = _dst_correlation_pool() + [_p("dst_c", "DST", "CCC", 3000, 9.5)]
+    lineup = generate_lineups(pool, n=1, opponent_of={"AAA": "BBB", "BBB": "AAA"})[0]
+    assert next(p for p in lineup.players if p.position == "QB").team == "AAA"
+    assert next(p for p in lineup.players if p.position == "DST").canonical_id == "dst_c"
 
 
 # --------------------------------------------------------------------------------------------
