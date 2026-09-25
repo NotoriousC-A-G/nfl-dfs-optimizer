@@ -351,26 +351,62 @@ def _in_lineup_badges(canonical_id: str, lineup_membership: dict[str, list[str]]
 # ------------------------------------------------------------------------------------------
 
 
-def _render_roster_table(lineup: Lineup) -> str:
+def _opponent_labels(
+    slate_games: list[SlateGameRow] | None, player_details: list[PlayerDetailRecord]
+) -> dict[str, str]:
+    """`team -> "@ DET" / "vs DET"` for the lineup cards' Opp column. The slate's own games are the
+    primary source (they carry home/away); a player-detail `opponent_team_this_week` fills in any
+    team the slate rows don't cover, with no home/away marker since that record doesn't carry one.
+    A team in neither source is simply absent -- the card shows `--`, never a guess."""
+    labels: dict[str, str] = {}
+    for record in player_details:
+        if record.opponent_team_this_week:
+            labels.setdefault(record.team, record.opponent_team_this_week)
+    for game in slate_games or []:
+        labels[game.away_team] = f"@ {game.home_team}"
+        labels[game.home_team] = f"vs {game.away_team}"
+    return labels
+
+
+def _projected_ownership_by_id(player_details: list[PlayerDetailRecord]) -> dict[str, float]:
+    """`canonical_id -> projected ownership %` (0-100 scale, `LeverageAssessment.
+    projected_ownership`) for every player-detail record with a live ownership read."""
+    return {
+        r.identity.canonical_id: r.ownership.projected_ownership
+        for r in player_details
+        if r.ownership is not None and r.ownership.projected_ownership is not None
+    }
+
+
+def _render_roster_table(
+    lineup: Lineup,
+    opponent_labels: dict[str, str] | None = None,
+    ownership_by_id: dict[str, float] | None = None,
+) -> str:
     rows = []
     for slot in _DK_SLOT_ORDER:
         player = lineup.slots.get(slot)
         if player is None:
             continue  # defensive only -- a legally-solved Lineup always has all 9 keys
+        opponent = (opponent_labels or {}).get(player.team)
+        own = (ownership_by_id or {}).get(player.canonical_id)
         rows.append(
             "<tr>"
             f"<td class=\"slot\">{_esc(slot)}</td>"
             f"<td>{_esc(player.display_name)}</td>"
             f"<td>{_esc(player.position)}</td>"
             f"<td>{_esc(player.team)}</td>"
+            f"<td>{_esc(opponent) if opponent else '--'}</td>"
             f"<td class=\"num\">{_fmt_money(player.salary)}</td>"
             f"<td class=\"num\">{_fmt_num(player.blended_projection, 1) or '--'}</td>"
+            # already a 0-100 percentage (see _render_ownership_cell), not a 0-1 fraction
+            f"<td class=\"num\">{f'{own:.1f}%' if own is not None else '--'}</td>"
             "</tr>"
         )
     return (
         '<table class="roster-table"><thead><tr>'
-        "<th>Slot</th><th>Player</th><th>Pos</th><th>Team</th>"
-        '<th class="num">Salary</th><th class="num">Proj Pts</th>'
+        "<th>Slot</th><th>Player</th><th>Pos</th><th>Team</th><th>Opp</th>"
+        '<th class="num">Salary</th><th class="num">Proj Pts</th><th class="num">Proj Own</th>'
         "</tr></thead><tbody>" + "".join(rows) + "</tbody></table>"
     )
 
@@ -396,7 +432,10 @@ def _render_dup_risk_line(assessment: LineupDupRiskAssessment | None) -> str:
 
 
 def _render_lineups_tab(
-    weekly_output: WeeklyOutput, dup_risk_by_lineup: dict[int, LineupDupRiskAssessment] | None = None
+    weekly_output: WeeklyOutput,
+    dup_risk_by_lineup: dict[int, LineupDupRiskAssessment] | None = None,
+    opponent_labels: dict[str, str] | None = None,
+    ownership_by_id: dict[str, float] | None = None,
 ) -> str:
     lineups = weekly_output.lineups
     rationales_by_position: list[LineupRationale | None] = list(weekly_output.rationales)
@@ -440,7 +479,7 @@ def _render_lineups_tab(
             f'<span class="meta">{_fmt_money(lineup.total_salary)} salary &middot; '
             f"{_fmt_num(lineup.total_projected_points, 1)} projected pts &middot; "
             f"core stack: {_esc(lineup.core_stack_team)}</span></div>"
-            f"{_render_roster_table(lineup)}"
+            f"{_render_roster_table(lineup, opponent_labels, ownership_by_id)}"
             f"{dup_risk_html}"
             f"{rationale_html}"
             f"{notes_html}"
@@ -1804,7 +1843,12 @@ def render_dashboard_html(
     """
     lineup_membership = _build_lineup_membership(weekly_output)
 
-    lineups_html = _render_lineups_tab(weekly_output, dup_risk_by_lineup)
+    lineups_html = _render_lineups_tab(
+        weekly_output,
+        dup_risk_by_lineup,
+        _opponent_labels(slate_games, player_details),
+        _projected_ownership_by_id(player_details),
+    )
     exposure_html = _render_exposure_tab(weekly_output)
     players_html = _render_player_detail_tab(player_details, lineup_membership)
     slate_html = _render_slate_overview_tab(slate_games or [])
