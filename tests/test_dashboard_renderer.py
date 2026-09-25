@@ -1105,3 +1105,29 @@ def test_slate_overview_default_games_param_is_backward_compatible():
 
     assert 'data-panel="slate"' in html
     assert "No games supplied for this slate." in html
+
+
+# --------------------------------------------------------------------------------------------
+# Lineup cards: Opp and Proj Own columns
+# --------------------------------------------------------------------------------------------
+
+
+def test_lineup_card_shows_opponent_with_home_away_and_projected_ownership():
+    weekly_output, _ = _weekly_output_with_three_lineups()
+    qb = _fully_populated_player_detail("qb1", "QB Guy 1", "AAA")  # ownership fixture: 4.5% proj
+    html = render_dashboard_html(
+        weekly_output, [qb], slate_games=[_slate_game_row("AAA", "BBB"), _slate_game_row("CCC", "DDD")]
+    )
+    card = html.split('class="lineup-card"')[1].split("</table>")[0]
+    assert "<th>Opp</th>" in card and "Proj Own" in card
+    assert "@ BBB" in card  # AAA is the away team in the slate game
+    assert "vs CCC" in card  # DDD is the home team
+    assert "4.5%" in card  # only the QB has a live ownership read
+
+
+def test_lineup_card_ownership_and_opponent_fall_back_to_placeholder_when_unknown():
+    weekly_output, _ = _weekly_output_with_three_lineups()
+    html = render_dashboard_html(weekly_output, [])
+    card = html.split('class="lineup-card"')[1].split("</table>")[0]
+    assert "<td>--</td>" in card  # no opponent supplied
+    assert "%" not in card  # no fabricated ownership number
