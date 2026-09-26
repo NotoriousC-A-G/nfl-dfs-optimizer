@@ -11,6 +11,8 @@ dist/
 data/raw/
 data/interim/
 data/cache/
+# Slate snapshots (storage/slate_snapshot_store.py): ~7.7MB per live run, regenerable, one per run.
+data/snapshots/
 data/curated/
 .pytest_cache/
 .DS_Store

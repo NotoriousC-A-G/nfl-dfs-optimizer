@@ -73,14 +73,14 @@ from scripts.live_integration_check_output import _build_ges, _fetch_real_spread
 from scripts.live_integration_check_projection import fetch_footballguys_raw, fetch_rotogrinders_raw
 
 SEASON = 2026
-WEEK = 2
+WEEK = 3
 # Set to a specific DK draftGroupId to target that exact slate directly, bypassing auto-detection
 # entirely -- required once DK is serving more than one plausible main-shaped slate at once (a
 # real, live 2026-09-19 case; see ingestion.draftkings.fetch_slate_by_draft_group_id's own
 # docstring). Leave None to auto-detect (works fine when only one real main slate is live) -- if
 # auto-detection hits real ambiguity, it now fails loudly with the real candidate ids to choose
 # from here, rather than silently substituting an unrelated slate.
-DRAFT_GROUP_ID: int | None = 153428  # confirmed live 2026-09-19: the real 13-game Sunday main slate
+DRAFT_GROUP_ID: int | None = 153769  # confirmed live 2026-09-25: the real 13-game Sunday main slate (week 3)
 
 
 def main() -> None:
