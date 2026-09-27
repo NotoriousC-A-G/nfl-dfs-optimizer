@@ -46,6 +46,20 @@ EXPLOSION_SHOOTOUT = NflAgentConstructor(
     bring_back_rb_allowed=True,
     ceiling_lean=0.5,
     edge_condition="high_total",
+    # `stack_conviction` (2026-09-27, interim -- see docs/adr/0040-interim-agent-levers-for-the-
+    # dormant-ceiling-gate.md): `ceiling_lean` is this agent's originally-intended sole lever, but
+    # `ceiling_multiplier` needs 3 real trailing in-season weeks (ADR-0028's `MIN_TRAILING_WEEKS`,
+    # itself excluded from Component A's own backtest below week 4) -- so for weeks 1-3 every year
+    # this agent is otherwise a silent no-op, identical to Chalk Anchor. `stack_conviction` is a
+    # real, already-live, already-calibrated-as-a-slider axis (game_stack_viability, not gated on
+    # in-season history) that fits this agent's own existing shape -- it only rewards this agent's
+    # own real stack/bring-back candidates, exactly the "correlated, game-environment-driven"
+    # framing "Explosion/Shootout" already implies, and stacks additively alongside ceiling_lean
+    # once that gate clears rather than replacing it. Magnitude is a disclosed, unbacktested
+    # placeholder (this file's own convention), kept below Game Script Architect's dedicated 0.8
+    # since this agent's edge_condition ("high_total") is a narrower gate than that agent's
+    # "close_spread_or_high_total".
+    stack_conviction=0.6,
 )
 
 VOLATILITY_ENGINE = NflAgentConstructor(
@@ -57,6 +71,16 @@ VOLATILITY_ENGINE = NflAgentConstructor(
     ceiling_lean=1.0,
     ownership_stance=-0.5,
     bring_back_allowed=False,
+    # `matchup_conviction` (2026-09-27, interim -- see docs/adr/0040-interim-agent-levers-for-the-
+    # dormant-ceiling-gate.md): same dormant-`ceiling_lean` problem as Explosion/Shootout above --
+    # weeks 1-3 every year, this axis contributes nothing, leaving this agent a weaker duplicate of
+    # Arbitrageur (ownership_stance alone). `matchup_conviction` is single-player-level (own vs.
+    # opponent unit grade), not gated on in-season trailing history and not a stack/bring-back
+    # concept -- it stays consistent with this agent's own "pure single-team, not a game-stack
+    # play" framing (`bring_back_allowed=False`). Deliberately kept at half of Matchup Purist's
+    # dedicated 0.8 so this agent reads as "contrarian pick that also wants a live matchup edge,"
+    # not a straight clone of either existing single-axis agent.
+    matchup_conviction=0.4,
 )
 
 NFL_AGENTS: list[NflAgentConstructor] = [
