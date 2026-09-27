@@ -69,7 +69,7 @@ from nfl_dfs.projection.blend import (
     extract_rotogrinders_fpts,
 )
 
-from scripts.live_integration_check_output import _build_ges, _fetch_real_spreads, fetch_dk_raw_for_live_slate
+from scripts.live_integration_check_output import _build_ges, fetch_dk_raw_for_live_slate
 from scripts.live_integration_check_projection import fetch_footballguys_raw, fetch_rotogrinders_raw
 
 SEASON = 2026
@@ -249,7 +249,44 @@ def main() -> None:
     implied_total_z_by_team = dict(zip(implied_df["team"], implied_df["implied_total_z"], strict=False))
 
     slate_games_pairs = {(g.away_team, g.home_team) for g in dk_slate.games}
-    spreads = _fetch_real_spreads()
+
+    # Odds fetched here (not down in the "Fetching real Odds API" section below, where a real
+    # equivalent pull used to happen a second time) for two reasons: (1) real spreads already had
+    # to be available this early for StackProfile's `close_spread` gating, so a second live odds
+    # pull down there was always redundant against this one, and (2) `implied_total_by_team` now
+    # needs to be real BEFORE lineup generation too -- see the agent_signal_bundle comment below.
+    # `odds_by_pair`/`implied_total_by_team` are reused as-is by the later section instead of
+    # re-fetched.
+    print("Fetching real DraftKings odds (spreads + totals)...")
+    import requests
+
+    odds_response = requests.get(
+        ODDS_URL,
+        params={
+            "regions": "us",
+            "markets": "spreads,totals",
+            "oddsFormat": "american",
+            "apiKey": config.odds_api_key,
+        },
+        timeout=20.0,
+    )
+    odds_response.raise_for_status()
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        odds_games = parse_dk_odds_events(odds_response.json())
+    for w in caught:
+        print(f"  WARNING (odds): {w.message}")
+    odds_by_pair = {(g.away_team, g.home_team): g for g in odds_games}
+    print(f"  {len(odds_games)} game(s) with a DraftKings odds line.")
+
+    spreads = {(g.away_team, g.home_team): g.home_spread for g in odds_games if g.home_spread is not None}
+    print(f"Real spreads this pull: {spreads}")
+
+    implied_total_by_team: dict[str, float] = {}
+    for game in dk_slate.games:
+        odds = odds_by_pair.get((game.away_team, game.home_team))
+        if odds is not None and odds.home_spread is not None and odds.away_spread is not None and odds.total is not None:
+            implied_total_by_team.update(implied_team_totals(odds))
 
     role_share_results = fetch_role_shares(SEASON, WEEK)
     role_share_by_key = {(r.team, r.role): r for r in role_share_results}
@@ -514,20 +551,21 @@ def main() -> None:
         summarize_agent_deltas,
     )
 
-    # implied_total_by_team isn't fetched until the Odds API section below (it needs the real
-    # spreads/totals pull that section makes) -- passed empty here, a real, disclosed limitation:
-    # every agent's edge_condition="high_total" gate (Explosion/Shootout) fails closed this run,
-    # same "never fabricate" posture as every other nullable signal in this project. Every other
-    # signal this bundle needs (ceiling/leverage/matchup/stack context, including
-    # close_spread-gated candidates, which read StackContext.home_spread -- already real by this
-    # point via the StackProfile block above) is genuinely available here.
+    # implied_total_by_team is real here (2026-09-27 fix -- the odds pull was moved up next to the
+    # StackProfile block specifically so this could stop being `{}`; see that block's own comment).
+    # Before this fix, every agent's edge_condition="high_total" gate (Explosion/Shootout's only
+    # gate, with no close_spread fallback) failed closed on every single run, regardless of any
+    # other signal availability -- a real wiring gap, not the ADR-0028 ceiling-gate dormancy
+    # ADR-0040 addressed two days earlier. Every other signal this bundle needs (ceiling/leverage/
+    # matchup/stack context, including close_spread-gated candidates, which read StackContext.
+    # home_spread) was already genuinely available here.
     agent_signal_bundle = build_signal_bundle(
         identities,
         ceiling_signals_by_gsis_id=ceiling_signals_by_gsis_id,
         leverage_by_native_id=leverage_by_native_id,
         matchup_context_by_canonical_id=matchup_context_by_canonical_id,
         stack_profiles=stack_profiles,
-        implied_total_by_team={},
+        implied_total_by_team=implied_total_by_team,
     )
     try:
         agent_results = generate_agent_lineups(
@@ -595,32 +633,14 @@ def main() -> None:
 
     # ------------------------------------------------------------------------------------------
     # Fetched early (ADR-0027) so PlayerDetailRecords below can join real StackProfile/injury/
-    # slate-window/implied-total data, not just the Slate Overview tab further down -- this is the
-    # SAME odds/injury pull the Slate Overview section already made, just moved earlier and reused
-    # rather than fetched twice.
+    # slate-window/implied-total data, not just the Slate Overview tab further down -- injury is
+    # the SAME pull the Slate Overview section already made, just moved earlier and reused rather
+    # than fetched twice; odds (spreads/totals) moved even earlier, next to the StackProfile block.
     # ------------------------------------------------------------------------------------------
-    print("=== Fetching real Odds API spreads/totals and injury data (also feeds Player Detail) ===")
-
-    import requests
-
-    odds_response = requests.get(
-        ODDS_URL,
-        params={
-            "regions": "us",
-            "markets": "spreads,totals",
-            "oddsFormat": "american",
-            "apiKey": config.odds_api_key,
-        },
-        timeout=20.0,
-    )
-    odds_response.raise_for_status()
-    with warnings.catch_warnings(record=True) as caught:
-        warnings.simplefilter("always")
-        odds_games = parse_dk_odds_events(odds_response.json())
-    for w in caught:
-        print(f"  WARNING (odds): {w.message}")
-    odds_by_pair = {(g.away_team, g.home_team): g for g in odds_games}
-    print(f"  {len(odds_games)} game(s) with a DraftKings odds line.")
+    print("=== Fetching real injury data (also feeds Player Detail) ===")
+    # odds_games/odds_by_pair/implied_total_by_team are already real, from the odds pull made next
+    # to the StackProfile block above (2026-09-27: that pull used to happen a second time here --
+    # moved up and reused instead, once the agent bundle needed it early too).
 
     print("Fetching real injury data (RotoGrinders Situation Room)...")
     try:
@@ -643,14 +663,12 @@ def main() -> None:
     }
     print(f"  {len(injury_by_canonical_id)} reconciled player(s) matched to an injury report row.\n")
 
+    # implied_total_by_team was already built early (next to the StackProfile block) -- reused
+    # as-is here, not recomputed.
     kickoff_utc_by_team: dict[str, str] = {}
-    implied_total_by_team: dict[str, float] = {}
     for game in dk_slate.games:
         kickoff_utc_by_team[game.away_team] = game.start_time_utc
         kickoff_utc_by_team[game.home_team] = game.start_time_utc
-        odds = odds_by_pair.get((game.away_team, game.home_team))
-        if odds is not None and odds.home_spread is not None and odds.away_spread is not None and odds.total is not None:
-            implied_total_by_team.update(implied_team_totals(odds))
 
     # ------------------------------------------------------------------------------------------
     # Player Detail: build real PlayerDetailRecords for this slate's FULL reconciled player pool
