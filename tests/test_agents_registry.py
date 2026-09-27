@@ -56,11 +56,29 @@ def test_explosion_shootout_matches_the_approved_spec():
     assert EXPLOSION_SHOOTOUT.edge_condition == "high_total"
 
 
+def test_explosion_shootout_has_a_live_second_lever_while_the_ceiling_gate_is_dormant():
+    # ADR-0040 (2026-09-27): ceiling_multiplier needs 3 real trailing in-season weeks (ADR-0028),
+    # so ceiling_lean alone is a silent no-op for weeks 1-3 every season. stack_conviction is real
+    # and already-live regardless of trailing-week history, and additive alongside ceiling_lean.
+    assert EXPLOSION_SHOOTOUT.stack_conviction > 0.0
+    assert EXPLOSION_SHOOTOUT.stack_conviction < GAME_SCRIPT_ARCHITECT.game_script_lean_weight
+
+
 def test_volatility_engine_is_the_polar_opposite_of_chalk_anchor():
     assert VOLATILITY_ENGINE.ceiling_lean == 1.0
     assert VOLATILITY_ENGINE.ownership_stance < 0.0
     assert abs(VOLATILITY_ENGINE.ownership_stance) < abs(ARBITRAGEUR.ownership_stance)
     assert VOLATILITY_ENGINE.bring_back_allowed is False
+
+
+def test_volatility_engine_has_a_live_second_lever_while_the_ceiling_gate_is_dormant():
+    # ADR-0040 (2026-09-27): same dormant-ceiling_lean problem as Explosion/Shootout above, which
+    # would otherwise leave this agent a weaker duplicate of Arbitrageur for weeks 1-3 every
+    # season. matchup_conviction is single-player-level (not stack/bring-back), consistent with
+    # this agent's own "pure single-team, not a game-stack play" framing, and kept below Matchup
+    # Purist's dedicated weight so this agent isn't a straight clone of it either.
+    assert VOLATILITY_ENGINE.matchup_conviction > 0.0
+    assert VOLATILITY_ENGINE.matchup_conviction < MATCHUP_PURIST.matchup_conviction
 
 
 def test_every_registered_agent_produces_a_real_delta_dict_shape_against_a_synthetic_pool():
