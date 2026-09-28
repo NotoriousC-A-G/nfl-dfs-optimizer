@@ -1,0 +1,66 @@
+{
+  "id": "evt_props_1",
+  "sport_key": "americanfootball_nfl",
+  "sport_title": "NFL",
+  "commence_time": "2026-09-29T00:15:00Z",
+  "home_team": "Chicago Bears",
+  "away_team": "Philadelphia Eagles",
+  "bookmakers": [
+    {
+      "key": "draftkings",
+      "title": "DraftKings",
+      "markets": [
+        {
+          "key": "player_pass_yds",
+          "last_update": "2026-09-28T22:09:55Z",
+          "outcomes": [
+            {"name": "Over", "description": "Jalen Hurts", "price": -112, "point": 217.5},
+            {"name": "Under", "description": "Jalen Hurts", "price": -112, "point": 217.5},
+            {"name": "Over", "description": "Case Keenum", "price": -113, "point": 173.5},
+            {"name": "Under", "description": "Case Keenum", "price": -111, "point": 173.5}
+          ]
+        },
+        {
+          "key": "player_receptions",
+          "last_update": "2026-09-28T22:09:55Z",
+          "outcomes": [
+            {"name": "Over", "description": "DeVonta Smith", "price": -120, "point": 5.5},
+            {"name": "Under", "description": "DeVonta Smith", "price": -106, "point": 5.5},
+            {"name": "Over", "description": "Ghost Receiver", "price": 100, "point": 2.5}
+          ]
+        },
+        {
+          "key": "player_anytime_td",
+          "last_update": "2026-09-28T22:09:55Z",
+          "outcomes": [
+            {"name": "Yes", "description": "Saquon Barkley", "price": -115},
+            {"name": "Yes", "description": "Nobody Fc", "price": 500},
+            {"name": "Yes", "description": "", "price": 900}
+          ]
+        },
+        {
+          "key": "player_pass_interceptions",
+          "last_update": "2026-09-28T22:09:55Z",
+          "outcomes": [
+            {"name": "Over", "description": "Jalen Hurts", "price": 134, "point": 0.5},
+            {"name": "Under", "description": "Jalen Hurts", "price": -172, "point": 0.4}
+          ]
+        }
+      ]
+    },
+    {
+      "key": "fanduel",
+      "title": "FanDuel",
+      "markets": [
+        {
+          "key": "player_rush_yds",
+          "last_update": "2026-09-28T22:09:55Z",
+          "outcomes": [
+            {"name": "Over", "description": "Saquon Barkley", "price": -110, "point": 73.5},
+            {"name": "Under", "description": "Saquon Barkley", "price": -110, "point": 73.5}
+          ]
+        }
+      ]
+    }
+  ]
+}
