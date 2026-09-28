@@ -23,7 +23,7 @@ from nfl_dfs.tracking.postmortem.replay import run_postmortem
 from nfl_dfs.tracking.postmortem_renderer import render_postmortem_html
 
 SEASON = 2026
-WEEK = 2
+WEEK = 3
 
 OUTPUT_PATH = "dashboard_output/postmortem.html"
 
