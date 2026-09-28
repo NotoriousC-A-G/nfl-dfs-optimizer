@@ -12,6 +12,16 @@ week's games (nflverse), and -- for the contest-results/season-record sections -
 operator rows already logged via `scripts/log_operator_contest_results.py`. Missing either of the
 latter two just renders those sections empty; it doesn't block the rest of the page.
 
+**Also backfills `agent_results.csv`'s `total_dk_score`/`lineup_rank` for this week before reading
+season records** (the same join `scripts/collect_agent_results.py` does standalone) -- caught live
+on week 3: `tracking/postmortem/replay.py` computes each lineup's real actual total ITSELF, live,
+every run, but never writes it back to the CSV (`log_operator_contest_results.py` forward-logs
+`total_dk_score` as blank on purpose, "join later"). `season_record.py` reads that CSV column
+directly, not `replay.py`'s output -- so without this backfill, a week's season record silently
+stays blind to that week's own real scores forever (this week's own `best_week`/`worst_week`/
+`avg_delta` all only reflected week 2 until this was added). Running `collect_agent_results.py`
+separately is no longer required; this script does it every time, so the CSV can't drift stale.
+
 Run by hand once a week's games are done (NOT part of pytest -- hits live nflverse data):
     PYTHONPATH=. .venv/bin/python scripts/run_postmortem.py
 
@@ -27,6 +37,7 @@ import nfl_data_py as nfl
 
 from nfl_dfs.ingestion.offense_actual_scoring import fetch_weekly_player_stats
 from nfl_dfs.storage.contest_results_store import read_contest_results
+from nfl_dfs.tracking.agent_results_collector import score_and_backfill_agent_results
 from nfl_dfs.tracking.postmortem.replay import run_postmortem
 from nfl_dfs.tracking.postmortem_renderer import render_postmortem_html
 from nfl_dfs.tracking.season_record import compute_season_records
@@ -57,6 +68,12 @@ def main() -> None:
         print(f"Chalk comparison: our best {report.chalk_comparison.our_actual}, chalk {report.chalk_comparison.chalk_actual}")
     elif report.chalk_comparison:
         print(f"Chalk comparison unavailable: {report.chalk_comparison.reason}")
+
+    backfill = score_and_backfill_agent_results(SEASON, WEEK, weekly=weekly, pbp=pbp)
+    backfilled_count = sum(1 for r in backfill.scored if r.total_dk_score is not None)
+    print(f"Backfilled agent_results.csv: {backfilled_count}/{len(backfill.scored)} row(s) scored for season={SEASON} week={WEEK}.")
+    for agent_id, strategy_name, missing in backfill.unresolved:
+        print(f"  UNRESOLVED {agent_id}/{strategy_name}: could not match {list(missing)}")
 
     contest_results = tuple(read_contest_results(season=SEASON, week=WEEK))
     season_records = tuple(compute_season_records(SEASON))
