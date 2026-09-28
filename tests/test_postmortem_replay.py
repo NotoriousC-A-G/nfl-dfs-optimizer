@@ -45,7 +45,7 @@ def _pool_row(cid, name, team, position, salary, projection=10.0) -> dict:
     }
 
 
-def _agent_lineup_entry(agent_id, players) -> dict:
+def _agent_lineup_entry(agent_id, players, core_stack=(), core_stack_team=None) -> dict:
     return {
         "agent": {"agent_id": agent_id, "display_name": agent_id.replace("_", " ").title()},
         "lineup": {
@@ -54,6 +54,8 @@ def _agent_lineup_entry(agent_id, players) -> dict:
                 for (cid, name, team, pos, sal, proj) in players
             ],
             "total_projected_points": sum(p[5] for p in players),
+            "core_stack": list(core_stack),
+            "core_stack_team": core_stack_team,
         },
         "achieved_bucket": None,
         "gpp_grade": None,
@@ -122,6 +124,63 @@ def test_run_postmortem_scores_agent_lineup_and_flags_process_grade(tmp_path, mo
     operator = next(lo for lo in report.lineup_outcomes if lo.label == "L1")
     assert operator.actual_total is not None
     assert operator.agent_id == "operator"
+
+
+def test_run_postmortem_populates_exposure_positional_and_stack_review(tmp_path, monkeypatch):
+    import nfl_dfs.storage.slate_snapshot_store as snap_store
+    import nfl_dfs.storage.agent_results_store as agent_store
+    monkeypatch.setattr(snap_store, "DEFAULT_ROOT", tmp_path / "snapshots")
+    agent_results_path = tmp_path / "agent_results.csv"
+    monkeypatch.setattr(agent_store, "AGENT_RESULTS_PATH", agent_results_path)
+
+    player_pool = [
+        _pool_row("qb1", "QB One", "MIN", "QB", 6000, 18.0),
+        _pool_row("wr1", "Justin Jefferson", "MIN", "WR", 7800, 20.0),
+        _pool_row("dst1", "Jaguars", "JAX", "DST", 2400, 6.0),
+    ]
+    players = [
+        ("qb1", "QB One", "MIN", "QB", 6000, 18.0),
+        ("wr1", "Justin Jefferson", "MIN", "WR", 7800, 20.0),
+        ("dst1", "Jaguars", "JAX", "DST", 2400, 6.0),
+    ]
+    # Chalk Anchor's disclosed core stack is QB One + Justin Jefferson.
+    agent_entry = _agent_lineup_entry("chalk_anchor", players, core_stack=("qb1", "wr1"), core_stack_team="MIN")
+    snap_store.save_slate_snapshot(
+        2026, 2, player_details=player_pool, agent_results=[agent_entry], stack_profiles=[],
+        timestamp="120000", base_dir=tmp_path / "snapshots",
+    )
+    save_agent_results(
+        [
+            AgentResultRow(
+                season=2026, week=2, agent_id="operator", strategy_name="L1",
+                proj_total=44.0, salary=16200,
+                players=("QB One (QB-MIN)", "Justin Jefferson (WR-MIN)", "Jaguars (DST-JAX)"),
+            )
+        ],
+        path=agent_results_path,
+    )
+
+    weekly = pd.DataFrame(
+        [_weekly_row("QB One", "MIN"), _weekly_row("Justin Jefferson", "MIN", receptions=5, receiving_yards=60)]
+    )
+    pbp = pd.DataFrame([_pbp_row("JAX", sack=1), _pbp_row("SEA")])
+
+    report = run_postmortem(2026, 2, weekly=weekly, pbp=pbp)
+
+    # Both lineups rostered the same 3 real players -> each shows up with count 2.
+    jefferson = next(p for p in report.player_exposure if p.display_name == "Justin Jefferson")
+    assert jefferson.count == 2
+    assert set(jefferson.lineup_labels) == {"Chalk Anchor", "L1"}
+
+    wr_bias = next(d for d in report.positional_deltas if d.position == "WR")
+    assert wr_bias.n == 1  # Jefferson counted once despite 2 lineups
+
+    assert len(report.stack_thesis_reviews) == 1  # only Chalk Anchor has a disclosed core_stack
+    review = report.stack_thesis_reviews[0]
+    assert review.label == "Chalk Anchor"
+    assert set(review.stack_player_names) == {"QB One", "Justin Jefferson"}
+    assert review.stack_team == "MIN"
+    assert review.actual is not None
 
 
 def test_run_postmortem_surfaces_unresolved_players_without_crashing(tmp_path, monkeypatch):

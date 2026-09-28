@@ -1,9 +1,16 @@
-"""Live script: builds and renders one week's real postmortem -- lineup outcomes (all 6 agents +
-Chris's own played lineups), the chalk-proxy comparison, the process grade, and ceiling patterns.
+"""Live script: builds and renders one week's real, reusable postmortem -- lineup outcomes (all 6
+agents + Chris's own played L1/L2/L3), the real DK contest results, the season-to-date record, the
+chalk-proxy comparison, the process grade, player exposure, positional bias, each agent's
+stack-thesis-hit review, and ceiling patterns. This is the one real path from week 3 on (unlike
+week 2, which had no slate snapshot yet and needed `scripts/reconstruct_week2_postmortem.py`'s
+one-off HTML-parsing reconstruction) -- run this same script, unmodified, every week; only
+SEASON/WEEK change.
 
-Requires a real slate snapshot for the target week (`storage/slate_snapshot_store.py`, written
-automatically by `live_integration_check_dashboard.py`'s own live run) and real settled data for
-the week's games (nflverse).
+Requires: a real slate snapshot for the target week (`storage/slate_snapshot_store.py`, written
+automatically by `live_integration_check_dashboard.py`'s own live run), real settled data for the
+week's games (nflverse), and -- for the contest-results/season-record sections -- that week's
+operator rows already logged via `scripts/log_operator_contest_results.py`. Missing either of the
+latter two just renders those sections empty; it doesn't block the rest of the page.
 
 Run by hand once a week's games are done (NOT part of pytest -- hits live nflverse data):
     PYTHONPATH=. .venv/bin/python scripts/run_postmortem.py
@@ -19,8 +26,10 @@ import warnings
 import nfl_data_py as nfl
 
 from nfl_dfs.ingestion.offense_actual_scoring import fetch_weekly_player_stats
+from nfl_dfs.storage.contest_results_store import read_contest_results
 from nfl_dfs.tracking.postmortem.replay import run_postmortem
 from nfl_dfs.tracking.postmortem_renderer import render_postmortem_html
+from nfl_dfs.tracking.season_record import compute_season_records
 
 SEASON = 2026
 WEEK = 3
@@ -49,9 +58,13 @@ def main() -> None:
     elif report.chalk_comparison:
         print(f"Chalk comparison unavailable: {report.chalk_comparison.reason}")
 
-    html = render_postmortem_html(report)
+    contest_results = tuple(read_contest_results(season=SEASON, week=WEEK))
+    season_records = tuple(compute_season_records(SEASON))
+    print(f"{len(contest_results)} real contest entries this week; {len(season_records)} season-to-date records.")
+
+    html_out = render_postmortem_html(report, contest_results=contest_results, season_records=season_records)
     with open(OUTPUT_PATH, "w") as f:
-        f.write(html)
+        f.write(html_out)
     print(f"Wrote {OUTPUT_PATH}")
 
 
