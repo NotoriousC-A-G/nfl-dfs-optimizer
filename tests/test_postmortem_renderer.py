@@ -1,3 +1,5 @@
+import re
+
 from nfl_dfs.storage.contest_results_store import ContestResult
 from nfl_dfs.tracking.postmortem.models import (
     ChalkComparison,
@@ -218,3 +220,29 @@ def test_missed_players_section_renders_players_and_empty_state():
 
 def _lineup_with_players(label, players, agent_id="operator", actual_total=100.0):
     return LineupOutcome(agent_id, label, players, 90.0, actual_total, actual_total - 90.0)
+
+
+def _positioned_player(cid, position) -> PlayerOutcome:
+    return PlayerOutcome(cid, cid, "AAA", position, 5000, 8.0, 10.0, 2.0)
+
+
+def test_roster_table_reorders_to_qb_rb_rb_wr_wr_wr_te_flex_dst_regardless_of_input_order():
+    # Deliberately jumbled input order, same shape the real snapshot's `lineup.players` list
+    # produces (solver emission order, not slot order).
+    jumbled = (
+        _positioned_player("rb2", "RB"),
+        _positioned_player("wr1", "WR"),
+        _positioned_player("dst", "DST"),
+        _positioned_player("qb", "QB"),
+        _positioned_player("te", "TE"),
+        _positioned_player("wr2", "WR"),
+        _positioned_player("flex", "FLEX"),
+        _positioned_player("rb1", "RB"),
+        _positioned_player("wr3", "WR"),
+    )
+    report = _report(lineup_outcomes=(_lineup_with_players("L1", jumbled),))
+    out = render_postmortem_html(report)
+
+    roster_html = out.split("Roster (9 players)")[1].split("</details>")[0]
+    pos_sequence = re.findall(r'<td class="pos">(\w+)</td>', roster_html)
+    assert pos_sequence == ["QB", "RB", "RB", "WR", "WR", "WR", "TE", "FLEX", "DST"]

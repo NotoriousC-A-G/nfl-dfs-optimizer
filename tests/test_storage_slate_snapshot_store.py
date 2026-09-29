@@ -1,4 +1,5 @@
 from dataclasses import dataclass
+from datetime import datetime, timezone
 
 from nfl_dfs.storage.slate_snapshot_store import (
     list_slate_snapshots,
@@ -91,6 +92,38 @@ def test_load_latest_picks_the_most_recent_run(tmp_path):
 
     latest = load_latest_slate_snapshot(2026, 2, base_dir=tmp_path)
     assert len(latest["player_pool"]) == 1
+
+
+def test_load_latest_survives_a_run_from_an_earlier_day_with_a_later_clock_time(tmp_path, monkeypatch):
+    """Regression for a real, live bug (2026-09-29): a run from an EARLIER calendar day at a LATER
+    clock time (day 1, 16:45 -> filename suffix "164516") must not outrank a run from a LATER
+    calendar day at an EARLIER clock time (day 2, 09:49 -> "094953") just because "164516" sorts
+    as a bigger string than "094953". The real bug shipped a full day-old snapshot into a real
+    postmortem's per-player ownership tags -- this pins the fix (sort by the embedded real
+    timestamp, not the filename)."""
+    import nfl_dfs.storage.slate_snapshot_store as mod
+
+    class _FakeDateTime:
+        _now: datetime
+
+        @classmethod
+        def now(cls, tz):
+            return cls._now
+
+    monkeypatch.setattr(mod, "datetime", _FakeDateTime)
+
+    _FakeDateTime._now = datetime(2026, 9, 26, 16, 45, 16, tzinfo=timezone.utc)
+    save_slate_snapshot(
+        2026, 3, player_details=[_player("Day1 Guy")], agent_results=[], stack_profiles=[], timestamp="164516", base_dir=tmp_path
+    )
+
+    _FakeDateTime._now = datetime(2026, 9, 27, 9, 49, 53, tzinfo=timezone.utc)
+    save_slate_snapshot(
+        2026, 3, player_details=[_player("Day2 Guy")], agent_results=[], stack_profiles=[], timestamp="094953", base_dir=tmp_path
+    )
+
+    latest = load_latest_slate_snapshot(2026, 3, base_dir=tmp_path)
+    assert latest["player_pool"][0]["display_name"] == "Day2 Guy"
 
 
 def test_different_weeks_do_not_collide(tmp_path):
