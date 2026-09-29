@@ -3,6 +3,7 @@ from nfl_dfs.tracking.postmortem.models import (
     ChalkComparison,
     CeilingPatterns,
     LineupOutcome,
+    PlayerContext,
     PlayerExposure,
     PlayerOutcome,
     PositionalDelta,
@@ -14,8 +15,10 @@ from nfl_dfs.tracking.postmortem_renderer import render_postmortem_html
 from nfl_dfs.tracking.season_record import SeasonRecord
 
 
-def _player(cid="p1", actual=10.0) -> PlayerOutcome:
-    return PlayerOutcome(cid, cid, "AAA", "WR", 5000, 8.0, actual, (actual - 8.0) if actual is not None else None)
+def _player(cid="p1", actual=10.0, context: PlayerContext | None = None) -> PlayerOutcome:
+    return PlayerOutcome(
+        cid, cid, "AAA", "WR", 5000, 8.0, actual, (actual - 8.0) if actual is not None else None, context=context
+    )
 
 
 def _lineup(agent_id, label, actual_total=100.0) -> LineupOutcome:
@@ -153,3 +156,65 @@ def test_stack_thesis_section_renders_hit_and_miss():
     assert "QB One + WR One" in out
     assert "badge cash" in out and "HIT" in out
     assert "badge miss" in out and "MISS" in out
+
+
+def test_lineup_table_includes_an_expandable_roster_per_lineup():
+    report = _report()
+    out = render_postmortem_html(report)
+    assert "<details>" in out
+    assert "Roster (1 players)" in out
+    assert "roster-table" in out
+
+
+def test_roster_row_shows_real_box_score_tooltip():
+    ctx = PlayerContext(box_score_line="18/27, 245 pass yds, 2 TD, 1 INT")
+    report = _report(lineup_outcomes=(_lineup_with_players("L1", (_player(context=ctx),)),))
+    out = render_postmortem_html(report)
+    assert 'title="18/27, 245 pass yds, 2 TD, 1 INT"' in out
+
+
+def test_roster_row_shows_no_tooltip_when_box_score_is_absent():
+    report = _report(lineup_outcomes=(_lineup_with_players("L1", (_player(context=PlayerContext()),)),))
+    out = render_postmortem_html(report)
+    assert "title=" not in out.split("Roster (1 players)")[1].split("</details>")[0]
+
+
+def test_signal_tags_render_only_for_populated_fields():
+    ctx = PlayerContext(is_chalk=True, is_leverage=False, is_primary_stack_candidate=True, injury_status="Q")
+    report = _report(lineup_outcomes=(_lineup_with_players("L1", (_player(context=ctx),)),))
+    out = render_postmortem_html(report)
+    assert "tag chalk\">CHALK" in out
+    assert "tag stack\">STACK" in out
+    assert "tag injury\">Q" in out
+    assert "LEVERAGE" not in out  # is_leverage False -> no tag
+
+
+def test_player_with_no_context_renders_plain_name_with_no_tags():
+    report = _report(lineup_outcomes=(_lineup_with_players("L1", (_player(context=None),)),))
+    out = render_postmortem_html(report)
+    assert 'class="tag' not in out
+
+
+def test_top_performers_section_renders_players():
+    report = _report(top_performers=(_player(cid="best", actual=41.4),))
+    out = render_postmortem_html(report)
+    assert "Top Performers" in out
+    assert "best" in out
+
+
+def test_top_performers_empty_state():
+    out = render_postmortem_html(_report(top_performers=()))
+    assert "No real settled scores yet." in out
+
+
+def test_missed_players_section_renders_players_and_empty_state():
+    with_players = render_postmortem_html(_report(missed_players=(_player(cid="missed_guy", actual=22.0),)))
+    assert "Missed Players" in with_players
+    assert "missed_guy" in with_players
+
+    empty = render_postmortem_html(_report(missed_players=()))
+    assert "No high scorers missed this week." in empty
+
+
+def _lineup_with_players(label, players, agent_id="operator", actual_total=100.0):
+    return LineupOutcome(agent_id, label, players, 90.0, actual_total, actual_total - 90.0)

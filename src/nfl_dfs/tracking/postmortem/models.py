@@ -12,6 +12,34 @@ from dataclasses import dataclass, field
 
 
 @dataclass(frozen=True)
+class PlayerContext:
+    """Real, already-computed per-player signal context from the slate snapshot's
+    `PlayerDetailRecord` -- the exact same fields `retrospective.compute_signal_verdicts` already
+    reads and trusts for the slate-wide process grade (ownership/game-environment/stack-context/
+    ceiling), now surfaced per player instead of only ever aggregated into one verdict (2026-09-29
+    player-detail proposal, Tier 1a/1b). Every field is `None`/`False` when the snapshot's own
+    record has no real value there -- never fabricated, same "every None has a reason" posture as
+    `PlayerDetailRecord` itself.
+
+    `box_score_line` is the one field NOT sourced from the snapshot -- it's a human-readable real
+    stat line (e.g. "18/27, 245 pass yds, 2 TD, 1 INT") built from the same nflverse weekly
+    box-score row `offense_actual_scoring.dk_points_row` already reduces to one DK-point scalar,
+    kept here instead of discarded (Tier 1b)."""
+
+    is_chalk: bool = False
+    is_leverage: bool = False
+    game_environment_score: float | None = None
+    is_primary_stack_candidate: bool = False
+    ceiling_multiplier: float | None = None
+    red_zone_role_security_discount: float | None = None
+    injury_status: str | None = None
+    implied_total: float | None = None
+    slate_window: str | None = None
+    circumstance_note: str | None = None
+    box_score_line: str | None = None
+
+
+@dataclass(frozen=True)
 class PlayerOutcome:
     """One player's projected vs. real settled DK points."""
 
@@ -23,6 +51,10 @@ class PlayerOutcome:
     projected: float
     actual: float | None  # None when no real settled match was found (see LineupOutcome docstring)
     delta: float | None  # actual - projected; None when actual is None
+    # Optional real per-player context (see `PlayerContext`) -- `None` for a player the context
+    # builder never saw (shouldn't happen for a real snapshot pool row, but a caller building a
+    # `PlayerOutcome` by hand, e.g. in a test, isn't required to supply one).
+    context: PlayerContext | None = None
 
 
 @dataclass(frozen=True)
