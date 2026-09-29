@@ -125,13 +125,25 @@ def _player_name_cell(p: PlayerOutcome) -> str:
     return f"<td{title_attr}>{html.escape(p.display_name)}{tags_html}</td>"
 
 
+_ROSTER_POSITION_ORDER = {"QB": 0, "RB": 1, "WR": 2, "TE": 3, "FLEX": 4, "DST": 5}
+
+
+def _in_roster_order(players: tuple[PlayerOutcome, ...]) -> list[PlayerOutcome]:
+    """QB-RB-RB-WR-WR-WR-TE-FLEX-DST, matching DK's own roster-slot order -- `lineup.players` in
+    the slate snapshot preserves whatever order the solver happened to emit (confirmed live: not
+    slot order), so this is a real, needed sort, not just a stable no-op. A stable sort keeps
+    same-position players (RB1 vs RB2, WR1 vs WR2 vs WR3) in their original relative order, since
+    `PlayerOutcome.position` doesn't carry the slot number, only the position label."""
+    return sorted(players, key=lambda p: _ROSTER_POSITION_ORDER.get(p.position, 99))
+
+
 def _render_roster_table(players: tuple[PlayerOutcome, ...]) -> str:
     rows = "".join(
         f"<tr><td class=\"pos\">{p.position}</td>{_player_name_cell(p)}<td>{p.team}</td>"
         f"<td class=\"num\">{_salary(p.salary)}</td>"
         f"<td class=\"num\">{_fmt(p.projected)}</td><td class=\"num\">{_fmt(p.actual)}</td>"
         f"<td class=\"num {_delta_class(p.delta)}\">{'--' if p.delta is None else f'{p.delta:+.1f}'}</td></tr>"
-        for p in players
+        for p in _in_roster_order(players)
     )
     return (
         '<table class="roster-table"><thead><tr><th>Pos</th><th>Player</th><th>Team</th><th>Salary</th>'
