@@ -113,12 +113,33 @@ def save_slate_snapshot(
 
 
 def list_slate_snapshots(season: int, week: int, *, base_dir: Path | None = None) -> list[Path]:
-    """Every snapshot file for `(season, week)`, oldest-first (filename sorts chronologically --
-    same `HHMMSS` convention as MLB's own snapshot filenames)."""
+    """Every snapshot file for `(season, week)`, oldest-first by REAL capture time -- each file's
+    own `timestamp` field (a real ISO8601 UTC datetime, written once at `save_slate_snapshot` time
+    and never touched again), not the filename.
+
+    **Bug fixed 2026-09-29, caught live via a real, visibly wrong "CHALK" tag on a ~7%-owned
+    player in the postmortem:** the filename's `HHMMSS` suffix only encodes time-of-day, not date
+    -- for a slate that spans real calendar days before kickoff (this project's own week-3 slate
+    had real snapshot runs on 2026-09-25, -26, and -27), a run from an EARLIER day but LATER clock
+    time (2026-09-26T16:45 -> filename `..._164516.json`) sorted as filename-string-greater than a
+    run from a LATER day but EARLIER clock time (2026-09-27T09:49 -> `..._134953.json`), so
+    `load_latest_slate_snapshot` was silently returning a full day-old snapshot instead of the real
+    latest one. Confirmed live: this fed a wrong `is_chalk`/`projected_ownership` value straight
+    into the postmortem's per-player tags (`tracking/postmortem/player_context.py`) for at least
+    one real player. Sorting by the embedded timestamp instead of the filename is correct
+    regardless of how many real calendar days a slate's snapshot history spans."""
     root = snapshot_dir(base_dir=base_dir)
     if not root.exists():
         return []
-    return sorted(root.glob(f"{season}-{week:02d}_*.json"))
+    files = list(root.glob(f"{season}-{week:02d}_*.json"))
+
+    def _timestamp(path: Path) -> str:
+        try:
+            return json.loads(path.read_text()).get("timestamp") or ""
+        except (json.JSONDecodeError, OSError):
+            return ""  # a corrupt/unreadable file sorts first (oldest), never crashes the list
+
+    return sorted(files, key=_timestamp)
 
 
 def load_latest_slate_snapshot(season: int, week: int, *, base_dir: Path | None = None) -> dict | None:
