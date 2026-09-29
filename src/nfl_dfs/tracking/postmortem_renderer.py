@@ -1,15 +1,28 @@
 """Renders one week's `PostMortemReport` as a standalone HTML page -- lineup outcomes (agents +
-operator, sorted best-actual-first), the chalk-proxy comparison, the process grade, and the
-ceiling-pattern card. Scoped to what `tracking/postmortem/replay.py` can actually compute today;
-not a port of MLB's full 3,559-line renderer (calibration surfaces, agent-evolution trend strips,
-cash-line history -- all built on months of settled MLB slates this project doesn't have yet).
+operator, sorted best-actual-first), the chalk-proxy comparison, the process grade, the
+ceiling-pattern card, player exposure, positional bias, and each agent's stack-thesis-hit review.
+Scoped to what `tracking/postmortem/replay.py` + `tracking/postmortem/exposure.py` can actually
+compute today; not a port of MLB's full 3,559-line renderer (calibration surfaces, agent-evolution
+trend strips, cash-line history -- all built on months of settled MLB slates this project doesn't
+have yet).
+
+`contest_results`/`season_records` are optional render-time extras, not `PostMortemReport` fields:
+unlike everything else this module renders, they aren't derived from the week's slate snapshot --
+they're Chris's own real DK play history (`storage/contest_results_store.py`) and season-to-date
+record (`tracking/season_record.py`), read separately by the calling script. Passing neither still
+renders a complete, valid page (this is the direct real-path replacement for week 2's one-off
+`reconstruct_week2_postmortem.py`, which needed both because no real snapshot existed that week;
+from week 3 on, a snapshot always exists, and these two are the only pieces a real snapshot can't
+supply on its own).
 """
 
 from __future__ import annotations
 
 import html
 
+from nfl_dfs.storage.contest_results_store import ContestResult
 from nfl_dfs.tracking.postmortem.models import LineupOutcome, PostMortemReport
+from nfl_dfs.tracking.season_record import SeasonRecord
 
 _STYLE = """
 <style>
@@ -28,6 +41,13 @@ _STYLE = """
   .pill.hit { background: #11332a; color: #3ddc9b; }
   .pill.miss { background: #3a1c1c; color: #fb7979; }
   .note { color: #ffc94d; font-size: 0.8rem; }
+  .badge { display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: 0.65rem; font-weight: 700; }
+  .badge.cash { background: #11332a; color: #3ddc9b; }
+  .badge.miss { background: #3a1c1c; color: #fb7979; }
+  .badge.real { background: #11332a; color: #3ddc9b; }
+  .badge.est { background: #3a2c12; color: #ffc94d; }
+  .green { color: #3ddc9b; font-weight: 600; }
+  .red { color: #fb7979; font-weight: 600; }
 </style>
 """.strip()
 
@@ -105,7 +125,133 @@ def _render_ceiling_patterns(report: PostMortemReport) -> str:
     )
 
 
-def render_postmortem_html(report: PostMortemReport) -> str:
+def _render_contest_results(contest_results: tuple[ContestResult, ...]) -> str:
+    if not contest_results:
+        return ""
+    total = len(contest_results)
+    cashed = sum(1 for c in contest_results if c.cashed)
+    rows = "".join(
+        f"<tr><td>{html.escape(c.lineup_label)}</td><td>{html.escape(c.contest_name)}</td>"
+        f"<td class=\"num\">{c.entries:,}</td><td class=\"num\">{c.rank:,}</td>"
+        f"<td class=\"num\">{c.rank / c.entries * 100:.1f}%</td>"
+        f"<td class=\"num\">{_fmt(c.fpts)}</td><td class=\"num\">${c.winnings:,.2f}</td>"
+        f"<td><span class=\"badge {'cash' if c.cashed else 'miss'}\">{'CASHED' if c.cashed else 'missed'}</span></td></tr>"
+        for c in sorted(contest_results, key=lambda c: c.rank / c.entries)
+    )
+    total_winnings = sum(c.winnings for c in contest_results)
+    return (
+        f"<h2>Real Contest Results ({total} entries, {cashed} cashed, ${total_winnings:,.2f})</h2>"
+        '<div class="card"><table><thead><tr><th>Lineup</th><th>Contest</th><th>Entries</th>'
+        "<th>Rank</th><th>Percentile</th><th>FPTS</th><th>Winnings</th><th>Result</th></tr></thead>"
+        f"<tbody>{rows}</tbody></table></div>"
+    )
+
+
+def _render_season_records(season_records: tuple[SeasonRecord, ...]) -> str:
+    if not season_records:
+        return ""
+    from nfl_dfs.agents.registry import NFL_AGENTS
+
+    agent_display_names = {a.agent_id: a.display_name for a in NFL_AGENTS}
+    rows = []
+    for r in season_records:
+        label = r.agent_id if r.is_operator_lineup else agent_display_names.get(r.agent_id, r.agent_id)
+        basis_cls = "real" if r.basis == "real" else "est"
+        basis_title = "Real DK contest entries" if r.basis == "real" else "Interpolated against the real contests you entered"
+        cash_record = f"{r.contest_cashes}/{r.contest_entries}" if r.contest_entries else "--"
+        delta_cls = "green" if (r.avg_delta or 0) > 0 else "red"
+        best = f"{_fmt(r.best_week[1])} (wk{r.best_week[0]})" if r.best_week else "--"
+        rows.append(
+            f"<tr><td>{html.escape(label)} <span class=\"badge {basis_cls}\" title=\"{basis_title}\">{r.basis}</span></td>"
+            f"<td class=\"num\">{r.wins}-{r.weeks_tracked - r.wins}</td>"
+            f"<td class=\"num\">{cash_record}</td>"
+            f"<td class=\"num {delta_cls}\">{'' if r.avg_delta is None else f'{r.avg_delta:+.1f}'}</td>"
+            f"<td class=\"num\">{best}</td></tr>"
+        )
+    return (
+        "<h2>Season Record (L1/L2/L3 individually + the 6 agents)</h2>"
+        '<div class="card"><table><thead><tr><th>Lineup / Agent</th><th>W-L (would-cash)</th>'
+        "<th>Cashed</th><th>Avg Delta</th><th>Best Week</th></tr></thead>"
+        f"<tbody>{''.join(rows)}</tbody></table>"
+        '<p class="note">"real" = your own DK contest entries. "est" = an agent never actually '
+        "entered -- cash outcome is interpolated against the same real contests you played that "
+        "week.</p></div>"
+    )
+
+
+def _render_exposure(report: PostMortemReport) -> str:
+    meaningful = [p for p in report.player_exposure if p.count >= 3]
+    if not meaningful:
+        return '<h2>Player Exposure (3+ lineups)</h2><div class="card"><p>No player was rostered by 3 or more of this week\'s lineups.</p></div>'
+    rows = "".join(
+        f"<tr><td class=\"pos\">{p.position}</td><td>{html.escape(p.display_name)}</td><td>{p.team}</td>"
+        f"<td class=\"num\">{p.count}/{len(report.lineup_outcomes)}</td>"
+        f"<td class=\"num\">{_fmt(p.projected)}</td><td class=\"num\">{_fmt(p.actual)}</td>"
+        f"<td class=\"num {'green' if (p.delta or 0) > 0 else 'red'}\">{'--' if p.delta is None else f'{p.delta:+.1f}'}</td></tr>"
+        for p in meaningful
+    )
+    return (
+        "<h2>Player Exposure (3+ lineups -- real portfolio decision impact)</h2>"
+        '<div class="card"><table><thead><tr><th>Pos</th><th>Player</th><th>Team</th><th>Exposure</th>'
+        "<th>Proj</th><th>Actual</th><th>Delta</th></tr></thead>"
+        f"<tbody>{rows}</tbody></table></div>"
+    )
+
+
+def _render_positional(report: PostMortemReport) -> str:
+    if not report.positional_deltas:
+        return ""
+    rows = "".join(
+        f"<tr><td class=\"pos\">{d.position}</td><td class=\"num\">{d.n}</td>"
+        f"<td class=\"num\">{_fmt(d.avg_projected)}</td><td class=\"num\">{_fmt(d.avg_actual)}</td>"
+        f"<td class=\"num {'green' if d.avg_delta > 0 else 'red'}\">{d.avg_delta:+.1f}</td></tr>"
+        for d in report.positional_deltas
+    )
+    return (
+        "<h2>Positional Bias (avg delta, one vote per distinct player)</h2>"
+        '<div class="card"><table><thead><tr><th>Pos</th><th># Players</th><th>Avg Proj</th>'
+        "<th>Avg Actual</th><th>Avg Delta</th></tr></thead>"
+        f"<tbody>{rows}</tbody></table></div>"
+    )
+
+
+def _stack_result_badge(hit: bool | None) -> str:
+    if hit is None:
+        return ""
+    css = "cash" if hit else "miss"
+    text = "HIT" if hit else "MISS"
+    return f'<span class="badge {css}">{text}</span>'
+
+
+def _render_stack_thesis(report: PostMortemReport) -> str:
+    if not report.stack_thesis_reviews:
+        return ""
+    rows = []
+    for r in report.stack_thesis_reviews:
+        delta_cls = "" if r.hit is None else ("green" if r.hit else "red")
+        delta_text = "--" if r.delta is None else f"{r.delta:+.1f}"
+        stack_names = " + ".join(html.escape(n) for n in r.stack_player_names)
+        rows.append(
+            f"<tr><td>{html.escape(r.label)}</td><td>{stack_names}</td>"
+            f"<td class=\"num\">{_fmt(r.projected)}</td><td class=\"num\">{_fmt(r.actual)}</td>"
+            f"<td class=\"num {delta_cls}\">{delta_text}</td>"
+            f"<td>{_stack_result_badge(r.hit)}</td></tr>"
+        )
+    rows = "".join(rows)
+    return (
+        "<h2>Did Each Agent's Named Stack Thesis Hit?</h2>"
+        '<div class="card"><table><thead><tr><th>Agent</th><th>Core Stack</th><th>Proj</th>'
+        "<th>Actual</th><th>Delta</th><th>Result</th></tr></thead>"
+        f"<tbody>{rows}</tbody></table></div>"
+    )
+
+
+def render_postmortem_html(
+    report: PostMortemReport,
+    *,
+    contest_results: tuple[ContestResult, ...] = (),
+    season_records: tuple[SeasonRecord, ...] = (),
+) -> str:
     return f"""<!doctype html>
 <html>
 <head><meta charset="utf-8">{_STYLE}</head>
@@ -113,8 +259,13 @@ def render_postmortem_html(report: PostMortemReport) -> str:
 <h1>Postmortem -- Season {report.season}, Week {report.week}</h1>
 <p class="meta">{len(report.lineup_outcomes)} lineup(s) tracked.</p>
 {_render_lineup_table(report.lineup_outcomes)}
+{_render_season_records(season_records)}
+{_render_contest_results(contest_results)}
 {_render_process_grade(report)}
 {_render_chalk_comparison(report)}
+{_render_exposure(report)}
+{_render_positional(report)}
+{_render_stack_thesis(report)}
 {_render_ceiling_patterns(report)}
 </body>
 </html>

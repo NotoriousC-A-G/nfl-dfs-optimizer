@@ -18,6 +18,11 @@ from nfl_dfs.storage.slate_snapshot_store import load_latest_slate_snapshot
 from nfl_dfs.tracking.name_matching import normalize_player_name, parse_player_token
 from nfl_dfs.tracking.postmortem.actual_points import actual_points_by_canonical_id
 from nfl_dfs.tracking.postmortem.chalk import build_chalk_lineup
+from nfl_dfs.tracking.postmortem.exposure import (
+    compute_player_exposure,
+    compute_positional_deltas,
+    compute_stack_thesis_reviews,
+)
 from nfl_dfs.tracking.postmortem.models import LineupOutcome, PlayerOutcome, PostMortemReport
 from nfl_dfs.tracking.postmortem.retrospective import compute_process_grade, compute_signal_verdicts, extract_ceiling_patterns
 
@@ -58,6 +63,8 @@ def _agent_lineup_outcomes(snapshot: dict, actual_by_id: dict[str, float]) -> li
                 actual_total=round(actual_total, 2) if actual_total is not None else None,
                 delta=round(actual_total - projected_total, 2) if actual_total is not None else None,
                 unresolved_players=unresolved,
+                core_stack=tuple(lineup.get("core_stack") or ()),
+                core_stack_team=lineup.get("core_stack_team"),
             )
         )
     return outcomes
@@ -176,13 +183,21 @@ def run_postmortem(season: int, week: int, *, weekly: pd.DataFrame, pbp: pd.Data
     process_grade = compute_process_grade(verdicts)
     ceiling_patterns = extract_ceiling_patterns(list(missed_players))
 
+    lineup_outcomes_t = tuple(lineup_outcomes)
+    player_exposure = compute_player_exposure(lineup_outcomes_t)
+    positional_deltas = compute_positional_deltas(player_exposure)
+    stack_thesis_reviews = compute_stack_thesis_reviews(lineup_outcomes_t)
+
     return PostMortemReport(
         season=season,
         week=week,
-        lineup_outcomes=tuple(lineup_outcomes),
+        lineup_outcomes=lineup_outcomes_t,
         top_performers=top_performers,
         missed_players=missed_players,
         chalk_comparison=chalk_comparison,
         ceiling_patterns=ceiling_patterns,
         process_grade=process_grade,
+        player_exposure=player_exposure,
+        positional_deltas=positional_deltas,
+        stack_thesis_reviews=stack_thesis_reviews,
     )

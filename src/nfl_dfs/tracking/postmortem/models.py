@@ -39,6 +39,13 @@ class LineupOutcome:
     actual_total: float | None  # None when ANY player in the lineup has no settled match
     delta: float | None
     unresolved_players: tuple[str, ...] = field(default_factory=tuple)
+    # The agent's own disclosed core stack (canonical_ids), straight from the real slate snapshot's
+    # `lineup.core_stack` -- not parsed from rationale text. Empty for an operator (L1/L2/L3) row:
+    # `agent_results.csv` carries no disclosed stack-lever thesis for Chris's own manual builds, so
+    # `compute_stack_thesis_reviews` naturally only reviews the 6 agents, same scope week 2's
+    # regex-based version had.
+    core_stack: tuple[str, ...] = field(default_factory=tuple)
+    core_stack_team: str | None = None
 
 
 @dataclass(frozen=True)
@@ -86,6 +93,60 @@ class CeilingPatterns:
 
 
 @dataclass(frozen=True)
+class PlayerExposure:
+    """Every distinct player rostered across ALL of this week's lineups (the 6 agents' + the
+    operator's), with how many of those lineups carried them. Deliberately NOT deduped by lineup
+    weight -- a player in 5 of 9 lineups who busted did more real portfolio damage than a bust in
+    one lineup alone, so `lineup_labels` counts every real appearance. Direct port of week 2's own
+    `compute_player_exposure` (built ad hoc against parsed HTML that week), now real, tested code
+    against `LineupOutcome` objects instead of regex output."""
+
+    canonical_id: str
+    display_name: str
+    team: str
+    position: str
+    projected: float | None
+    actual: float | None
+    delta: float | None
+    lineup_labels: tuple[str, ...]
+
+    @property
+    def count(self) -> int:
+        return len(self.lineup_labels)
+
+
+@dataclass(frozen=True)
+class PositionalDelta:
+    """Avg projected/actual/delta BY DISTINCT PLAYER (one vote each, regardless of how many
+    lineups rostered them) -- a check on whether the projection system itself ran hot or cold by
+    position this week, separate from `PlayerExposure`'s portfolio-damage view."""
+
+    position: str
+    n: int
+    avg_projected: float
+    avg_actual: float
+    avg_delta: float
+
+
+@dataclass(frozen=True)
+class StackThesisReview:
+    """Did an agent's own named core stack (its real, disclosed `core_stack` canonical_ids from
+    the slate snapshot -- not a name parsed from rationale text) actually deliver, independent of
+    whether the whole lineup did. A lineup can win despite its stack, or lose despite a stack that
+    hit, if the rest of the roster swings the other way -- this isolates just the stack's own real
+    settled performance."""
+
+    label: str
+    agent_id: str
+    stack_player_names: tuple[str, ...]
+    stack_team: str | None
+    projected: float
+    actual: float | None  # None if any stack player is unresolved
+    delta: float | None
+    hit: bool | None  # actual > projected; None when actual is None
+
+
+@dataclass(frozen=True)
 class PostMortemReport:
     """One week's full postmortem."""
 
@@ -97,3 +158,6 @@ class PostMortemReport:
     chalk_comparison: ChalkComparison | None = None
     ceiling_patterns: CeilingPatterns | None = None
     process_grade: ProcessGrade | None = None
+    player_exposure: tuple[PlayerExposure, ...] = field(default_factory=tuple)
+    positional_deltas: tuple[PositionalDelta, ...] = field(default_factory=tuple)
+    stack_thesis_reviews: tuple[StackThesisReview, ...] = field(default_factory=tuple)
