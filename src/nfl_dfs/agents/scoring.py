@@ -41,6 +41,18 @@ from nfl_dfs.projection.blend import PlayerProjection
 # stack_conviction contribution) -- a deliberate simplification for this first pass, not a bug.
 _MAX_IQR_FRACTION_PER_AXIS = 0.5
 
+# The ownership axis (Chris, 2026-10-04: week-4 Arbitrageur, the "find the leverage" build, rostered
+# four 21-32%-owned players -- "being a mid-leverage build is not the point"; no hard ownership caps).
+# Two changes, both disclosed draft values, not backtested:
+#  1. Driven by ownership RELATIVE TO WHAT THE FIELD NORMALLY ROSTERS AT THAT SALARY
+#     (`LeverageAssessment.ownership_vs_baseline`, percentage points), not by percentile rank. Rank
+#     saturated: with most of the pool near 0%, 4% and 31% owned both read as "chalk" and a 3x stronger
+#     lean still left McCaffrey (31%) the best RB by adjusted value.
+#  2. Its own, larger IQR fraction than the other axes.
+# `_OWNERSHIP_DEVIATION_REF_POINTS` is the over/under-ownership (in points) at which the signal saturates.
+_OWNERSHIP_AXIS_IQR_FRACTION = 1.0
+_OWNERSHIP_DEVIATION_REF_POINTS = 15.0
+
 # GameScriptLean.intensity's real range (spread_dampener's own bands, correlation/stack_profile.py)
 # is [0.25, 1.00] -- centered here so a close game (near 1.00) reads as a positive "close-game"
 # signal and a blowout (near 0.25) reads as negative.
@@ -123,6 +135,17 @@ def _stack_terms(agent: NflAgentConstructor, signals: PlayerSignals, signal_bund
     return total
 
 
+def _ownership_contribution(agent: NflAgentConstructor, signals: PlayerSignals) -> float:
+    """The ownership axis alone: `stance * clip(ownership_vs_baseline / REF, -1, 1)` -- a contrarian
+    (negative) stance penalizes a player owned ABOVE the salary baseline and boosts one owned below it.
+    Scaled separately from the other axes (`_OWNERSHIP_AXIS_IQR_FRACTION`). A missing leverage read or
+    baseline contributes exactly 0.0 -- never guessed."""
+    if agent.ownership_stance == 0.0 or signals.leverage is None or signals.leverage.ownership_vs_baseline is None:
+        return 0.0
+    deviation = signals.leverage.ownership_vs_baseline / _OWNERSHIP_DEVIATION_REF_POINTS
+    return agent.ownership_stance * max(-1.0, min(1.0, deviation))
+
+
 def _raw_contribution(agent: NflAgentConstructor, signals: PlayerSignals, signal_bundle: SignalBundle) -> float:
     """Sum of every axis's centered, roughly -1..+1-scaled contribution for one player. A `None`
     signal contributes exactly 0.0 for that axis -- never guessed.
@@ -130,12 +153,6 @@ def _raw_contribution(agent: NflAgentConstructor, signals: PlayerSignals, signal
     total = 0.0
     if agent.ceiling_lean != 0.0 and signals.ceiling_multiplier is not None:
         total += agent.ceiling_lean * (signals.ceiling_multiplier - 1.0)
-    if agent.ownership_stance != 0.0 and signals.leverage is not None:
-        # LeverageAssessment.ownership_percentile is 0.0 = MOST owned, 1.0 = LEAST owned
-        # (ownership/leverage.py's own `_ownership_percentiles` docstring) -- inverted from the
-        # intuitive reading, so ownership_stance's sign is flipped here: a negative (contrarian)
-        # stance must BOOST a high percentile (least-owned) player, not a low one.
-        total += -agent.ownership_stance * (signals.leverage.ownership_percentile - 0.5)
     if agent.matchup_conviction != 0.0 and signals.matchup is not None:
         total += agent.matchup_conviction * (signals.matchup.combined_multiplier - 1.0)
     total += _stack_terms(agent, signals, signal_bundle)
@@ -167,7 +184,8 @@ def compute_agent_objective_delta(
         if signals is None:
             continue
         raw = _raw_contribution(agent, signals, signal_bundle)
-        if raw == 0.0:
+        ownership = _ownership_contribution(agent, signals)
+        if raw == 0.0 and ownership == 0.0:
             continue
-        deltas[p.canonical_id] = raw * _MAX_IQR_FRACTION_PER_AXIS * iqr
+        deltas[p.canonical_id] = (raw * _MAX_IQR_FRACTION_PER_AXIS + ownership * _OWNERSHIP_AXIS_IQR_FRACTION) * iqr
     return deltas
