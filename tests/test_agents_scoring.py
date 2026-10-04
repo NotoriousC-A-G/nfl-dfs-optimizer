@@ -44,7 +44,7 @@ def _signals(
     )
 
 
-def _leverage(ownership_percentile: float) -> LeverageAssessment:
+def _leverage(ownership_percentile: float, ownership_vs_baseline: float | None = None) -> LeverageAssessment:
     return LeverageAssessment(
         native_id="rg1",
         name="Test Player",
@@ -55,7 +55,7 @@ def _leverage(ownership_percentile: float) -> LeverageAssessment:
         projected_ownership=15.0,
         ownership_percentile=ownership_percentile,
         baseline_ownership=None,
-        ownership_vs_baseline=None,
+        ownership_vs_baseline=ownership_vs_baseline,
         is_chalk=False,
         is_leverage=False,
         note="",
@@ -192,8 +192,8 @@ def test_ceiling_lean_contributes_nothing_for_a_player_with_no_ceiling_signal():
 
 
 # --------------------------------------------------------------------------------------------
-# ownership_stance axis -- LeverageAssessment.ownership_percentile is 0.0=most owned, 1.0=least
-# owned (inverted from the intuitive reading), so this is the one axis worth double-checking sign.
+# ownership_stance axis -- driven by LeverageAssessment.ownership_vs_baseline (points over/under the
+# salary-baseline field ownership), so this is the one axis worth double-checking sign.
 # --------------------------------------------------------------------------------------------
 
 
@@ -202,8 +202,8 @@ def test_contrarian_ownership_stance_boosts_the_least_owned_player_and_fades_the
     least_owned, most_owned, *rest = pool
     bundle = _bundle(
         {
-            least_owned.canonical_id: _signals(leverage=_leverage(ownership_percentile=1.0)),
-            most_owned.canonical_id: _signals(leverage=_leverage(ownership_percentile=0.0)),
+            least_owned.canonical_id: _signals(leverage=_leverage(1.0, ownership_vs_baseline=-8.0)),
+            most_owned.canonical_id: _signals(leverage=_leverage(0.0, ownership_vs_baseline=16.0)),
             **{p.canonical_id: _signals() for p in rest},
         }
     )
@@ -218,7 +218,7 @@ def test_chalk_seeking_ownership_stance_boosts_the_most_owned_player():
     most_owned, *rest = pool
     bundle = _bundle(
         {
-            most_owned.canonical_id: _signals(leverage=_leverage(ownership_percentile=0.0)),
+            most_owned.canonical_id: _signals(leverage=_leverage(0.0, ownership_vs_baseline=16.0)),
             **{p.canonical_id: _signals() for p in rest},
         }
     )
@@ -447,3 +447,29 @@ def test_build_signal_bundle_game_total_sums_both_teams_real_implied_totals():
 def test_build_signal_bundle_game_total_is_none_when_either_side_is_missing():
     bundle = _bundle({}, implied_total_by_team={"AAA": 24.0})
     assert bundle.game_total("AAA", "BBB") is None
+
+
+def test_ownership_lean_scales_with_deviation_not_rank_and_saturates():
+    pool = _pool(10.0, 12.0, 14.0, 16.0, 18.0, 20.0)
+    small, big, huge, *rest = pool
+    bundle = _bundle(
+        {
+            small.canonical_id: _signals(leverage=_leverage(0.1, ownership_vs_baseline=3.0)),
+            big.canonical_id: _signals(leverage=_leverage(0.0, ownership_vs_baseline=12.0)),
+            huge.canonical_id: _signals(leverage=_leverage(0.0, ownership_vs_baseline=40.0)),
+            **{p.canonical_id: _signals() for p in rest},
+        }
+    )
+    agent = NflAgentConstructor(agent_id="a", display_name="A", ownership_stance=-1.0)
+    deltas = compute_agent_objective_delta(agent, pool, bundle)
+    assert deltas[huge.canonical_id] < deltas[big.canonical_id] < deltas[small.canonical_id] < 0
+
+
+def test_ownership_lean_is_inert_without_a_baseline():
+    pool = _pool(10.0, 12.0, 14.0, 16.0, 18.0, 20.0)
+    first, *rest = pool
+    bundle = _bundle(
+        {first.canonical_id: _signals(leverage=_leverage(0.0)), **{p.canonical_id: _signals() for p in rest}}
+    )
+    agent = NflAgentConstructor(agent_id="a", display_name="A", ownership_stance=-1.0)
+    assert first.canonical_id not in compute_agent_objective_delta(agent, pool, bundle)

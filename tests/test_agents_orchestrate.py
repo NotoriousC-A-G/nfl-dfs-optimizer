@@ -93,7 +93,7 @@ def _leverage(ownership_percentile: float) -> LeverageAssessment:
     return LeverageAssessment(
         native_id="rg1", name="t", position="WR", team="AAA", salary=6000, salary_decile=3,
         projected_ownership=15.0, ownership_percentile=ownership_percentile, baseline_ownership=None,
-        ownership_vs_baseline=None, is_chalk=False, is_leverage=False, note="",
+        ownership_vs_baseline=10.0, is_chalk=False, is_leverage=False, note="",
     )
 
 
