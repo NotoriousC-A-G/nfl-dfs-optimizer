@@ -53,7 +53,7 @@ from nfl_dfs.ingestion.usage_share import ROLE_RB, ROLE_WR, aggregate_player_tra
 from nfl_dfs.ingestion.weather import WeatherReading, fetch_weather_reading
 from nfl_dfs.matchup.context import MatchupFacetInputs, PlayerMatchupInput, build_matchup_context_pool
 from nfl_dfs.normalization.crosswalk import fetch_crosswalk
-from nfl_dfs.normalization.injury_lookup import team_injuries
+from nfl_dfs.normalization.injury_lookup import overlay_injury_report_exclusions, team_injuries
 from nfl_dfs.normalization.matcher import reconcile_week
 from nfl_dfs.normalization.registry import PlayerRegistry
 from nfl_dfs.optimizer.lineup import EXCLUDED_INJURY_STATUSES, LineupGenerationError
@@ -73,14 +73,14 @@ from scripts.live_integration_check_output import _build_ges, fetch_dk_raw_for_l
 from scripts.live_integration_check_projection import fetch_footballguys_raw, fetch_rotogrinders_raw
 
 SEASON = 2026
-WEEK = 3
+WEEK = 4
 # Set to a specific DK draftGroupId to target that exact slate directly, bypassing auto-detection
 # entirely -- required once DK is serving more than one plausible main-shaped slate at once (a
 # real, live 2026-09-19 case; see ingestion.draftkings.fetch_slate_by_draft_group_id's own
 # docstring). Leave None to auto-detect (works fine when only one real main slate is live) -- if
 # auto-detection hits real ambiguity, it now fails loudly with the real candidate ids to choose
 # from here, rather than silently substituting an unrelated slate.
-DRAFT_GROUP_ID: int | None = 153769  # confirmed live 2026-09-25: the real 13-game Sunday main slate (week 3)
+DRAFT_GROUP_ID: int | None = 154078  # confirmed live 2026-10-04: the 12-game Sunday main slate (week 4); 154081 is the 4-game late slate
 
 
 def main() -> None:
@@ -172,6 +172,16 @@ def main() -> None:
 
     dk_salary = extract_dk_salary(dk_payload)
     dk_injury_status = extract_dk_injury_status(dk_payload)
+    # DK and RotoGrinders disagree on injury status in practice (week 4: Breece Hall Q vs D) -- let
+    # a RotoGrinders Doubtful/Out also exclude the player from lineup generation.
+    try:
+        early_injury_entries = fetch_injury_report()
+    except Exception as exc:  # noqa: BLE001
+        print(f"  RotoGrinders injury report FAILED ({exc}) -- exclusions use DK status only")
+        early_injury_entries = []
+    dk_injury_status = overlay_injury_report_exclusions(
+        dk_injury_status, identities, early_injury_entries, EXCLUDED_INJURY_STATUSES
+    )
     rotogrinders_fpts = extract_rotogrinders_fpts(rg_payload) if rg_payload else {}
     footballguys_points = {}
     for html in fbg_html_by_position.values():

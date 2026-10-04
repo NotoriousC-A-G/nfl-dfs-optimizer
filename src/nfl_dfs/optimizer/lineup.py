@@ -9,7 +9,7 @@ environment via `pulp.listSolvers(onlyAvailable=True)` before this module was wr
 ## What's implemented (hard constraints -- PRD Section 3 + Section 7's first rule)
 
 - Exactly 9 players, salary sum <= $50,000 (PRD Section 3).
-- **IR/OUT players excluded from the candidate pool entirely** (`EXCLUDED_INJURY_STATUSES`,
+- **IR/OUT/D (Doubtful) players excluded from the candidate pool entirely** (`EXCLUDED_INJURY_STATUSES`,
   `_eligible_pool`) -- DraftKings' own `status` field, not a soft penalty. Found live 2026-09-15:
   a confirmed-IR player was reaching the ILP solve before this existed.
 - Roster composition via aggregate position-count constraints, not per-slot assignment
@@ -102,11 +102,12 @@ ROSTER_POSITIONS = ("QB", "RB", "WR", "TE", "DST")
 
 # DraftKings' own `status` vocabulary (`PlayerProjection.dk_injury_status`, `projection.blend.
 # extract_dk_injury_status`) observed live: IR, OUT, Q (Questionable), D (Doubtful), or no
-# designation. Only IR/OUT are a guaranteed zero -- excluded from the candidate pool entirely in
-# `_eligible_pool`. Q/D stay eligible: a real, disclosed DFS strategic decision, not a guaranteed
-# non-play, the same "unresolved is not unavailable" treatment this project's own injury-
-# uncertainty-flag machinery already applies elsewhere.
-EXCLUDED_INJURY_STATUSES = frozenset({"IR", "OUT"})
+# designation. IR/OUT are a guaranteed zero and D (Doubtful) is
+# treated the same way (Chris, 2026-09-30, after a doubtful Breece Hall reached three week-4
+# lineups) -- all excluded from the candidate pool entirely in `_eligible_pool`. Q stays eligible:
+# a real, disclosed DFS strategic decision, not a guaranteed non-play, the same "unresolved is
+# not unavailable" treatment this project's own injury-uncertainty-flag machinery applies.
+EXCLUDED_INJURY_STATUSES = frozenset({"IR", "OUT", "D"})
 
 # Deliberately tiny -- see module docstring's "Full game-stack favoring" note. Blended
 # projections are on the order of 5-30 DK points per player; this weight can only ever matter

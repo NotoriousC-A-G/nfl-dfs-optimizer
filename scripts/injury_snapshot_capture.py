@@ -26,7 +26,7 @@ from nfl_dfs.ingestion.rotogrinders_injuries import fetch_injury_report
 from nfl_dfs.storage.injury_snapshot_store import has_snapshot, write_snapshot
 
 SEASON = 2026
-TARGET_WEEK = 1
+TARGET_WEEK = 4
 
 
 def main() -> None:
