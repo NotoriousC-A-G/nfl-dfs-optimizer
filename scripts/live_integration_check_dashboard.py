@@ -32,6 +32,7 @@ from nfl_dfs.ingestion.qb_rushing_profile import trailing_qb_rushing_profiles
 from nfl_dfs.ingestion.receiving_profile import trailing_receiving_profiles
 from nfl_dfs.composition.lineup_dup_risk import assess_lineup_dup_risk, build_projected_ownership_by_canonical_id
 from nfl_dfs.composition.player_detail import build_gsis_to_pff_id_map, build_player_detail_record
+from nfl_dfs.analysis.availability import filter_depth_chart, filter_role_share_results, unavailable_player_ids
 from nfl_dfs.config import config
 from nfl_dfs.dashboard.renderer import SlateGameRow, write_dashboard_html
 from nfl_dfs.storage.slate_snapshot_store import save_slate_snapshot
@@ -58,6 +59,8 @@ from nfl_dfs.normalization.matcher import reconcile_week
 from nfl_dfs.normalization.registry import PlayerRegistry
 from nfl_dfs.optimizer.lineup import EXCLUDED_INJURY_STATUSES, LineupGenerationError
 from nfl_dfs.output.weekly_output import build_weekly_output
+from nfl_dfs.ingestion.footballguys_ownership import fetch_roster_percentages
+from nfl_dfs.ownership.blend import blend_ownership_rows
 from nfl_dfs.ownership.leverage import build_leverage_assessments
 from nfl_dfs.composition.player_detail import _pff_native_id_for_identity
 from nfl_dfs.projection.blend import (
@@ -213,6 +216,18 @@ def main() -> None:
     if rg_payload:
         all_ownership_rows = parse_projected_ownership(rg_payload)
         main_slate_rows = filter_to_main_slate(all_ownership_rows)
+        try:
+            fbg_ownership = fetch_roster_percentages(WEEK)
+            main_slate_rows, blend_report = blend_ownership_rows(main_slate_rows, fbg_ownership)
+            print(
+                f"  ownership blended RotoGrinders + Footballguys ({len(fbg_ownership)} FBG rows): "
+                f"{blend_report.blended} averaged, {blend_report.fbg_only} FBG-only (RG blank teams "
+                f"{blend_report.blank_teams}), {blend_report.rg_only} RG-only, "
+                f"{blend_report.unresolved_blank} blank-team players unlisted by FBG (left 0.0); "
+                f"{len(blend_report.fbg_unmatched)} FBG rows matched no RG row: {blend_report.fbg_unmatched[:8]}"
+            )
+        except Exception as exc:  # noqa: BLE001
+            print(f"  Footballguys ownership FAILED ({exc}) -- using RotoGrinders POWN alone (blank teams read as 0%)")
         print(f"  {len(all_ownership_rows)} players across every slate window, {len(main_slate_rows)} on the main slate")
         try:
             calibration_bundle = run_full_calibration()
@@ -299,6 +314,9 @@ def main() -> None:
             implied_total_by_team.update(implied_team_totals(odds))
 
     role_share_results = fetch_role_shares(SEASON, WEEK)
+    unavailable_ids = unavailable_player_ids(identities, dk_injury_status, EXCLUDED_INJURY_STATUSES)
+    role_share_results = filter_role_share_results(role_share_results, unavailable_ids)
+    print(f"  availability filter: {len(unavailable_ids)} unavailable id(s) removed from role-share candidates")
     role_share_by_key = {(r.team, r.role): r for r in role_share_results}
 
     from nfl_dfs.correlation.stack_profile import build_stack_profile
@@ -364,18 +382,39 @@ def main() -> None:
     circumstance_stats = {"real_calls": 0, "cache_hits": 0, "input_tokens": 0, "output_tokens": 0, "thinking_tokens": 0}
     circumstance_assessments_by_gsis_id: dict[str, object] = {}
 
+    # Freshness facts folded into every circumstance's cache key (storage/circumstance_cache_store.py):
+    # each team's players with an injury designation on EITHER vendor, so a status change on either
+    # side -- or a newly archived article -- is a cache miss instead of a stale reuse.
+    team_status_facts: dict[str, list] = {}
+    _rg_status_by_name = {(e.name, e.team): e.status for e in early_injury_entries}
+    for identity in identities:
+        dk_native = identity.sources.get("draftkings")
+        dk_status = dk_injury_status.get(str(dk_native.native_id)) if dk_native and dk_native.native_id else None
+        rg_status = next((v for (n, _t), v in _rg_status_by_name.items() if n == identity.display_name), None)
+        if dk_status or rg_status:
+            team_status_facts.setdefault(identity.team, []).append([identity.display_name, dk_status, rg_status])
+    for _entries in team_status_facts.values():
+        _entries.sort()
+
     def _run_synthesis(source, articles_for_source, *, label: str) -> None:
         """Shared bookkeeping for every detector type: cache check, the real synthesize_circumstance
         call, per-run stats, and the assessment dict every detector writes its subjects into. `label`
         is just this call's own print-line prefix (each detector's own real inputs, e.g. "MIN RB:
         J.Mason OUT" or "J.Gibbs (RB) vs CHI") -- everything else here is detector-agnostic."""
-        was_cached = not force_circumstance_refresh and circumstance_cache.has(source)
+        team = source.circumstance_team()
+        fresh_cache = circumstance_cache.with_extra(
+            {
+                "team_status": team_status_facts.get(team, []),
+                "articles": sorted(a.title for a in articles_for_source),
+            }
+        )
+        was_cached = not force_circumstance_refresh and fresh_cache.has(source)
         try:
             assessment = synthesize_circumstance(
                 source,
                 articles_for_source,
                 client=anthropic_client,
-                cache=circumstance_cache,
+                cache=fresh_cache,
                 force_refresh=force_circumstance_refresh,
             )
         except Exception as exc:  # noqa: BLE001 -- one bad synthesis call must not kill the run
@@ -430,7 +469,8 @@ def main() -> None:
     ]
 
     print("  Fetching real current NFL depth chart (nflverse)...")
-    depth_chart_entries = fetch_current_depth_chart(SEASON)
+    depth_chart_entries = filter_depth_chart(fetch_current_depth_chart(SEASON), unavailable_ids)
+    print(f"  depth chart snapshot as of {max((e.snapshot_at for e in depth_chart_entries), default='n/a')}")
     print(f"  {len(depth_chart_entries)} real skill-position depth-chart entries (most recent snapshot).")
     depth_chart_divergences = [
         divergence
