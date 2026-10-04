@@ -19,8 +19,13 @@ genuinely changes** -- an injury status flipping Q->OUT, a matchup multiplier sh
 TTL/expiry logic needed: a changed fact simply produces a different key, a cache miss, and a fresh
 real synthesis.
 
-**Explicit non-invalidation, disclosed rather than silently assumed away**: the cache key
-deliberately does NOT include the matched article set (`find_relevant_articles`'s own output) --
+**Freshness (2026-10-04):** a live caller can pass `extra` (`FilesystemCircumstanceCache.with_extra`)
+-- the team's injury statuses on both vendors plus the matched article slugs -- so a status change or a
+newly archived article is a cache miss. Found when week-4 depth-chart POVs written 2026-09-30 were reused
+on 10-04 with Mike Evans' Questionable status never in their key. Without `extra` the paragraph below
+still describes the behavior:
+
+**Non-invalidation without `extra`**: the cache key does NOT include the matched article set (`find_relevant_articles`'s own output) --
 `circumstance_facts()` is defined per-detector to cover the facts that would change the ANSWER, and
 newly-archived Footballguys coverage isn't one of them by this design. A newly-archived article
 relevant to an already-cached circumstance will NOT trigger resynthesis on its own. A caller that
@@ -47,7 +52,7 @@ _REPO_ROOT = Path(__file__).resolve().parents[3]
 DEFAULT_ROOT = _REPO_ROOT / "data" / "cache" / "circumstance_pov"
 
 
-def cache_key(source: CircumstanceSource) -> str:
+def cache_key(source: CircumstanceSource, extra: dict | None = None) -> str:
     """A SHA-256 hash of this circumstance's real, defining facts -- see this module's own
     docstring for why the key is derived from the facts themselves (self-invalidating) rather than
     a stable identifier plus a separate expiry mechanism."""
@@ -56,34 +61,39 @@ def cache_key(source: CircumstanceSource) -> str:
         "team": source.circumstance_team(),
         **source.circumstance_facts(),
     }
+    if extra:
+        # Freshness facts the detector's own facts don't cover (injury statuses on both vendors,
+        # the matched article set) -- supplied by the live caller, so a changed status or newly
+        # archived article is a cache miss. Absent when None, so existing keys are unchanged.
+        payload["extra"] = extra
     encoded = json.dumps(payload, sort_keys=True, default=str)
     return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
 
 
-def assessment_path(source: CircumstanceSource, *, base_dir: Path | None = None) -> Path:
+def assessment_path(source: CircumstanceSource, *, base_dir: Path | None = None, extra: dict | None = None) -> Path:
     root = base_dir if base_dir is not None else DEFAULT_ROOT
     return (
         root
         / str(source.circumstance_season())
         / str(source.circumstance_week())
         / source.circumstance_kind()
-        / f"{cache_key(source)}.json"
+        / f"{cache_key(source, extra)}.json"
     )
 
 
-def has_cached_assessment(source: CircumstanceSource, *, base_dir: Path | None = None) -> bool:
+def has_cached_assessment(source: CircumstanceSource, *, base_dir: Path | None = None, extra: dict | None = None) -> bool:
     """The one resumability check callers rely on -- no other state is consulted (this project's
     established `storage/*.py` convention, reused here)."""
-    return assessment_path(source, base_dir=base_dir).exists()
+    return assessment_path(source, base_dir=base_dir, extra=extra).exists()
 
 
 def write_cached_assessment(
-    source: CircumstanceSource, assessment: CircumstanceAssessment, *, base_dir: Path | None = None
+    source: CircumstanceSource, assessment: CircumstanceAssessment, *, base_dir: Path | None = None, extra: dict | None = None
 ) -> Path:
     """Writes (or overwrites) one circumstance's cached assessment. Idempotent -- re-running the
     same real circumstance just overwrites its own file (same content, in practice, since the same
     facts produce the same cache key)."""
-    path = assessment_path(source, base_dir=base_dir)
+    path = assessment_path(source, base_dir=base_dir, extra=extra)
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp_path = path.with_suffix(path.suffix + ".tmp")
     tmp_path.write_text(json.dumps(asdict(assessment)))
@@ -91,8 +101,10 @@ def write_cached_assessment(
     return path
 
 
-def read_cached_assessment(source: CircumstanceSource, *, base_dir: Path | None = None) -> CircumstanceAssessment:
-    path = assessment_path(source, base_dir=base_dir)
+def read_cached_assessment(
+    source: CircumstanceSource, *, base_dir: Path | None = None, extra: dict | None = None
+) -> CircumstanceAssessment:
+    path = assessment_path(source, base_dir=base_dir, extra=extra)
     envelope = json.loads(path.read_text())
     return CircumstanceAssessment(**envelope)
 
@@ -103,14 +115,19 @@ class FilesystemCircumstanceCache:
     `cache=` argument. `base_dir` is exposed (not hardcoded) so tests can point it at a temp
     directory instead of the real `data/cache/` tree."""
 
-    def __init__(self, *, base_dir: Path | None = None) -> None:
+    def __init__(self, *, base_dir: Path | None = None, extra: dict | None = None) -> None:
         self._base_dir = base_dir
+        self._extra = extra
+
+    def with_extra(self, extra: dict | None) -> "FilesystemCircumstanceCache":
+        """Same cache, keyed additionally on `extra` (see `cache_key`)."""
+        return FilesystemCircumstanceCache(base_dir=self._base_dir, extra=extra)
 
     def has(self, source: CircumstanceSource) -> bool:
-        return has_cached_assessment(source, base_dir=self._base_dir)
+        return has_cached_assessment(source, base_dir=self._base_dir, extra=self._extra)
 
     def read(self, source: CircumstanceSource) -> CircumstanceAssessment:
-        return read_cached_assessment(source, base_dir=self._base_dir)
+        return read_cached_assessment(source, base_dir=self._base_dir, extra=self._extra)
 
     def write(self, source: CircumstanceSource, assessment: CircumstanceAssessment) -> None:
-        write_cached_assessment(source, assessment, base_dir=self._base_dir)
+        write_cached_assessment(source, assessment, base_dir=self._base_dir, extra=self._extra)

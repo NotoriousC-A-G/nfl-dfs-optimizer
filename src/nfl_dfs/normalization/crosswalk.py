@@ -3,12 +3,14 @@
 
 `nfl_data_py.import_ids()` hits a remote GitHub-hosted CSV on every call and the data "doesn't
 change intra-week" per the ADR, so this caches the raw frame to a local file instead of
-re-fetching per matcher invocation. Cache format is CSV (not parquet) to avoid adding a parquet
+re-fetching per matcher invocation. The cache expires after `MAX_CACHE_AGE_HOURS` (it used to live
+forever, so a 3-week-old file silently fed week-4 matching). Cache format is CSV (not parquet) to avoid adding a parquet
 engine dependency the project doesn't otherwise need.
 """
 
 from __future__ import annotations
 
+import time
 from pathlib import Path
 
 import pandas as pd
@@ -23,8 +25,17 @@ CROSSWALK_ID_COLUMNS: dict[str, str] = {
 }
 
 
-def fetch_crosswalk(*, cache_path: Path = DEFAULT_CACHE_PATH, force_refresh: bool = False) -> pd.DataFrame:
-    if not force_refresh and cache_path.exists():
+MAX_CACHE_AGE_HOURS = 24  # was cached forever (a 2026-09-13 file was still in use on 10-04)
+
+
+def _cache_is_fresh(cache_path: Path, max_age_hours: float) -> bool:
+    return cache_path.exists() and (time.time() - cache_path.stat().st_mtime) < max_age_hours * 3600
+
+
+def fetch_crosswalk(
+    *, cache_path: Path = DEFAULT_CACHE_PATH, force_refresh: bool = False, max_age_hours: float = MAX_CACHE_AGE_HOURS
+) -> pd.DataFrame:
+    if not force_refresh and _cache_is_fresh(cache_path, max_age_hours):
         return pd.read_csv(cache_path, dtype=str)
 
     import nfl_data_py as nfl
