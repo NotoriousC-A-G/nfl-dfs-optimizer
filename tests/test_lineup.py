@@ -369,9 +369,14 @@ def test_eligible_pool_excludes_players_on_excluded_injury_statuses():
 def test_eligible_pool_keeps_players_with_no_designation_or_a_playable_status():
     healthy = _p("healthy", "WR", "AAA", 3000, 20.0, dk_injury_status=None)
     questionable = _p("questionable", "WR", "AAA", 3000, 20.0, dk_injury_status="Q")
+    result = _eligible_pool([healthy, questionable])
+    assert set(result.keys()) == {"healthy", "questionable"}
+
+
+def test_eligible_pool_drops_doubtful_players():
+    healthy = _p("healthy", "WR", "AAA", 3000, 20.0, dk_injury_status=None)
     doubtful = _p("doubtful", "WR", "AAA", 3000, 20.0, dk_injury_status="D")
-    result = _eligible_pool([healthy, questionable, doubtful])
-    assert set(result.keys()) == {"healthy", "questionable", "doubtful"}
+    assert set(_eligible_pool([healthy, doubtful]).keys()) == {"healthy"}
 
 
 def test_generate_lineups_never_drafts_an_ir_player_even_when_it_is_the_best_value():
@@ -385,7 +390,7 @@ def test_generate_lineups_never_drafts_an_ir_player_even_when_it_is_the_best_val
 
 
 def test_generate_lineups_still_drafts_a_questionable_player_when_it_is_the_best_value():
-    # Q/D are real DFS strategic decisions, not a guaranteed non-play -- must stay eligible.
+    # Q is a real DFS strategic decision, not a guaranteed non-play -- must stay eligible.
     pool = _synthetic_pool()
     questionable_star = _p("q_star", "WR", "AAA", 100, 99.0, dk_injury_status="Q")
     lineup = generate_lineups(pool + [questionable_star], n=1)[0]

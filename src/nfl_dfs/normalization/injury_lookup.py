@@ -53,3 +53,36 @@ def team_injuries(
         for identity in identities
         if identity.team == team and identity.canonical_id in lookup
     ]
+
+
+# RotoGrinders' Situation Room status codes that mean "not expected to play" -> the DK vocabulary
+# `optimizer.lineup.EXCLUDED_INJURY_STATUSES` is written in. Q stays out on purpose (stays eligible).
+_RG_TO_DK_EXCLUDED_STATUS = {"D": "D", "O": "OUT"}
+
+
+def overlay_injury_report_exclusions(
+    dk_injury_status: dict[str, str],
+    identities: list[PlayerIdentity],
+    injuries: list[InjuryReportEntry],
+    excluded_statuses: frozenset[str],
+) -> dict[str, str]:
+    """Returns a copy of `dk_injury_status` (`DK native id -> status`) where any player the
+    RotoGrinders injury report marks Doubtful/Out is given the matching DK-vocabulary status,
+    unless DK already carries an excluded status for them. Exists because the two vendors disagree
+    in practice (week 4, 2026: Breece Hall was `Q` on DK, `D` on RotoGrinders) and the lineup
+    solver only reads this one dict.
+    """
+    merged = dict(dk_injury_status)
+    lookup = build_injury_lookup(identities, injuries)
+    for identity in identities:
+        entry = lookup.get(identity.canonical_id)
+        dk_match = identity.sources.get("draftkings")
+        if entry is None or dk_match is None or dk_match.native_id is None:
+            continue
+        mapped = _RG_TO_DK_EXCLUDED_STATUS.get(entry.status)
+        if mapped is None or mapped not in excluded_statuses:
+            continue
+        if merged.get(str(dk_match.native_id)) in excluded_statuses:
+            continue
+        merged[str(dk_match.native_id)] = mapped
+    return merged

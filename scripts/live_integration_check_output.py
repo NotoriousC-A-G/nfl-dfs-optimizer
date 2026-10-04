@@ -72,7 +72,7 @@ from scripts.live_integration_check_projection import (
 )
 
 SEASON = 2026
-WEEK = 1
+WEEK = 4
 NEUTRAL_WEATHER = WeatherInput(is_indoor=False)
 
 
