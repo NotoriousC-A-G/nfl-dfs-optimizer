@@ -163,3 +163,18 @@ def test_core_overlap_warns_on_near_duplicate_pools_only():
     c = _pool(u, core=("rb1_T3", "rb1_T4", "wr0_T4", "te_T4"), agent="a3")
     codes = [(x.message.split()[0], x.severity) for x in core_overlap([a, b, c])]
     assert codes == [("a1", "warning")]
+
+
+def test_promoting_a_player_the_expert_excluded_retiers_in_place_without_a_duplicate_entry():
+    u = _universe()
+    excluded = [p.canonical_id for p in u if p.position == "WR" and p.team in ("T3", "T4")]
+    pool = _pool(u, core=CORE)
+    pool = replace(pool, entries=tuple(PoolEntry(e.canonical_id, "exclude", "expert preference") if e.canonical_id in excluded else e for e in pool.entries))
+    report = validate_pool(pool, u)
+    assert "feasibility_WR" in _codes(report)
+    wider = promote_at_failing(pool, u, report)
+    ids = [e.canonical_id for e in wider.entries]
+    assert len(ids) == len(set(ids))  # never a second entry for the same player
+    retiered = {e.canonical_id for e in wider.entries if e.reason.startswith("widened:")}
+    assert retiered and retiered <= set(excluded)
+    assert validate_pool(wider, u).ok  # and the widened pool now validates (no contradictory_tiers)

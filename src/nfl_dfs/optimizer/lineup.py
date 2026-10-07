@@ -83,6 +83,7 @@ from __future__ import annotations
 
 from collections import defaultdict
 from dataclasses import dataclass, field
+from typing import Callable
 
 import pulp
 
@@ -396,6 +397,23 @@ def bring_back_violations(
     return violations
 
 
+def _pair_bonus_terms(x: dict[str, pulp.LpVariable], pair_bonuses: list[tuple[str, str, float]]) -> tuple[list, list]:
+    """Objective terms + AND-linearization constraints for `(player_a, player_b, bonus)` pairs: a binary
+    `z = x[a] AND x[b]` contributing `bonus * z` (same construction as `_dst_correlation_terms`). Pairs
+    with a player outside this pool are skipped. A positive bonus rewards holding both players, a negative
+    one penalizes it -- used for the required QB stack (+), a bring-back (+), and QB vs the opposing DST (-)."""
+    terms, constraints = [], []
+    for i, (a, b, bonus) in enumerate(pair_bonuses):
+        if a not in x or b not in x or bonus == 0.0:
+            continue
+        z = pulp.LpVariable(f"pair_{i}", cat="Binary")
+        constraints.append(z <= x[a])
+        constraints.append(z <= x[b])
+        constraints.append(z >= x[a] + x[b] - 1)
+        terms.append(bonus * z)
+    return terms, constraints
+
+
 def _solve_single_lineup(
     pool_by_id: dict[str, PlayerProjection],
     previous_core_stacks: list[frozenset[str]],
@@ -405,6 +423,11 @@ def _solve_single_lineup(
     opponent_of: dict[str, str] | None = None,
     forbid_pass_catcher_bring_back: bool = False,
     forbid_rb_bring_back: bool = False,
+    base_value_by_id: dict[str, float] | None = None,
+    pair_bonuses: list[tuple[str, str, float]] | None = None,
+    extra_constraints: "Callable[[pulp.LpProblem, dict[str, pulp.LpVariable], list[PlayerProjection]], None] | None" = None,
+    exclude_lineups: list[frozenset[str]] | None = None,
+    min_difference: int = 1,
 ) -> Lineup | None:
     """One ILP solve: maximize total blended projection subject to PRD Section 3's roster/salary
     rules, Section 7's QB+pass-catcher stack rule, a no-good cut per already-generated lineup's
@@ -433,7 +456,9 @@ def _solve_single_lineup(
     x = {pid: pulp.LpVariable(f"x_{i}", cat="Binary") for i, pid in enumerate(ids)}
 
     def objective_term(p: PlayerProjection) -> float:
-        term = p.blended_projection
+        # `base_value_by_id` (pool pipeline, ADR-0046) replaces the blended projection as the objective
+        # BASE only; `Lineup.total_projected_points` below is still the real, undistorted projection sum.
+        term = base_value_by_id[p.canonical_id] if base_value_by_id is not None else p.blended_projection
         if game_environment_scores is not None:
             term += _GAME_ENVIRONMENT_NUDGE_WEIGHT * game_environment_scores.get(p.team, 0.0)
         if objective_delta_by_id is not None:
@@ -444,7 +469,14 @@ def _solve_single_lineup(
         _dst_correlation_terms(players, x, opponent_of) if opponent_of else ([], [])
     )
 
-    prob += pulp.lpSum(objective_term(p) * x[p.canonical_id] for p in players) + pulp.lpSum(correlation_terms)
+    pair_terms, pair_constraints = _pair_bonus_terms(x, pair_bonuses or [])
+    prob += (
+        pulp.lpSum(objective_term(p) * x[p.canonical_id] for p in players)
+        + pulp.lpSum(correlation_terms)
+        + pulp.lpSum(pair_terms)
+    )
+    for constraint in pair_constraints:
+        prob += constraint
     for constraint in correlation_constraints:
         prob += constraint
 
@@ -501,6 +533,18 @@ def _solve_single_lineup(
             f"no_good_cut_{i}"
         )
 
+    # Lineup-difference cuts: the next lineup shares at most (size - min_difference) players with each
+    # already-built lineup. `min_difference=1` is "not the identical lineup" (candidate generation); 3 is
+    # the cross-agent diversity rule (Chris/football, Revision 2 #7).
+    for j, excluded in enumerate(exclude_lineups or []):
+        members = [pid for pid in excluded if pid in x]
+        shared_cap = len(excluded) - min_difference
+        if len(members) > shared_cap:  # otherwise the cut can never bind within this pool
+            prob += pulp.lpSum(x[pid] for pid in members) <= shared_cap, f"exclude_lineup_{j}"
+
+    if extra_constraints is not None:
+        extra_constraints(prob, x, players)
+
     prob.solve(pulp.PULP_CBC_CMD(msg=False))
 
     if pulp.LpStatus[prob.status] != "Optimal":
@@ -531,6 +575,12 @@ def generate_lineups(
     opponent_of: dict[str, str] | None = None,
     forbid_pass_catcher_bring_back: bool = False,
     forbid_rb_bring_back: bool = False,
+    base_value_by_id: dict[str, float] | None = None,
+    pair_bonuses: list[tuple[str, str, float]] | None = None,
+    extra_constraints: "Callable[[pulp.LpProblem, dict[str, pulp.LpVariable], list[PlayerProjection]], None] | None" = None,
+    distinct_core_stacks: bool = True,
+    avoid_lineups: list[frozenset[str]] | None = None,
+    min_player_difference: int = 1,
 ) -> list[Lineup]:
     """Generate up to `n` distinct-core-stack lineups from a `build_projection_pool` output.
 
@@ -566,6 +616,14 @@ def generate_lineups(
     the lineup's QB team's opponent contributes no WR/TE (resp. RB). Both default `False`, so every
     existing caller is unchanged; needs `opponent_of` (raises `ValueError` otherwise rather than
     silently skipping). See `_bring_back_constraints`.
+
+    Pool-pipeline options (2026-10-08, all default to the prior behaviour): `base_value_by_id` replaces
+    the projection as the objective base; `pair_bonuses` add `(a, b, bonus)` pair terms; `extra_constraints`
+    is a callback that may add constraints (e.g. a core-tier minimum); `distinct_core_stacks=False` makes
+    successive lineups differ by at least one player instead of by core stack (candidate generation).
+    `avoid_lineups` + `min_player_difference` (default 1, no extra effect): every lineup built shares at most
+    `9 - min_player_difference` players with each avoided lineup AND with this call's own earlier lineups --
+    the cross-agent diversity rule when other agents' lineups are passed in.
     """
     import warnings
 
@@ -583,6 +641,14 @@ def generate_lineups(
             opponent_of=opponent_of,
             forbid_pass_catcher_bring_back=forbid_pass_catcher_bring_back,
             forbid_rb_bring_back=forbid_rb_bring_back,
+            base_value_by_id=base_value_by_id,
+            pair_bonuses=pair_bonuses,
+            extra_constraints=extra_constraints,
+            exclude_lineups=(
+                list(avoid_lineups or [])
+                + ([frozenset(p.canonical_id for p in l.players) for l in lineups] if (not distinct_core_stacks or min_player_difference > 1) else [])
+            ) or None,
+            min_difference=min_player_difference,
         )
         if lineup is None:
             if i == 0:
@@ -600,7 +666,8 @@ def generate_lineups(
             )
             break
         lineups.append(lineup)
-        previous_core_stacks.append(lineup.core_stack)
+        if distinct_core_stacks:
+            previous_core_stacks.append(lineup.core_stack)
 
     return lineups
 

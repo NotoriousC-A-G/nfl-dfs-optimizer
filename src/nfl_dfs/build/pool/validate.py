@@ -164,36 +164,40 @@ def promote_at_failing(
     pool: Pool, universe: list[PlayerRef], report: PoolReport,
     *, excluded_statuses: frozenset[str] = EXCLUDED_INJURY_STATUSES, per_position: int = 3,
 ) -> Pool:
-    """Widening step 3: for each *failing* position (or the stack check), add the next-best players by
-    projection that are playable and not already in the pool as `eligible`, tagged with the check that
-    triggered it. Never touches positions that passed, never adds an injury-excluded player."""
-    in_pool = {e.canonical_id for e in pool.entries if e.tier != "exclude"}
-    additions: list[PoolEntry] = []
+    """Widening step 3: for each *failing* position (or the stack check), make the next-best players by
+    projection `eligible`, tagged with the check that triggered it. A player the expert had put in the
+    `exclude` tier is RE-TIERED IN PLACE (never given a second, contradictory entry); a player absent from
+    the pool is appended. Never touches positions that passed, never promotes an injury-excluded player."""
+    existing = {e.canonical_id: e for e in pool.entries}
+    live = {cid for cid, e in existing.items() if e.tier != "exclude"}  # already usable in the pool
+    promoted: dict[str, PoolEntry] = {}
     log: list[str] = []
+
+    def promotable(p: PlayerRef) -> bool:
+        return (
+            p.canonical_id not in live and p.canonical_id not in promoted and p.status not in excluded_statuses
+            and p.salary is not None and p.projection is not None
+        )
+
     failing = {x.code.removeprefix("feasibility_") for x in report.errors if x.code.startswith("feasibility_")}
     for pos in sorted(failing & set(MIN_COUNTS)):
-        pool_candidates = sorted(
-            (p for p in universe if p.position == pos and p.canonical_id not in in_pool and p.status not in excluded_statuses
-             and p.salary is not None and p.projection is not None),
-            key=lambda p: -p.projection,
-        )[:per_position]
-        for p in pool_candidates:
-            additions.append(PoolEntry(p.canonical_id, "eligible", f"widened: {pos} depth check failed"))
-            in_pool.add(p.canonical_id)
-        if pool_candidates:
-            log.append(f"promoted {len(pool_candidates)} {pos} (feasibility_{pos})")
+        picks = sorted((p for p in universe if p.position == pos and promotable(p)), key=lambda p: -p.projection)[:per_position]
+        for p in picks:
+            promoted[p.canonical_id] = PoolEntry(p.canonical_id, "eligible", f"widened: {pos} depth check failed")
+        if picks:
+            log.append(f"promoted {len(picks)} {pos} (feasibility_{pos})")
     if any(x.code == "stack_teams" for x in report.errors):
-        qb_teams = sorted({p.team for p in universe if p.position == "QB" and p.canonical_id in in_pool})
+        qb_teams = sorted({p.team for p in universe if p.position == "QB" and p.canonical_id in live})
         for team in qb_teams:
-            for p in sorted((p for p in universe if p.team == team and p.position in ("WR", "TE") and p.canonical_id not in in_pool
-                             and p.status not in excluded_statuses and p.salary is not None and p.projection is not None),
-                            key=lambda p: -p.projection)[:MIN_STACK_CATCHERS]:
-                additions.append(PoolEntry(p.canonical_id, "eligible", "widened: stackable-team check failed"))
-                in_pool.add(p.canonical_id)
+            picks = sorted((p for p in universe if p.team == team and p.position in ("WR", "TE") and promotable(p)), key=lambda p: -p.projection)[:MIN_STACK_CATCHERS]
+            for p in picks:
+                promoted[p.canonical_id] = PoolEntry(p.canonical_id, "eligible", "widened: stackable-team check failed")
         log.append("promoted pass catchers for QB teams (stack_teams)")
-    if not additions:
+    if not promoted:
         return pool
-    return replace(pool, entries=pool.entries + tuple(additions), widened_steps=pool.widened_steps + tuple(log))
+    entries = tuple(promoted.get(e.canonical_id, e) for e in pool.entries)  # re-tier in place
+    entries += tuple(e for cid, e in promoted.items() if cid not in existing)  # append the genuinely new
+    return replace(pool, entries=entries, widened_steps=pool.widened_steps + tuple(log))
 
 
 def core_overlap(pools: list[Pool], *, warn_at: float = 0.70) -> list[Violation]:
