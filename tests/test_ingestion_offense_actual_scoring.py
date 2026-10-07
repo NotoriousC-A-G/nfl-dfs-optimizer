@@ -1,6 +1,11 @@
 import pandas as pd
 
-from nfl_dfs.ingestion.offense_actual_scoring import dk_points_row, settled_offensive_points_by_player
+from nfl_dfs.ingestion.offense_actual_scoring import (
+    dk_points_row,
+    format_box_score_line,
+    settled_offensive_box_scores_by_player,
+    settled_offensive_points_by_player,
+)
 
 
 def _weekly_row(**overrides) -> dict:
@@ -13,11 +18,15 @@ def _weekly_row(**overrides) -> dict:
         passing_yards=0,
         passing_tds=0,
         interceptions=0,
+        completions=0,
+        attempts=0,
         rushing_yards=0,
         rushing_tds=0,
+        carries=0,
         receptions=0,
         receiving_yards=0,
         receiving_tds=0,
+        targets=0,
         rushing_fumbles_lost=0,
         receiving_fumbles_lost=0,
         sack_fumbles_lost=0,
@@ -131,3 +140,44 @@ def test_settled_offensive_points_by_player_skips_rows_with_null_display_name():
     )
     points = settled_offensive_points_by_player(weekly, 2026, 2)
     assert list(points.keys()) == [("real guy", "MIN")]
+
+
+def test_format_box_score_line_qb_with_a_designed_run():
+    row = pd.Series(
+        _weekly_row(completions=29, attempts=42, passing_yards=255, passing_tds=4, interceptions=1, carries=1, rushing_yards=36)
+    )
+    assert format_box_score_line(row) == "29/42, 255 pass yds, 4 TD, 1 INT · 1 car, 36 rush yds, 0 TD"
+
+
+def test_format_box_score_line_rb_with_receiving_work():
+    row = pd.Series(_weekly_row(carries=14, rushing_yards=62, rushing_tds=1, targets=3, receptions=2, receiving_yards=21))
+    assert format_box_score_line(row) == "14 car, 62 rush yds, 1 TD · 2 rec, 21 yds, 0 TD on 3 tgt"
+
+
+def test_format_box_score_line_wr_receiving_only():
+    row = pd.Series(_weekly_row(targets=9, receptions=6, receiving_yards=88, receiving_tds=1))
+    assert format_box_score_line(row) == "6 rec, 88 yds, 1 TD on 9 tgt"
+
+
+def test_format_box_score_line_no_offensive_snaps():
+    row = pd.Series(_weekly_row())
+    assert format_box_score_line(row) == "no offensive snaps recorded"
+
+
+def test_settled_offensive_box_scores_by_player_same_join_shape_as_points():
+    weekly = pd.DataFrame(
+        [_weekly_row(player_display_name="Justin Jefferson", recent_team="MIN", targets=8, receptions=5, receiving_yards=60)]
+    )
+    lines = settled_offensive_box_scores_by_player(weekly, 2026, 2)
+    assert lines[("justin jefferson", "MIN")] == "5 rec, 60 yds, 0 TD on 8 tgt"
+
+
+def test_settled_offensive_box_scores_by_player_filters_season_week_and_type():
+    weekly = pd.DataFrame(
+        [
+            _weekly_row(player_display_name="Justin Jefferson", recent_team="MIN", receptions=5),
+            _weekly_row(week=1, player_display_name="Justin Jefferson", recent_team="MIN", receptions=99),
+        ]
+    )
+    lines = settled_offensive_box_scores_by_player(weekly, 2026, 2)
+    assert list(lines.keys()) == [("justin jefferson", "MIN")]

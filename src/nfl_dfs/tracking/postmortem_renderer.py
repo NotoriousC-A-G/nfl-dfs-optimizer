@@ -21,7 +21,7 @@ from __future__ import annotations
 import html
 
 from nfl_dfs.storage.contest_results_store import ContestResult
-from nfl_dfs.tracking.postmortem.models import LineupOutcome, PostMortemReport
+from nfl_dfs.tracking.postmortem.models import LineupOutcome, PlayerContext, PlayerOutcome, PostMortemReport
 from nfl_dfs.tracking.season_record import SeasonRecord
 
 _STYLE = """
@@ -48,12 +48,113 @@ _STYLE = """
   .badge.est { background: #3a2c12; color: #ffc94d; }
   .green { color: #3ddc9b; font-weight: 600; }
   .red { color: #fb7979; font-weight: 600; }
+  details > summary { cursor: pointer; color: #7c9bff; font-size: 0.78rem; padding: 6px 0; list-style: none; }
+  details > summary::-webkit-details-marker { display: none; }
+  details > summary::before { content: "\25B8 "; }
+  details[open] > summary::before { content: "\25BE "; }
+  table.roster-table { margin-top: 4px; font-size: 0.78rem; }
+  table.roster-table th, table.roster-table td { padding: 4px 8px; }
+  .tag { display: inline-block; padding: 1px 6px; border-radius: 4px; font-size: 0.62rem; font-weight: 600; margin: 0 2px 2px 0; }
+  .tag.chalk { background: #3a2c12; color: #ffc94d; }
+  .tag.leverage { background: #11332a; color: #3ddc9b; }
+  .tag.stack { background: #202a4d; color: #7c9bff; }
+  .tag.injury { background: #3a1c1c; color: #fb7979; }
+  .tag.dnp { background: #3a1c1c; color: #fb7979; cursor: help; }
+  .tag.note { background: #232a3d; color: #aab4c8; cursor: help; }
+  tr.detail-row td { padding-top: 0; }
 </style>
 """.strip()
 
 
 def _fmt(value, decimals=1) -> str:
     return "--" if value is None else f"{value:,.{decimals}f}"
+
+
+def _salary(value: int | None) -> str:
+    return "--" if value is None else f"${value:,}"
+
+
+def _delta_class(delta: float | None) -> str:
+    if delta is None:
+        return ""
+    return "green" if delta > 0 else ("red" if delta < 0 else "")
+
+
+def _render_signal_tags(context: PlayerContext | None) -> str:
+    """A compact tag strip of real, already-computed per-player signal context -- see
+    `PlayerContext`'s own docstring for what each field is and where it comes from. Every tag is
+    conditional on the field actually being populated; a player with no real signal anywhere shows
+    no tags at all, never a placeholder."""
+    if context is None:
+        return ""
+    tags: list[str] = []
+    if context.is_chalk:
+        tags.append('<span class="tag chalk">CHALK</span>')
+    if context.is_leverage:
+        tags.append('<span class="tag leverage">LEVERAGE</span>')
+    if context.is_primary_stack_candidate:
+        tags.append('<span class="tag stack">STACK</span>')
+    if context.injury_status:
+        tags.append(f'<span class="tag injury">{html.escape(context.injury_status)}</span>')
+    if context.ceiling_multiplier is not None:
+        tags.append(f'<span class="tag note" title="Ceiling multiplier">CEIL {context.ceiling_multiplier:.2f}x</span>')
+    if context.game_environment_score is not None:
+        tags.append(
+            f'<span class="tag note" title="Game Environment composite score">GES {context.game_environment_score:.0f}</span>'
+        )
+    if context.implied_total is not None:
+        tags.append(f'<span class="tag note" title="Implied team total">IT {context.implied_total:.1f}</span>')
+    if context.red_zone_role_security_discount is not None:
+        tags.append(
+            f'<span class="tag note" title="Red-zone role-security discount">'
+            f"RZ {context.red_zone_role_security_discount:+.2f}</span>"
+        )
+    if context.circumstance_note:
+        tags.append(f'<span class="tag note" title="{html.escape(context.circumstance_note)}">NOTE</span>')
+    return "".join(tags)
+
+
+def _player_name_cell(p: PlayerOutcome) -> str:
+    """The `<td>` for a player's name: a real box-score-line tooltip (when one exists) plus the
+    signal-tags strip, both purely additive -- a player with neither renders exactly like today's
+    plain name cell."""
+    title_attr = ""
+    if p.context and p.context.box_score_line:
+        title_attr = f' title="{html.escape(p.context.box_score_line)}"'
+    tags = _render_signal_tags(p.context)
+    if p.did_not_play:
+        # A real 0.0 because he was inactive (see `PlayerOutcome.did_not_play`) -- label it so it
+        # isn't read as a played-and-busted zero.
+        tags = '<span class="tag dnp" title="Did not play -- scored 0 (inactive)">DNP</span>' + tags
+    tags_html = f" {tags}" if tags else ""
+    return f"<td{title_attr}>{html.escape(p.display_name)}{tags_html}</td>"
+
+
+_ROSTER_POSITION_ORDER = {"QB": 0, "RB": 1, "WR": 2, "TE": 3, "FLEX": 4, "DST": 5}
+
+
+def _in_roster_order(players: tuple[PlayerOutcome, ...]) -> list[PlayerOutcome]:
+    """QB-RB-RB-WR-WR-WR-TE-FLEX-DST, matching DK's own roster-slot order -- `lineup.players` in
+    the slate snapshot preserves whatever order the solver happened to emit (confirmed live: not
+    slot order), so this is a real, needed sort, not just a stable no-op. A stable sort keeps
+    same-position players (RB1 vs RB2, WR1 vs WR2 vs WR3) in their original relative order, since
+    `PlayerOutcome.position` doesn't carry the slot number, only the position label."""
+    return sorted(players, key=lambda p: _ROSTER_POSITION_ORDER.get(p.position, 99))
+
+
+def _render_roster_table(players: tuple[PlayerOutcome, ...]) -> str:
+    rows = "".join(
+        f"<tr><td class=\"pos\">{p.position}</td>{_player_name_cell(p)}<td>{p.team}</td>"
+        f"<td class=\"num\">{_salary(p.salary)}</td>"
+        f"<td class=\"num\">{_fmt(p.projected)}</td><td class=\"num\">{_fmt(p.actual)}</td>"
+        f"<td class=\"num {_delta_class(p.delta)}\">{'--' if p.delta is None else f'{p.delta:+.1f}'}</td></tr>"
+        for p in _in_roster_order(players)
+    )
+    return (
+        '<table class="roster-table"><thead><tr><th>Pos</th><th>Player</th><th>Team</th><th>Salary</th>'
+        "<th>Proj</th><th>Actual</th><th>Delta</th></tr></thead>"
+        f"<tbody>{rows}</tbody></table>"
+    )
 
 
 def _render_lineup_table(lineup_outcomes: tuple[LineupOutcome, ...]) -> str:
@@ -68,6 +169,12 @@ def _render_lineup_table(lineup_outcomes: tuple[LineupOutcome, ...]) -> str:
             f"<td class=\"num\">{_fmt(lo.projected_total)}</td>"
             f"<td class=\"num\">{_fmt(lo.delta, decimals=1) if lo.delta is not None else '--'}</td></tr>"
         )
+        rows.append(
+            '<tr class="detail-row"><td colspan="4"><details>'
+            f"<summary>Roster ({len(lo.players)} players)</summary>"
+            f"{_render_roster_table(lo.players)}"
+            "</details></td></tr>"
+        )
     note = (
         f'<p class="note">{len(unscored)} lineup(s) not fully scored yet '
         f"(games not settled, or a name-match miss).</p>"
@@ -78,6 +185,23 @@ def _render_lineup_table(lineup_outcomes: tuple[LineupOutcome, ...]) -> str:
         "<h2>Lineup Outcomes</h2><div class=\"card\"><table>"
         "<thead><tr><th>Lineup</th><th>Actual</th><th>Proj</th><th>Delta</th></tr></thead>"
         f"<tbody>{''.join(rows)}</tbody></table>{note}</div>"
+    )
+
+
+def _render_player_table(title: str, players: tuple[PlayerOutcome, ...], empty_message: str) -> str:
+    if not players:
+        return f"<h2>{html.escape(title)}</h2><div class=\"card\"><p>{html.escape(empty_message)}</p></div>"
+    rows = "".join(
+        f"<tr><td class=\"pos\">{p.position}</td>{_player_name_cell(p)}<td>{p.team}</td>"
+        f"<td class=\"num\">{_salary(p.salary)}</td>"
+        f"<td class=\"num\">{_fmt(p.projected)}</td><td class=\"num\">{_fmt(p.actual)}</td></tr>"
+        for p in players
+    )
+    return (
+        f"<h2>{html.escape(title)}</h2>"
+        '<div class="card"><table><thead><tr><th>Pos</th><th>Player</th><th>Team</th><th>Salary</th>'
+        "<th>Proj</th><th>Actual</th></tr></thead>"
+        f"<tbody>{rows}</tbody></table></div>"
     )
 
 
@@ -263,6 +387,8 @@ def render_postmortem_html(
 {_render_contest_results(contest_results)}
 {_render_process_grade(report)}
 {_render_chalk_comparison(report)}
+{_render_player_table("Top Performers", report.top_performers, "No real settled scores yet.")}
+{_render_player_table("Missed Players (real scorers, not on any of our lineups)", report.missed_players, "No high scorers missed this week.")}
 {_render_exposure(report)}
 {_render_positional(report)}
 {_render_stack_thesis(report)}

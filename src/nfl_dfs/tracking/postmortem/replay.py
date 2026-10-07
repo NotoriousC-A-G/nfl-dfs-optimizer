@@ -24,6 +24,7 @@ from nfl_dfs.tracking.postmortem.exposure import (
     compute_stack_thesis_reviews,
 )
 from nfl_dfs.tracking.postmortem.models import LineupOutcome, PlayerOutcome, PostMortemReport
+from nfl_dfs.tracking.postmortem.player_context import build_player_context_by_id
 from nfl_dfs.tracking.postmortem.retrospective import compute_process_grade, compute_signal_verdicts, extract_ceiling_patterns
 
 _MISSED_PLAYER_MIN_ACTUAL = 10.0  # disclosed draft floor for "a real high scorer", not backtested
@@ -55,7 +56,7 @@ def _resolve_actual(
 
 
 def _agent_lineup_outcomes(
-    snapshot: dict, actual_by_id: dict[str, float], settled_teams: set[str], settled_ids: set[str]
+    snapshot: dict, actual_by_id: dict[str, float], context_by_id: dict, settled_teams: set[str], settled_ids: set[str]
 ) -> list[LineupOutcome]:
     outcomes = []
     for entry in snapshot.get("agent_lineups", []):
@@ -84,6 +85,7 @@ def _agent_lineup_outcomes(
                     actual=actual,
                     delta=(actual - projected) if actual is not None else None,
                     did_not_play=did_not_play,
+                    context=context_by_id.get(canonical_id),
                 )
             )
         unresolved = tuple(p.display_name for p in players if p.actual is None)
@@ -111,6 +113,7 @@ def _operator_lineup_outcomes(
     player_pool: list[dict],
     offensive_points: dict[tuple[str, str], float],
     dst_points: dict[str, float],
+    context_by_id: dict,
     settled_teams: set[str],
     settled_ids: set[str],
 ) -> list[LineupOutcome]:
@@ -152,6 +155,7 @@ def _operator_lineup_outcomes(
                     actual=actual,
                     delta=(actual - projected) if actual is not None else None,
                     did_not_play=did_not_play,
+                    context=context_by_id.get(canonical_id) if canonical_id else None,
                 )
             )
         unresolved = tuple(p.display_name for p in players if p.actual is None)
@@ -181,6 +185,7 @@ def run_postmortem(season: int, week: int, *, weekly: pd.DataFrame, pbp: pd.Data
 
     player_pool = snapshot.get("player_pool", [])
     actual_by_id = actual_points_by_canonical_id(player_pool, season=season, week=week, weekly=weekly, pbp=pbp)
+    context_by_id = build_player_context_by_id(player_pool, season=season, week=week, weekly=weekly)
 
     offensive_points = settled_offensive_points_by_player(weekly, season, week)
     dst_points = {
@@ -190,8 +195,9 @@ def run_postmortem(season: int, week: int, *, weekly: pd.DataFrame, pbp: pd.Data
     }
 
     settled_teams, settled_ids = _settled_teams(weekly, season, week)
-    lineup_outcomes = _agent_lineup_outcomes(snapshot, actual_by_id, settled_teams, settled_ids) + _operator_lineup_outcomes(
-        season, week, player_pool, offensive_points, dst_points, settled_teams, settled_ids
+    lineup_outcomes = _agent_lineup_outcomes(
+        snapshot, actual_by_id, context_by_id, settled_teams, settled_ids
+    ) + _operator_lineup_outcomes(season, week, player_pool, offensive_points, dst_points, context_by_id, settled_teams, settled_ids
     )
 
     scored_lineups = [lo for lo in lineup_outcomes if lo.actual_total is not None]
@@ -209,6 +215,7 @@ def run_postmortem(season: int, week: int, *, weekly: pd.DataFrame, pbp: pd.Data
             projected=row.get("projection") or 0.0,
             actual=actual_by_id[cid],
             delta=actual_by_id[cid] - (row.get("projection") or 0.0),
+            context=context_by_id.get(cid),
         )
         for row in player_pool
         if (cid := (row.get("identity") or {}).get("canonical_id")) in actual_by_id

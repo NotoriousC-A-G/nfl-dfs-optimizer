@@ -63,6 +63,62 @@ def dk_points_row(row: pd.Series) -> float:
     return pts
 
 
+def format_box_score_line(row: pd.Series) -> str:
+    """A compact, position-appropriate real box-score summary -- the same underlying passing/
+    rushing/receiving columns `dk_points_row` already reduces to one DK-point scalar, formatted as
+    a human-readable line instead of discarded (2026-09-29 postmortem player-detail proposal, Tier
+    1b). `completions`/`attempts`/`targets` aren't DK scoring inputs but are real columns on the
+    same row (confirmed live 2026-09-29 against `stats_player_week`), included here since a reader
+    judging "why did this delta happen" needs them even though `dk_points_row` doesn't.
+
+    Built from whichever of passing/rushing/receiving actually happened this game (a QB who also
+    ran, or an RB who also caught passes, gets both parts) -- not gated on `position`, since a
+    single position label doesn't reliably predict which categories a player produced in a given
+    real game (e.g. a WR end-around carry, a RB screen-heavy game)."""
+    parts: list[str] = []
+    if (row.get("attempts") or 0) > 0 or (row.get("passing_yards") or 0) != 0:
+        parts.append(
+            f"{int(row['completions'])}/{int(row['attempts'])}, {row['passing_yards']:.0f} pass yds, "
+            f"{int(row['passing_tds'])} TD, {int(row['interceptions'])} INT"
+        )
+    if (row.get("carries") or 0) > 0:
+        parts.append(f"{int(row['carries'])} car, {row['rushing_yards']:.0f} rush yds, {int(row['rushing_tds'])} TD")
+    if (row.get("targets") or 0) > 0 or (row.get("receptions") or 0) > 0:
+        parts.append(
+            f"{int(row['receptions'])} rec, {row['receiving_yards']:.0f} yds, "
+            f"{int(row['receiving_tds'])} TD on {int(row.get('targets') or 0)} tgt"
+        )
+    return " · ".join(parts) if parts else "no offensive snaps recorded"
+
+
+def settled_offensive_box_scores_by_player(
+    weekly: pd.DataFrame, season: int, week: int, *, season_type: str | None = "REG"
+) -> dict[tuple[str, str], str]:
+    """Real, settled box-score summary line per (normalized display name, team) -- same filtering
+    and join-key shape as `settled_offensive_points_by_player`, kept as a SEPARATE function (not a
+    return-shape change to that one) so its several existing callers (`tracking/
+    agent_results_collector.py`, `tracking/postmortem/actual_points.py`, `tracking/postmortem/
+    replay.py`) are untouched. Same "small justified duplication over an invasive shared-return
+    change" tradeoff this module's own docstring already uses for `dk_points_row` itself."""
+    from nfl_dfs.normalization.team_aliases import normalize_team
+    from nfl_dfs.tracking.name_matching import normalize_player_name
+
+    df = weekly[(weekly["season"] == season) & (weekly["week"] == week)]
+    if season_type is not None:
+        df = df[df["season_type"] == season_type]
+
+    lines: dict[tuple[str, str], str] = {}
+    for _, row in df.iterrows():
+        if pd.isna(row["player_display_name"]):
+            continue
+        name_key = normalize_player_name(str(row["player_display_name"]))
+        raw_team = str(row["recent_team"]).upper()
+        crosswalked = normalize_team("crosswalk", raw_team) or raw_team
+        team_key = normalize_team("nflverse_schedule", crosswalked) or crosswalked
+        lines[(name_key, team_key)] = format_box_score_line(row)
+    return lines
+
+
 def settled_offensive_points_by_player(
     weekly: pd.DataFrame, season: int, week: int, *, season_type: str | None = "REG"
 ) -> dict[tuple[str, str], float]:
