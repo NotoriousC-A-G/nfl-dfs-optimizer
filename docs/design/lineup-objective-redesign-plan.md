@@ -48,7 +48,7 @@ the post-mortem can grade it. Old path always runs first and is the control. Fri
 | D9 | **Dup-risk bucket rule (PRD §7):** kept as a *post-filter* on each agent's own oversampled candidates, not the old hard-coded per-slot targets. **Approved by Chris.** | PO vs Architect → compromise |
 | D10 | **LLM runs** as session subagents with a file contract (`prompt.md`/`packet.json` in → validated JSON out); API backend later. Outputs carry player **IDs not names**; claims are `{text, cite_keys[]}` resolved against the saved packet; unresolved cites render UNVERIFIED. Cache key = sha256(packet_sha + prompt_version + model + clearance_file_sha); never silently re-ask. | Architect, QA, UI/UX |
 | D11 | **Q rule** (ADR-0045; merged #54, revised in PR #55): Q = out unless the **official practice report** shows Full participation; Chris overrides either way; every decision printed with its basis. | Chris |
-| D12 | **Scenario-tree simulator: out of Friday.** Pull in after ≥ 2 graded slates show scenario probabilities beat the line anchor, and with a PRD amendment. A deterministic coherence proxy covers Friday. | PO, Model-Analytics, Architect |
+| D12 | **Scenario-tree simulator: out of Friday.** Pull in after ≥ 2 graded slates show scenario probabilities beat the line anchor, plus Chris's sign-off (ADR-0046 keeps it deferred). A simple deterministic proxy covers Friday. | PO, Model-Analytics, Architect |
 
 ## 3. Build plan (branches/PRs; every new path flag-off by default, fail-open)
 
