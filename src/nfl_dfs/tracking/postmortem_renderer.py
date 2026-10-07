@@ -59,6 +59,7 @@ _STYLE = """
   .tag.leverage { background: #11332a; color: #3ddc9b; }
   .tag.stack { background: #202a4d; color: #7c9bff; }
   .tag.injury { background: #3a1c1c; color: #fb7979; }
+  .tag.dnp { background: #3a1c1c; color: #fb7979; cursor: help; }
   .tag.note { background: #232a3d; color: #aab4c8; cursor: help; }
   tr.detail-row td { padding-top: 0; }
 </style>
@@ -121,6 +122,10 @@ def _player_name_cell(p: PlayerOutcome) -> str:
     if p.context and p.context.box_score_line:
         title_attr = f' title="{html.escape(p.context.box_score_line)}"'
     tags = _render_signal_tags(p.context)
+    if p.did_not_play:
+        # A real 0.0 because he was inactive (see `PlayerOutcome.did_not_play`) -- label it so it
+        # isn't read as a played-and-busted zero.
+        tags = '<span class="tag dnp" title="Did not play -- scored 0 (inactive)">DNP</span>' + tags
     tags_html = f" {tags}" if tags else ""
     return f"<td{title_attr}>{html.escape(p.display_name)}{tags_html}</td>"
 

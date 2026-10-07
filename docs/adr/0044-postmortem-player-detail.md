@@ -1,4 +1,4 @@
-# ADR-0043: Real per-player detail in the weekly postmortem (Tiers 0-3)
+# ADR-0044: Real per-player detail in the weekly postmortem (Tiers 0-3)
 
 **Status:** Accepted (implemented, unit-tested, live-verified against week 3)
 **Date:** 2026-09-29

@@ -246,3 +246,15 @@ def test_roster_table_reorders_to_qb_rb_rb_wr_wr_wr_te_flex_dst_regardless_of_in
     roster_html = out.split("Roster (9 players)")[1].split("</details>")[0]
     pos_sequence = re.findall(r'<td class="pos">(\w+)</td>', roster_html)
     assert pos_sequence == ["QB", "RB", "RB", "WR", "WR", "WR", "TE", "FLEX", "DST"]
+
+
+def test_roster_table_labels_a_did_not_play_zero_so_it_is_not_read_as_a_bust():
+    inactive = PlayerOutcome("rb1", "Inactive Back", "NYJ", "RB", 6000, 15.0, 0.0, -15.0, did_not_play=True)
+    played = PlayerOutcome("wr1", "Active Guy", "NYJ", "WR", 5000, 10.0, 0.0, -10.0)  # a genuine 0, played
+    report = _report(lineup_outcomes=(_lineup_with_players("L1", (inactive, played)),))
+    roster_html = render_postmortem_html(report).split("Roster (2 players)")[1].split("</details>")[0]
+
+    inactive_cell = roster_html.split("Inactive Back")[1].split("</td>")[0]
+    assert 'class="tag dnp"' in inactive_cell
+    active_cell = roster_html.split("Active Guy")[1].split("</td>")[0]
+    assert "DNP" not in active_cell
