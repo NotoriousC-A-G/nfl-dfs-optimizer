@@ -31,6 +31,10 @@ from nfl_dfs.projection.blend import PlayerProjection
 
 STACK_BONUS = 1.8
 BRING_BACK_BONUS = 0.8
+# A lineup that leaves a lot of cap unspent usually means the pool lacks the players to spend it (a thin pool), which is
+# a quality problem no hard rule catches. Surfaced as a WARNING for now (2026-10-07 rehearsal: one lineup spent $41,400);
+# whether to make it an error and loop it back to the expert is Chris's call.
+MIN_SALARY_USED = 47_000
 PAIR_TOP_N = 4  # only each team's top-N catchers by value get pair terms (bounds the model size)
 # Failure codes widening can plausibly fix; anything else is an expert/contract error and fails at once.
 _WIDENABLE_PREFIXES = ("feasibility_", "stack_teams", "min_core", "distinct_stacks")
@@ -187,6 +191,11 @@ def build_agent_lineups(
                     problems = _verify(lu, current, core_ids, playable_ids, opponent_of)
                     if problems:
                         raise PoolBuildFailure(pool.agent_id, "post_solve_verification", f"lineup {i + 1}: " + "; ".join(problems), {"attempts": attempts, "lineup": [p.display_name for p in lu.players]})
+                    if lu.total_salary < MIN_SALARY_USED:
+                        warnings.append(Violation(
+                            "salary_left", f"lineup {i + 1} spends only ${lu.total_salary:,} of $50,000 (${50_000 - lu.total_salary:,} unspent): "
+                            "the pool probably lacks spendable players -- add higher-priced options for this agent's angle", "lineup", "warning",
+                        ))
                     for v in lint_lineup_pair_signs({p.canonical_id for p in lu.players}, list(pair_signs)):
                         if v.severity == "error":
                             raise PoolBuildFailure(pool.agent_id, "pair_sign_lint", f"lineup {i + 1}: {v.message}", {"attempts": attempts, "lineup": [p.display_name for p in lu.players]})

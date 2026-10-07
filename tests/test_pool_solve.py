@@ -98,14 +98,29 @@ def test_widening_is_limited_logged_and_still_succeeds():
     assert res.pool.rules.min_core < 4 and len(res.lineups) == 1
 
 
-def test_depth_failure_widens_at_the_failing_position_only():
+def _wr_starved_pool(projs, reason):
+    victims = tuple(p.canonical_id for p in projs if p.position == "WR" and p.team != "T1")
+    base = _pool(projs, core=("qb_T1", "wr2_T1", "rb1_T2", "rb1_T1"))
+    entries = tuple(PoolEntry(e.canonical_id, "exclude", reason) if e.canonical_id in victims else e for e in base.entries)
+    return Pool(1, "a1", THESIS, entries, PoolRules(min_core=2)), victims
+
+
+def test_depth_failure_widens_at_the_failing_position_only_using_default_tier_players():
     projs = _projections()
-    pool = _pool(projs, core=("qb_T1", "wr2_T1", "wr2_T2", "rb1_T2"),
-                 exclude=tuple(p.canonical_id for p in projs if p.position == "WR" and p.team in ("T3", "T4")))
+    pool, victims = _wr_starved_pool(projs, "default tier")
     res = _build(pool, projs, n=1)
     assert any("WR" in s for s in res.pool.widened_steps)
     added = {e.canonical_id for e in res.pool.entries if e.reason.startswith("widened:")}
-    assert added and all(i.startswith("wr") for i in added)
+    assert added and added <= set(victims) and all(i.startswith("wr") for i in added)
+
+
+def test_depth_failure_with_deliberate_exclusions_fails_loudly_instead_of_overriding_the_expert():
+    projs = _projections()
+    pool, victims = _wr_starved_pool(projs, "expert: deliberately barred")
+    with pytest.raises(PoolBuildFailure) as exc:
+        _build(pool, projs, n=1)
+    assert exc.value.stage == "infeasible_after_widening"
+    assert any(code == "feasibility_WR" for a in exc.value.diagnostics["attempts"] for code, _ in a["errors"])
 
 
 def test_unwidenable_pool_fails_loudly_with_a_diagnostic_and_substitutes_nothing():
@@ -199,3 +214,15 @@ def test_default_difference_rule_leaves_prior_behaviour_unchanged():
     a = _build(pool, projs, n=2)
     b = _build(pool, projs, n=2, avoid_lineups=None, min_player_difference=1)
     assert [[p.canonical_id for p in l.players] for l in a.lineups] == [[p.canonical_id for p in l.players] for l in b.lineups]
+
+
+def test_an_under_spent_lineup_is_warned_about_not_silently_accepted(monkeypatch):
+    projs = _projections()
+    good = _build(_pool(projs), projs, n=1).lineups[0]
+    real = ps.generate_lineups
+    # a pool that passes the salary-starved check but whose solved lineup still under-spends (e.g. core/bring-back constraints)
+    monkeypatch.setattr(ps, "generate_lineups", lambda *a, n=None, **k: [replace(good, total_salary=41_400)] if n == 1 else real(*a, n=n, **k))
+    res = _build(_pool(projs), projs, n=1)
+    warn = [w for w in res.warnings if w.code == "salary_left"]
+    assert len(warn) == 1 and "$41,400" in warn[0].message and "$8,600" in warn[0].message
+    assert len(res.lineups) == 1  # a warning, not a failure (Chris decides whether it becomes an error)

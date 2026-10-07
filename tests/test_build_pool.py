@@ -93,10 +93,12 @@ def test_missing_salary_or_projection_is_stripped_not_crashed():
 
 def test_feasibility_depth_floors_per_position():
     u = _universe()
-    thin = [p for p in u if not (p.position == "WR" and p.team in ("T3", "T4"))]  # leaves 6 WR
+    thin = [p for p in u if not (p.position == "WR" and p.team in ("T2", "T3", "T4"))]  # leaves 3 WR (< 6)
     assert "feasibility_WR" in _codes(validate_pool(_pool(thin, core=CORE), thin))
-    fewer_qbs = [p for p in u if not (p.position == "QB" and p.team in ("T3", "T4"))]
-    assert "feasibility_QB" in _codes(validate_pool(_pool(fewer_qbs, core=CORE), fewer_qbs))
+    one_qb = [p for p in u if not (p.position == "QB" and p.team in ("T2", "T3", "T4"))]
+    assert "feasibility_QB" in _codes(validate_pool(_pool(one_qb, core=CORE), one_qb))
+    at_the_floor = [p for p in u if not (p.position == "WR" and p.team in ("T3", "T4"))]  # exactly 6 WR: allowed
+    assert "feasibility_WR" not in _codes(validate_pool(_pool(at_the_floor, core=CORE), at_the_floor))
 
 
 def test_at_least_two_qb_teams_must_be_stackable():
@@ -137,7 +139,7 @@ def test_relax_min_core_steps_down_logs_it_and_stops_at_the_floor():
 
 def test_promote_at_failing_adds_only_at_the_failing_position_never_injured_players():
     u = _universe()
-    in_pool = [e for e in _pool(u, core=CORE).entries if not e.canonical_id.startswith("wr") or e.canonical_id.endswith(("T1", "T2"))]
+    in_pool = [e for e in _pool(u, core=CORE).entries if not e.canonical_id.startswith("wr") or e.canonical_id.endswith(("T1",))]
     pool = Pool(1, "a1", THESIS, tuple(in_pool), PoolRules(min_core=4))
     uni = [replace(p, status="OUT") if p.canonical_id == "wr2_T3" else p for p in u]
     report = validate_pool(pool, uni)
@@ -165,16 +167,29 @@ def test_core_overlap_warns_on_near_duplicate_pools_only():
     assert codes == [("a1", "warning")]
 
 
-def test_promoting_a_player_the_expert_excluded_retiers_in_place_without_a_duplicate_entry():
-    u = _universe()
-    excluded = [p.canonical_id for p in u if p.position == "WR" and p.team in ("T3", "T4")]
+def _wr_starved(u, reason):
+    """A pool where every non-T1 WR is in the exclude tier with the given reason (leaving only 3 live WR)."""
     pool = _pool(u, core=CORE)
-    pool = replace(pool, entries=tuple(PoolEntry(e.canonical_id, "exclude", "expert preference") if e.canonical_id in excluded else e for e in pool.entries))
+    victims = {p.canonical_id for p in u if p.position == "WR" and p.team != "T1" and p.canonical_id not in CORE}
+    return replace(pool, entries=tuple(PoolEntry(e.canonical_id, "exclude", reason) if e.canonical_id in victims else e for e in pool.entries)), victims
+
+
+def test_widening_never_undoes_an_exclusion_the_expert_made_on_purpose():
+    u = _universe()
+    pool, victims = _wr_starved(u, "expert: bars the chalk game's top-owned players")
     report = validate_pool(pool, u)
     assert "feasibility_WR" in _codes(report)
+    wider = promote_at_failing(pool, u, report)
+    assert wider is pool  # nothing promotable: every other WR was deliberately excluded -> the build must fail loudly instead
+
+
+def test_default_tier_players_are_retiered_in_place_without_a_duplicate_entry():
+    u = _universe()
+    pool, victims = _wr_starved(u, "default tier")
+    report = validate_pool(pool, u)
     wider = promote_at_failing(pool, u, report)
     ids = [e.canonical_id for e in wider.entries]
     assert len(ids) == len(set(ids))  # never a second entry for the same player
     retiered = {e.canonical_id for e in wider.entries if e.reason.startswith("widened:")}
-    assert retiered and retiered <= set(excluded)
+    assert retiered and retiered <= victims
     assert validate_pool(wider, u).ok  # and the widened pool now validates (no contradictory_tiers)
