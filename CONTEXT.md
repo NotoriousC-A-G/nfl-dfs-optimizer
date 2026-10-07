@@ -26,6 +26,14 @@ _Avoid_: Game analyst, sub-agent
 One game's integrated story of how it is likely to play out: the scenarios and their rough probabilities, how the units affect each other within them, where work is redistributed, and which players win in which scenario. Every claim cites the evidence packet and names its strongest counter-scenario.
 _Avoid_: Game script (script is only the first link of the chain), game preview
 
+**Scenario**:
+One distinct way a game could play out (a shootout, the favorite pulling away, a grind, "pressure wrecks one offense"), with a rough probability. A game's scenarios are mutually exclusive.
+_Avoid_: Script (the flow of a game within one scenario), outcome
+
+**Angle**:
+A bet on one scenario of one game. A lineup can back an angle, hedge it, or avoid it, and a set of lineups spreads exposure across angles on purpose.
+_Avoid_: Stack (a stack is one way to express an angle), narrative
+
 **Interaction**:
 A feedback loop between units that makes them impossible to assess in isolation, such as pressure stalling the pass game, which lets the defense stack the box against the run.
 _Avoid_: Correlation, synergy
@@ -51,7 +59,7 @@ A pool member's standing for that agent: **core** (the expert wants it used), **
 _Avoid_: Bucket, rank
 
 **Build thesis**:
-An agent's stated bet for the slate: which game theses it backs, the stack it builds around, and why. Distinct from a game thesis, which describes a game, not a bet.
+An agent's stated bet for the slate: which angles it backs, avoids or hedges, the stack it builds around, and why. Distinct from a game thesis, which describes a game, not a bet.
 _Avoid_: Thesis (ambiguous with game thesis), angle, stack idea
 
 ### Availability
