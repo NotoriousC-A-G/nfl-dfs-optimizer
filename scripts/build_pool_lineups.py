@@ -6,7 +6,8 @@ pool-constrained lineups, one agent at a time, each failing LOUDLY on its own (n
 Requires the analyst and expert stages to be COMPLETE (`scripts/run_llm_stages.py collect-analysts` /
 `collect-expert`) and the fitted tail-value table (`scripts/tail_value_calibration_report.py`).
 Cross-agent rules are applied here: every lineup differs from every earlier agent's lineups by at least 3
-players, and agents are built in a fixed order. An agent that cannot be built is reported with its diagnostic;
+players, and agents are built in a fixed order. An agent whose pool fails (e.g. an under-spent lineup) goes back to the expert ONCE (`build/expert/repair.py`, exit 2 while its
+repair request awaits an answer); one that still cannot be built is reported with its diagnostic;
 an agent the expert marked unavailable is reported with the expert's reason.
 NOT part of `pytest` (loads play-by-play and a saved snapshot).
 """
@@ -22,6 +23,7 @@ import nfl_data_py as nfl
 
 from nfl_dfs.build.evidence.builder import build_evidence_packets
 from nfl_dfs.build.evidence.metrics import league_values, team_game_metrics
+from nfl_dfs.build.expert.repair import build_with_repair
 from nfl_dfs.build.expert.stage import expert_spec
 from nfl_dfs.build.pool.contracts import PlayerRef
 from nfl_dfs.build.pool.expand import expand_pool
@@ -30,7 +32,7 @@ from nfl_dfs.build.thesis.contracts import PairSign
 from nfl_dfs.build.thesis.stage import analyst_specs
 from nfl_dfs.build.value.calibration import CalibrationTable
 from nfl_dfs.build.value.tail_value import expected_multipliers, tail_values
-from nfl_dfs.optimizer.pool_solve import PoolBuildFailure, build_agent_lineups
+from nfl_dfs.optimizer.pool_solve import build_agent_lineups
 from nfl_dfs.projection.blend import PlayerProjection
 from nfl_dfs.storage.slate_snapshot_store import load_latest_slate_snapshot
 from scripts.live_integration_check_dashboard import SEASON, WEEK
@@ -84,15 +86,21 @@ def main() -> int:
     avoid: list[frozenset[str]] = []
     exit_code = 0
     for out in expert.outputs:
-        pool = expand_pool(out, universe)
-        try:
-            res = build_agent_lineups(pool, projs, values, n=args.n, opponent_of=opp, game_id_by_team=game_of, pair_signs=signs,
-                                      avoid_lineups=list(avoid), min_player_difference=3)
-        except PoolBuildFailure as exc:
-            exit_code = 1
-            print(f"\n[{out.agent_id}] CANNOT BUILD -- {exc.stage}: {exc}")
+        def build(o, _avoid=list(avoid)):
+            return build_agent_lineups(expand_pool(o, universe), projs, values, n=args.n, opponent_of=opp, game_id_by_team=game_of, pair_signs=signs,
+                                       avoid_lineups=_avoid, min_player_difference=3)
+        oc = build_with_repair(out, build, theses, packets, universe, model=MODEL_ID, freshness=fresh, season=SEASON, week=WEEK)
+        if oc.status != "built":
+            exit_code = 2 if oc.status == "awaiting_repair" else 1
+            label = "AWAITING EXPERT REPAIR" if oc.status == "awaiting_repair" else "CANNOT BUILD"
+            print(f"\n[{out.agent_id}] {label} -- {oc.detail}")
+            if oc.first_failure is not None:
+                print(f"  diagnosis: {oc.first_failure}")
             continue
-        print(f"\n[{out.agent_id}] backs {list(out.build_thesis.backs)} | widened: {list(res.pool.widened_steps) or 'no'} | {out.build_thesis.reason[:140]}")
+        res = oc.result
+        o = res.pool
+        print(f"\n[{out.agent_id}]{' REPAIRED by the expert after: ' + str(oc.first_failure) if oc.repaired else ''} | widened: {list(o.widened_steps) or 'no'} | "
+              f"backs {list(o.build_thesis.backs)} | {o.build_thesis.reason[:140]}")
         for i, lu in enumerate(res.lineups, 1):
             avoid.append(frozenset(p.canonical_id for p in lu.players))
             print(f"  L{i} ${lu.total_salary:,} proj {lu.total_projected_points:.1f} | " + ", ".join(f"{p.position} {p.display_name}" for p in lu.players))

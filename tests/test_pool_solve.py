@@ -23,9 +23,9 @@ def _projections(**status):
     for i, t in enumerate(TEAMS):
         out.append(_p(f"qb_{t}", f"QB {t}", "QB", t, 6000 + 400 * i, 20.0 - i, status.get(f"qb_{t}")))
         for k in range(2):
-            out.append(_p(f"rb{k}_{t}", f"RB{k} {t}", "RB", t, 5000 + 1200 * k, 11.0 + 2.5 * k - i * 0.1, status.get(f"rb{k}_{t}")))
+            out.append(_p(f"rb{k}_{t}", f"RB{k} {t}", "RB", t, 5600 + 1200 * k, 11.0 + 2.5 * k - i * 0.1, status.get(f"rb{k}_{t}")))
         for k in range(3):
-            out.append(_p(f"wr{k}_{t}", f"WR{k} {t}", "WR", t, 4500 + 1000 * k, 10.0 + 2.0 * k - i * 0.1, status.get(f"wr{k}_{t}")))
+            out.append(_p(f"wr{k}_{t}", f"WR{k} {t}", "WR", t, 5000 + 1000 * k, 10.0 + 2.0 * k - i * 0.1, status.get(f"wr{k}_{t}")))
         out.append(_p(f"te_{t}", f"TE {t}", "TE", t, 3500 + 300 * i, 9.0 - i * 0.2, status.get(f"te_{t}")))
         out.append(_p(f"dst_{t}", f"DST {t}", "DST", t, 2500 + 100 * i, 7.0 - i * 0.2, status.get(f"dst_{t}")))
     return out
@@ -216,13 +216,14 @@ def test_default_difference_rule_leaves_prior_behaviour_unchanged():
     assert [[p.canonical_id for p in l.players] for l in a.lineups] == [[p.canonical_id for p in l.players] for l in b.lineups]
 
 
-def test_an_under_spent_lineup_is_warned_about_not_silently_accepted(monkeypatch):
+def test_an_under_spent_lineup_fails_loudly_with_a_supply_diagnosis_not_a_warning(monkeypatch):
     projs = _projections()
     good = _build(_pool(projs), projs, n=1).lineups[0]
     real = ps.generate_lineups
-    # a pool that passes the salary-starved check but whose solved lineup still under-spends (e.g. core/bring-back constraints)
+    # a pool that passes the salary-starved check but whose solved lineup still under-spends
     monkeypatch.setattr(ps, "generate_lineups", lambda *a, n=None, **k: [replace(good, total_salary=41_400)] if n == 1 else real(*a, n=n, **k))
-    res = _build(_pool(projs), projs, n=1)
-    warn = [w for w in res.warnings if w.code == "salary_left"]
-    assert len(warn) == 1 and "$41,400" in warn[0].message and "$8,600" in warn[0].message
-    assert len(res.lineups) == 1  # a warning, not a failure (Chris decides whether it becomes an error)
+    with pytest.raises(PoolBuildFailure) as exc:
+        _build(_pool(projs), projs, n=1)
+    assert exc.value.stage == "underspend"
+    assert "$41,400" in str(exc.value) and "$8,600" in str(exc.value)
+    assert set(exc.value.diagnostics["supply"]) == {"QB", "RB", "WR", "TE", "DST"}
