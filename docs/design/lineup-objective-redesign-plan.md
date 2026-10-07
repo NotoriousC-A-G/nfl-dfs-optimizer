@@ -20,11 +20,12 @@ Glossary: `CONTEXT.md`. Branch: `lineup-objective-redesign`.
 
 ## 0. What we are building, in one paragraph
 
-A flag-gated "pool pipeline" that fails loudly (never silently substituting a lineup) and that will replace the existing six lever-agents path. Code builds a per-game **evidence packet**;
-a **game analyst** (LLM) turns it into a **game thesis** with 3–4 **scenarios** whose probabilities are anchored to the lines;
-an **expert** (LLM) picks **angles** and builds a **pool** (tiers + reasons + build thesis) for each of 3 builder agents; a code
-**validator** checks feasibility; the existing ILP maximizes **tail value** inside each pool; everything is saved before kickoff so
-the post-mortem can grade it. Old path always runs first and is the control. Friday output is a **forward experiment**, not a validated improvement.
+A flag-gated pool pipeline that fails loudly (never silently substituting a lineup). Code builds a per-game **evidence packet**;
+a **game analyst** (LLM) turns it into a **game thesis**: the game's pivotal questions and 2–4 **scenarios** (their combinations)
+whose probabilities are anchored to the lines; an **expert** (LLM) picks **angles** and builds a **pool** (tiers + reasons + build
+thesis) for each of the **six builder agents**; a code **validator** checks feasibility; the existing ILP maximizes **tail value**
+inside each pool; everything is saved before kickoff so the post-mortem can grade it. Chalk Anchor (agent 1) is the baseline.
+Friday output is a **forward experiment**, not a validated improvement.
 
 ## 1. Corrections to the evidence base (do not repeat the old claims)
 
