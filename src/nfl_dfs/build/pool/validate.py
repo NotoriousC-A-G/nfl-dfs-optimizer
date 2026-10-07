@@ -19,13 +19,16 @@ from nfl_dfs.build.common import Violation
 from nfl_dfs.build.pool.contracts import TIERS, Pool, PoolEntry, PlayerRef
 from nfl_dfs.optimizer.lineup import EXCLUDED_INJURY_STATUSES, SALARY_CAP
 
-# Draft feasibility floors (QA review): enough depth at every slot, across enough teams, to build lineups.
-MIN_COUNTS = {"QB": 3, "RB": 6, "WR": 9, "TE": 3, "DST": 3}
-MIN_QB_TEAMS = 3
+# Draft feasibility floors. The first cut (QB 3 / RB 6 / WR 9 / TE 3 / DST 3, 95% cap reach) was QA's; the 2026-10-07
+# real-slate rehearsal showed it forced widening on EVERY narrow pool (and one hard salary-starved failure at 94% of
+# the cap), turning a rare fallback into the norm. These are what building two distinct-stack lineups actually needs.
+MIN_COUNTS = {"QB": 2, "RB": 4, "WR": 6, "TE": 2, "DST": 2}
+MIN_QB_TEAMS = 2
 MIN_STACKABLE_QB_TEAMS = 2
 MIN_STACK_CATCHERS = 2
 MIN_DISTINCT_STACKS = 3
-CAP_REACH_FRACTION = 0.95
+CAP_REACH_FRACTION = 0.90
+DEFAULT_TIER_REASON = "default tier"  # the reason `expand_pool` gives players nobody assigned a tier
 FLEX_POSITIONS = ("RB", "WR", "TE")
 
 
@@ -165,18 +168,25 @@ def promote_at_failing(
     *, excluded_statuses: frozenset[str] = EXCLUDED_INJURY_STATUSES, per_position: int = 3,
 ) -> Pool:
     """Widening step 3: for each *failing* position (or the stack check), make the next-best players by
-    projection `eligible`, tagged with the check that triggered it. A player the expert had put in the
-    `exclude` tier is RE-TIERED IN PLACE (never given a second, contradictory entry); a player absent from
-    the pool is appended. Never touches positions that passed, never promotes an injury-excluded player."""
+    projection `eligible`, tagged with the check that triggered it. Only players nobody deliberately tiered are
+    promotable: one on the default tier is RE-TIERED IN PLACE (never a second, contradictory entry), one absent from
+    the pool is appended, and an exclusion the expert made with a reason is NEVER undone. Never touches positions
+    that passed, never promotes an injury-excluded player."""
     existing = {e.canonical_id: e for e in pool.entries}
     live = {cid for cid, e in existing.items() if e.tier != "exclude"}  # already usable in the pool
     promoted: dict[str, PoolEntry] = {}
     log: list[str] = []
 
     def promotable(p: PlayerRef) -> bool:
+        prior = existing.get(p.canonical_id)
+        # An exclusion the expert made ON PURPOSE (it carries a reason) is never undone by widening: Chalk Pivot's
+        # whole identity is barring the chalk game's top-owned players, and a widening that re-adds them defeats the
+        # agent. Only players nobody tiered (absent, or the default tier) can be promoted; if that is not enough the
+        # build fails loudly and the expert must widen its own pool.
+        deliberately_excluded = prior is not None and prior.tier == "exclude" and prior.reason != DEFAULT_TIER_REASON
         return (
-            p.canonical_id not in live and p.canonical_id not in promoted and p.status not in excluded_statuses
-            and p.salary is not None and p.projection is not None
+            p.canonical_id not in live and p.canonical_id not in promoted and not deliberately_excluded
+            and p.status not in excluded_statuses and p.salary is not None and p.projection is not None
         )
 
     failing = {x.code.removeprefix("feasibility_") for x in report.errors if x.code.startswith("feasibility_")}
