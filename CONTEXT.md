@@ -14,12 +14,24 @@ _Avoid_: Ceiling (one input to tail value), upside score
 
 ### The build pipeline
 
-**Specialist**:
-An analyst that assesses one element of the slate (for example game environment, matchups, usage, ownership leverage, injuries, weather, props) and reports what it found.
-_Avoid_: Sub-agent, signal agent
+**Evidence packet**:
+Everything the numbers can say about one game: the lines, availability-adjusted unit strengths, usage shares, and measured interactions between units. It is evidence for a thesis, not a conclusion.
+_Avoid_: Signal bundle, data package
+
+**Game analyst**:
+The reasoning step that reads one game's evidence packet and writes its game thesis.
+_Avoid_: Specialist, sub-agent
+
+**Game thesis**:
+One game's integrated story of how it is likely to play out: the scenarios and their rough probabilities, how the units affect each other within them, where work is redistributed, and which players win in which scenario. Every claim cites the evidence packet and names its strongest counter-scenario.
+_Avoid_: Game script (script is only the first link of the chain), game preview
+
+**Interaction**:
+A feedback loop between units that makes them impossible to assess in isolation, such as pressure stalling the pass game, which lets the defense stack the box against the run.
+_Avoid_: Correlation, synergy
 
 **Expert**:
-The reasoning step that reads every specialist's findings and decides how lineups should be built, stating a reason for each decision.
+The reasoning step that reads every game thesis plus the field's ownership and pricing, and decides how lineups should be built, stating a reason for each decision.
 _Avoid_: Judge, orchestrator
 
 **Agent**:
