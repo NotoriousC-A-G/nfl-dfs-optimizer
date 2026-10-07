@@ -104,15 +104,15 @@ ROSTER_POSITIONS = ("QB", "RB", "WR", "TE", "DST")
 # extract_dk_injury_status`) observed live: IR, OUT, Q (Questionable), D (Doubtful), or no
 # designation. IR/OUT are a guaranteed zero and D (Doubtful) is
 # treated the same way (Chris, 2026-09-30, after a doubtful Breece Hall reached three week-4
-# lineups) -- all excluded from the candidate pool entirely in `_eligible_pool`. Q stays eligible:
-# a real, disclosed DFS strategic decision, not a guaranteed non-play, the same "unresolved is
-# not unavailable" treatment this project's own injury-uncertainty-flag machinery applies.
+# lineups) -- all excluded from the candidate pool entirely in `_eligible_pool`.
 #
-# **Q (Questionable) is excluded too (Chris, 2026-10-07)**: lineups are built before final inactives,
-# and a doubtful Breece Hall already cost a week-4 slate -- so Q is assumed not to play unless a
-# Friday-practice clearance is on file (`storage/injury_clearance_store.py`), which rewrites that
-# player's status to `Q_CLEARED` (not excluded). A "will test it out pre-game" player is an avoid.
-EXCLUDED_INJURY_STATUSES = frozenset({"IR", "OUT", "D", "Q"})
+# **Q (Questionable) is excluded too (Chris, 2026-10-07, ADR-0045)**: lineups are built before final
+# inactives, so Q is assumed not to play. The *system* clears a Q player only on official Friday
+# practice evidence (`normalization.injury_lookup.resolve_questionable_players`), rewriting his status
+# to `Q_CLEARED` (not excluded); everyone else stays out, and a "will test it out pre-game" player is
+# an avoid. `BARRED` is a Chris override that excludes any player; `scripts/log_q_override.py`
+# (`storage/injury_clearance_store.py`) is how he overrides the system either way.
+EXCLUDED_INJURY_STATUSES = frozenset({"IR", "OUT", "D", "Q", "BARRED"})
 
 # Deliberately tiny -- see module docstring's "Full game-stack favoring" note. Blended
 # projections are on the order of 5-30 DK points per player; this weight can only ever matter

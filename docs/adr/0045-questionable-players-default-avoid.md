@@ -1,6 +1,6 @@
 # ADR-0045: Questionable players are excluded by default; cleared only by Friday-practice evidence
 
-**Status:** Accepted (implemented, unit-tested; not yet run live -- first live use is week 5)
+**Status:** Accepted (implemented, unit-tested; revised 2026-10-07 to automatic official-report clearance with Chris overrides; first live use is week 5)
 **Date:** 2026-10-07
 **Owner:** Chris
 **Related:** ADR-0031/0038 (injury feeds), `optimizer/lineup.py`, `normalization/injury_lookup.py`,
@@ -22,11 +22,7 @@ model, which agrees with not trying.)
    This also makes the availability-aware stacks and the injury circumstance detector treat an
    uncleared Q player as out, so his teammates' role change (the beneficiary read) now fires for Q
    players, consistent with expecting them not to play.
-2. **Clearance, not probability:** `data/overrides/q_clearances.csv` (hand-kept, written via
-   `scripts/log_q_clearance.py`) lists Q players cleared to roster. `practice` must be `Full`, or
-   `Limited` **with a note** carrying the positive report (enforced in the dataclass, so a limited
-   practice can never clear a player alone). A cleared player is rewritten to status `Q_CLEARED`
-   (not excluded). A game-time decision is simply not logged.
+2. **The system decides; Chris overrides (revised 2026-10-07).** Each Q player is decided from the *official NFL practice report* for the target week (nflverse `import_injuries`, every position, live in-week): **Full participation clears him** (`Q_CLEARED`, not excluded); Limited, Did Not Participate, or no official row leaves him out (a limited practice alone is not enough -- clearing him needs a positive report, which is what an override is for). Every decision prints with its basis and evidence timestamp and is saved with the run. Chris overrides in either direction via `data/overrides/q_overrides.csv` (`scripts/log_q_override.py`): `clear` (a Q or Doubtful player; never OUT/IR) or `bar` (anyone; status `BARRED`, excluded). Chris does **not** pre-fill anything before generation -- the original hand-kept "clearance list" design was dropped.
 3. `overlay_injury_report_exclusions` now also maps RotoGrinders `Q` and only ever moves a status
    **up** a severity ladder (Q < D < OUT/IR). Without this, a DK `Q` would block RotoGrinders' `D`
    from applying, and a clearance could resurrect a Doubtful player (the Hall case).
@@ -38,9 +34,7 @@ model, which agrees with not trying.)
 
 - A Q player with no clearance is gone -- including stars. That is the intended risk stance; the
   cost is real (missing a player who plays), accepted explicitly.
-- Source of Friday practice data is manual. nflverse's report lags and RotoGrinders' `PART`
-  column is the body part, not participation (ADR-0031). **Follow-ups, not built:** a scraper of
-  the official NFL injury report that pre-fills the clearance file; a late-swap contingency plan
-  (replacement + beneficiaries per lineup) for players who were cleared but are ruled out Sunday.
+- Practice evidence now comes from nflverse's official report, which (checked 2026-10-07) already holds the current week for all positions -- ADR-0031's "lags" premise is out of date for in-week use. It keeps only the latest day per player, so `scripts/official_injury_capture.py` archives each pull (`storage/official_injury_snapshot_store.py`) to preserve the Wed/Thu/Fri trajectory and the exact evidence behind each run. Risks: nflverse's in-week refresh cadence is unconfirmed (an nfl.com page parser is the fallback), and only teams that have posted appear.
+- **Sunday morning check (not yet built, requested by Chris):** inactives land ~90 minutes before kickoff, so a Sunday script re-pulls the report and flags any rostered player whose status changed, with a swap menu. **Follow-up:** the late-swap contingency plan (replacement + beneficiaries per lineup).
 - Not run live: `scripts/live_integration_check_dashboard.py`'s week constants still point at
   week 4; first live exercise is the week 5 run.

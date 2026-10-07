@@ -15,13 +15,22 @@ from __future__ import annotations
 
 from nfl_dfs.ingestion.rotogrinders_injuries import InjuryReportEntry
 from nfl_dfs.normalization.identity import MatchMethod, PlayerIdentity
-from nfl_dfs.storage.injury_clearance_store import QuestionableClearance
+from dataclasses import dataclass
+
+from nfl_dfs.ingestion.official_injury_report import OfficialInjuryReportEntry
+from nfl_dfs.storage.injury_clearance_store import QuestionableOverride
 from nfl_dfs.tracking.name_matching import normalize_player_name
 
-# Status a Questionable player is rewritten to once a Friday-practice clearance is on file
-# (`storage/injury_clearance_store.py`). Deliberately NOT in `optimizer.lineup.EXCLUDED_INJURY_STATUSES`,
-# so a cleared player is rosterable while everyone still on plain "Q" is dropped.
+# Status a Questionable/Doubtful player is rewritten to once cleared (by the official practice report
+# or a Chris override). Deliberately NOT in `optimizer.lineup.EXCLUDED_INJURY_STATUSES`, so a cleared
+# player is rosterable while everyone still on plain "Q" is dropped.
 CLEARED_QUESTIONABLE_STATUS = "Q_CLEARED"
+# Status a Chris `bar` override writes -- excluded for any player, whatever DK/RotoGrinders say.
+BARRED_STATUS = "BARRED"
+
+_FULL_PRACTICE = "Full Participation in Practice"
+_LIMITED_PRACTICE = "Limited Participation in Practice"
+_DID_NOT_PRACTICE = "Did Not Participate In Practice"
 
 
 def build_injury_lookup(
@@ -102,24 +111,88 @@ def overlay_injury_report_exclusions(
     return merged
 
 
-def apply_questionable_clearances(
+@dataclass(frozen=True)
+class AvailabilityDecision:
+    """One player's Q/override decision with the evidence behind it -- printed every run and saved
+    with the slate so Chris can see (and override) each call and the post-mortem can grade them."""
+
+    name: str
+    team: str
+    decision: str  # "cleared" | "excluded" | "barred"
+    basis: str
+    source: str  # "official_practice" | "override" | "default"
+
+
+def resolve_questionable_players(
     dk_injury_status: dict[str, str],
     identities: list[PlayerIdentity],
-    clearances: list[QuestionableClearance],
-) -> tuple[dict[str, str], list[QuestionableClearance]]:
-    """Returns `(status dict with cleared Q players rewritten to CLEARED_QUESTIONABLE_STATUS,
-    clearances that matched no Questionable player)`. Only a player whose current status is exactly
-    "Q" is rewritten -- a clearance can never override D/OUT/IR, so a stale or mistaken row can't
-    put an unavailable player back in the pool. The unmatched list is returned (not dropped) so the
-    caller can surface typos and clearances for players who aren't Q (e.g. already healthy)."""
+    official_entries: list[OfficialInjuryReportEntry],
+    overrides: list[QuestionableOverride],
+    *,
+    week: int,
+    as_of: str = "",
+) -> tuple[dict[str, str], list[AvailabilityDecision], list[QuestionableOverride]]:
+    """Applies the Questionable rule (Chris, 2026-10-07) and his overrides.
+
+    **Default rule, per player whose merged status is exactly "Q":** the latest official practice
+    status for `week` decides -- Full participation clears him (`Q_CLEARED`); Limited, Did Not
+    Participate, or no official row at all leaves him out (a limited practice alone is not enough:
+    clearing him needs a positive report, which is what an override is for). A game-time decision
+    is therefore an avoid unless Chris says otherwise.
+
+    **Overrides win in both directions:** `bar` excludes any player (status `BARRED`); `clear`
+    rewrites a Q or D player to `Q_CLEARED`. Neither can touch OUT/IR (guaranteed zero) -- a `clear`
+    on those is returned unmatched.
+
+    Returns `(new status dict, decisions for every Q player and every override, overrides that
+    matched no player or were refused)` so nothing is silently dropped. `official_entries` are
+    matched to identities by `canonical_id == gsis_id`; `as_of` labels the evidence timestamp.
+    """
     merged = dict(dk_injury_status)
+    decisions: list[AvailabilityDecision] = []
+    unmatched: list[QuestionableOverride] = []
+
     by_key = {(normalize_player_name(i.display_name), i.team.upper()): i for i in identities}
-    unmatched: list[QuestionableClearance] = []
-    for c in clearances:
-        identity = by_key.get((normalize_player_name(c.name), c.team.upper()))
-        dk = identity.sources.get("draftkings") if identity else None
-        if dk is None or dk.native_id is None or merged.get(str(dk.native_id)) != "Q":
-            unmatched.append(c)
+    official_by_gsis = {e.gsis_id: e for e in official_entries if e.week == week}
+
+    def dk_id(identity: PlayerIdentity) -> str | None:
+        dk = identity.sources.get("draftkings")
+        return str(dk.native_id) if dk is not None and dk.native_id is not None else None
+
+    overridden: set[str] = set()
+    for o in overrides:
+        identity = by_key.get((normalize_player_name(o.name), o.team.upper()))
+        key = dk_id(identity) if identity else None
+        if key is None:
+            unmatched.append(o)
             continue
-        merged[str(dk.native_id)] = CLEARED_QUESTIONABLE_STATUS
-    return merged, unmatched
+        current = merged.get(key)
+        note = f" -- {o.note}" if o.note else ""
+        if o.decision == "bar":
+            merged[key] = BARRED_STATUS
+            decisions.append(AvailabilityDecision(identity.display_name, identity.team, "barred", f"override: bar{note}", "override"))
+        elif current in ("Q", "D"):
+            merged[key] = CLEARED_QUESTIONABLE_STATUS
+            decisions.append(AvailabilityDecision(identity.display_name, identity.team, "cleared", f"override: clear (was {current}){note}", "override"))
+        else:
+            unmatched.append(o)  # clear on OUT/IR, or on a player who isn't Q/D, is refused/irrelevant
+            continue
+        overridden.add(key)
+
+    for identity in identities:
+        key = dk_id(identity)
+        if key is None or key in overridden or merged.get(key) != "Q":
+            continue
+        entry = official_by_gsis.get(identity.canonical_id)
+        practice = entry.practice_status if entry else None
+        stamp = f" (as of {as_of})" if as_of else ""
+        if practice == _FULL_PRACTICE:
+            merged[key] = CLEARED_QUESTIONABLE_STATUS
+            decisions.append(AvailabilityDecision(identity.display_name, identity.team, "cleared", f"official practice: Full{stamp}", "official_practice"))
+        elif practice == _LIMITED_PRACTICE:
+            decisions.append(AvailabilityDecision(identity.display_name, identity.team, "excluded", f"official practice: Limited -- needs a positive report to clear; override to clear{stamp}", "official_practice"))
+        elif practice == _DID_NOT_PRACTICE:
+            decisions.append(AvailabilityDecision(identity.display_name, identity.team, "excluded", f"official practice: Did Not Participate{stamp}", "official_practice"))
+        else:
+            decisions.append(AvailabilityDecision(identity.display_name, identity.team, "excluded", f"no official practice evidence for week {week}{stamp}", "default"))
+    return merged, decisions, unmatched
