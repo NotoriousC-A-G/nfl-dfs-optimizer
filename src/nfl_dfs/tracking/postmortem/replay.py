@@ -29,7 +29,34 @@ from nfl_dfs.tracking.postmortem.retrospective import compute_process_grade, com
 _MISSED_PLAYER_MIN_ACTUAL = 10.0  # disclosed draft floor for "a real high scorer", not backtested
 
 
-def _agent_lineup_outcomes(snapshot: dict, actual_by_id: dict[str, float]) -> list[LineupOutcome]:
+def _settled_teams(weekly: pd.DataFrame, season: int, week: int) -> tuple[set[str], set[str]]:
+    """(teams whose game has real settled rows this week, player ids with a row this week), from
+    the same `weekly` frame offensive actuals come from. Used to tell a player who did not play
+    (team settled, id absent) from a game that simply hasn't been settled yet (team absent)."""
+    df = weekly[(weekly["season"] == season) & (weekly["week"] == week) & (weekly["season_type"] == "REG")]
+    teams = {
+        normalize_team("nflverse_schedule", t) or t for t in df["recent_team"].dropna().unique()
+    }
+    ids = set(df["player_id"].dropna()) if "player_id" in df.columns else set()
+    return teams, ids
+
+
+def _resolve_actual(
+    actual: float | None, *, canonical_id: str | None, position: str, team: str, settled_teams: set[str], settled_ids: set[str]
+) -> tuple[float | None, bool]:
+    """Returns (actual, did_not_play). Only a real gsis-style id absent from a settled team's rows
+    counts as a DNP -- a name-match miss (id present, name unmatched) stays unscored rather than
+    having a 0 fabricated for a player who actually played."""
+    if actual is not None or position == "DST":
+        return actual, False
+    if canonical_id and canonical_id.startswith("00-") and team in settled_teams and canonical_id not in settled_ids:
+        return 0.0, True
+    return actual, False
+
+
+def _agent_lineup_outcomes(
+    snapshot: dict, actual_by_id: dict[str, float], settled_teams: set[str], settled_ids: set[str]
+) -> list[LineupOutcome]:
     outcomes = []
     for entry in snapshot.get("agent_lineups", []):
         agent = entry.get("agent") or {}
@@ -37,7 +64,14 @@ def _agent_lineup_outcomes(snapshot: dict, actual_by_id: dict[str, float]) -> li
         players = []
         for p in lineup.get("players", []):
             canonical_id = p.get("canonical_id")
-            actual = actual_by_id.get(canonical_id)
+            actual, did_not_play = _resolve_actual(
+                actual_by_id.get(canonical_id),
+                canonical_id=canonical_id,
+                position=p.get("position", ""),
+                team=p.get("team", ""),
+                settled_teams=settled_teams,
+                settled_ids=settled_ids,
+            )
             projected = p.get("blended_projection") or 0.0
             players.append(
                 PlayerOutcome(
@@ -49,6 +83,7 @@ def _agent_lineup_outcomes(snapshot: dict, actual_by_id: dict[str, float]) -> li
                     projected=projected,
                     actual=actual,
                     delta=(actual - projected) if actual is not None else None,
+                    did_not_play=did_not_play,
                 )
             )
         unresolved = tuple(p.display_name for p in players if p.actual is None)
@@ -76,6 +111,8 @@ def _operator_lineup_outcomes(
     player_pool: list[dict],
     offensive_points: dict[tuple[str, str], float],
     dst_points: dict[str, float],
+    settled_teams: set[str],
+    settled_ids: set[str],
 ) -> list[LineupOutcome]:
     pool_by_name_team = {
         (normalize_player_name((row.get("identity") or {}).get("display_name", "")), row.get("team")): row
@@ -99,6 +136,10 @@ def _operator_lineup_outcomes(
                 actual = dst_points.get(team)
             else:
                 actual = offensive_points.get(key)
+            real_id = (pool_row.get("identity") or {}).get("canonical_id") if pool_row else None
+            actual, did_not_play = _resolve_actual(
+                actual, canonical_id=real_id, position=position, team=team, settled_teams=settled_teams, settled_ids=settled_ids
+            )
 
             players.append(
                 PlayerOutcome(
@@ -110,6 +151,7 @@ def _operator_lineup_outcomes(
                     projected=projected,
                     actual=actual,
                     delta=(actual - projected) if actual is not None else None,
+                    did_not_play=did_not_play,
                 )
             )
         unresolved = tuple(p.display_name for p in players if p.actual is None)
@@ -147,8 +189,9 @@ def run_postmortem(season: int, week: int, *, weekly: pd.DataFrame, pbp: pd.Data
         if r.week == week
     }
 
-    lineup_outcomes = _agent_lineup_outcomes(snapshot, actual_by_id) + _operator_lineup_outcomes(
-        season, week, player_pool, offensive_points, dst_points
+    settled_teams, settled_ids = _settled_teams(weekly, season, week)
+    lineup_outcomes = _agent_lineup_outcomes(snapshot, actual_by_id, settled_teams, settled_ids) + _operator_lineup_outcomes(
+        season, week, player_pool, offensive_points, dst_points, settled_teams, settled_ids
     )
 
     scored_lineups = [lo for lo in lineup_outcomes if lo.actual_total is not None]
