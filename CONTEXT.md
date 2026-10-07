@@ -20,7 +20,7 @@ _Avoid_: Signal bundle, data package
 
 **Game analyst**:
 The reasoning step that reads one game's evidence packet and writes its game thesis.
-_Avoid_: Specialist, sub-agent
+_Avoid_: Game analyst, sub-agent
 
 **Game thesis**:
 One game's integrated story of how it is likely to play out: the scenarios and their rough probabilities, how the units affect each other within them, where work is redistributed, and which players win in which scenario. Every claim cites the evidence packet and names its strongest counter-scenario.
@@ -50,9 +50,9 @@ _Avoid_: Universe, candidate list
 A pool member's standing for that agent: **core** (the expert wants it used), **eligible** (allowed), or **exclude** (barred). Each assignment carries a one-line reason.
 _Avoid_: Bucket, rank
 
-**Thesis**:
-An agent's stated bet for the slate: the game and stack it is built around and why.
-_Avoid_: Angle, stack idea
+**Build thesis**:
+An agent's stated bet for the slate: which game theses it backs, the stack it builds around, and why. Distinct from a game thesis, which describes a game, not a bet.
+_Avoid_: Thesis (ambiguous with game thesis), angle, stack idea
 
 ### Availability
 
