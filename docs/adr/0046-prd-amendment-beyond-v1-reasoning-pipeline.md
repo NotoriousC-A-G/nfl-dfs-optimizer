@@ -42,4 +42,4 @@ explicit amendment instead of a silent departure. Chris's decision: "We're movin
 
 - PRD §1, §5, §12, §13 carry amendment notes pointing here; the v1 text is otherwise left intact as history.
 - The pipeline is new code behind a flag until validated; `main` stays the only place live runs happen (CLAUDE.md).
-- Fallback behavior if a stage fails is specified in the plan (open decision on the failure scenario).
+- **No silent fallback (Chris, 2026-10-07):** if a stage cannot produce a lineup the run reports which stage and why, and the issue is diagnosed and fixed — a projection-max substitute would hide the failure. Partial artifacts are saved to support diagnosis.
