@@ -366,11 +366,17 @@ def test_eligible_pool_excludes_players_on_excluded_injury_statuses():
     assert _eligible_pool(pool) == {}
 
 
-def test_eligible_pool_keeps_players_with_no_designation_or_a_playable_status():
+def test_eligible_pool_keeps_players_with_no_designation_or_a_cleared_questionable_status():
+    healthy = _p("healthy", "WR", "AAA", 3000, 20.0, dk_injury_status=None)
+    cleared = _p("cleared", "WR", "AAA", 3000, 20.0, dk_injury_status="Q_CLEARED")
+    result = _eligible_pool([healthy, cleared])
+    assert set(result.keys()) == {"healthy", "cleared"}
+
+
+def test_eligible_pool_drops_an_uncleared_questionable_player():
     healthy = _p("healthy", "WR", "AAA", 3000, 20.0, dk_injury_status=None)
     questionable = _p("questionable", "WR", "AAA", 3000, 20.0, dk_injury_status="Q")
-    result = _eligible_pool([healthy, questionable])
-    assert set(result.keys()) == {"healthy", "questionable"}
+    assert set(_eligible_pool([healthy, questionable]).keys()) == {"healthy"}
 
 
 def test_eligible_pool_drops_doubtful_players():
@@ -389,11 +395,18 @@ def test_generate_lineups_never_drafts_an_ir_player_even_when_it_is_the_best_val
     assert "ir_star" not in {p.canonical_id for p in lineup.players}
 
 
-def test_generate_lineups_still_drafts_a_questionable_player_when_it_is_the_best_value():
-    # Q is a real DFS strategic decision, not a guaranteed non-play -- must stay eligible.
+def test_generate_lineups_never_drafts_an_uncleared_questionable_player_even_when_best_value():
+    # Q is assumed not to play unless a Friday-practice clearance is on file (2026-10-07).
     pool = _synthetic_pool()
     questionable_star = _p("q_star", "WR", "AAA", 100, 99.0, dk_injury_status="Q")
     lineup = generate_lineups(pool + [questionable_star], n=1)[0]
+    assert "q_star" not in {p.canonical_id for p in lineup.players}
+
+
+def test_generate_lineups_drafts_a_cleared_questionable_player_when_it_is_the_best_value():
+    pool = _synthetic_pool()
+    cleared_star = _p("q_star", "WR", "AAA", 100, 99.0, dk_injury_status="Q_CLEARED")
+    lineup = generate_lineups(pool + [cleared_star], n=1)[0]
     assert "q_star" in {p.canonical_id for p in lineup.players}
 
 

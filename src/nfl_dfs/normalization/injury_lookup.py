@@ -15,6 +15,13 @@ from __future__ import annotations
 
 from nfl_dfs.ingestion.rotogrinders_injuries import InjuryReportEntry
 from nfl_dfs.normalization.identity import MatchMethod, PlayerIdentity
+from nfl_dfs.storage.injury_clearance_store import QuestionableClearance
+from nfl_dfs.tracking.name_matching import normalize_player_name
+
+# Status a Questionable player is rewritten to once a Friday-practice clearance is on file
+# (`storage/injury_clearance_store.py`). Deliberately NOT in `optimizer.lineup.EXCLUDED_INJURY_STATUSES`,
+# so a cleared player is rosterable while everyone still on plain "Q" is dropped.
+CLEARED_QUESTIONABLE_STATUS = "Q_CLEARED"
 
 
 def build_injury_lookup(
@@ -56,8 +63,14 @@ def team_injuries(
 
 
 # RotoGrinders' Situation Room status codes that mean "not expected to play" -> the DK vocabulary
-# `optimizer.lineup.EXCLUDED_INJURY_STATUSES` is written in. Q stays out on purpose (stays eligible).
-_RG_TO_DK_EXCLUDED_STATUS = {"D": "D", "O": "OUT"}
+# `optimizer.lineup.EXCLUDED_INJURY_STATUSES` is written in. Q is included (Chris, 2026-10-07):
+# Questionable is treated as not playing unless cleared by a Friday-practice report.
+_RG_TO_DK_EXCLUDED_STATUS = {"D": "D", "O": "OUT", "Q": "Q"}
+
+# Higher = more severe. The overlay only ever moves a status UP this ladder, so a vendor saying
+# Doubtful/Out beats DK's Questionable (week 4's Breece Hall) and a clearance, which only touches
+# plain "Q", can never resurrect a player either vendor has worse than Questionable.
+_STATUS_SEVERITY = {"Q": 1, "D": 2, "OUT": 3, "IR": 3}
 
 
 def overlay_injury_report_exclusions(
@@ -82,7 +95,31 @@ def overlay_injury_report_exclusions(
         mapped = _RG_TO_DK_EXCLUDED_STATUS.get(entry.status)
         if mapped is None or mapped not in excluded_statuses:
             continue
-        if merged.get(str(dk_match.native_id)) in excluded_statuses:
+        current = merged.get(str(dk_match.native_id))
+        if current in excluded_statuses and _STATUS_SEVERITY.get(current, 0) >= _STATUS_SEVERITY.get(mapped, 0):
             continue
         merged[str(dk_match.native_id)] = mapped
     return merged
+
+
+def apply_questionable_clearances(
+    dk_injury_status: dict[str, str],
+    identities: list[PlayerIdentity],
+    clearances: list[QuestionableClearance],
+) -> tuple[dict[str, str], list[QuestionableClearance]]:
+    """Returns `(status dict with cleared Q players rewritten to CLEARED_QUESTIONABLE_STATUS,
+    clearances that matched no Questionable player)`. Only a player whose current status is exactly
+    "Q" is rewritten -- a clearance can never override D/OUT/IR, so a stale or mistaken row can't
+    put an unavailable player back in the pool. The unmatched list is returned (not dropped) so the
+    caller can surface typos and clearances for players who aren't Q (e.g. already healthy)."""
+    merged = dict(dk_injury_status)
+    by_key = {(normalize_player_name(i.display_name), i.team.upper()): i for i in identities}
+    unmatched: list[QuestionableClearance] = []
+    for c in clearances:
+        identity = by_key.get((normalize_player_name(c.name), c.team.upper()))
+        dk = identity.sources.get("draftkings") if identity else None
+        if dk is None or dk.native_id is None or merged.get(str(dk.native_id)) != "Q":
+            unmatched.append(c)
+            continue
+        merged[str(dk.native_id)] = CLEARED_QUESTIONABLE_STATUS
+    return merged, unmatched
