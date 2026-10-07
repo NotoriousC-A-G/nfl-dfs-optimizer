@@ -26,12 +26,16 @@ _Avoid_: Game analyst, sub-agent
 One game's integrated story of how it is likely to play out: the scenarios and their rough probabilities, how the units affect each other within them, where work is redistributed, and which players win in which scenario. Every claim cites the evidence packet and names its strongest counter-scenario.
 _Avoid_: Game script (script is only the first link of the chain), game preview
 
+**Pivotal question**:
+A question that decides how a game plays out (for example "does Philadelphia protect its QB without its right tackle?"). Each names a measurable proxy and threshold before kickoff.
+_Avoid_: Key factor, storyline
+
 **Scenario**:
-One distinct way a game could play out (a shootout, the favorite pulling away, a grind, "pressure wrecks one offense"), with a rough probability. A game's scenarios are mutually exclusive.
-_Avoid_: Script (the flow of a game within one scenario), outcome
+One combination of answers to a game's pivotal questions, with a rough probability. A game's scenarios are mutually exclusive and cover every case. The probability-weighted mix must still reproduce the game's betting line.
+_Avoid_: Script (the flow of a game within one scenario), game type, outcome
 
 **Angle**:
-A bet on one scenario of one game. A lineup can back an angle, hedge it, or avoid it, and a set of lineups spreads exposure across angles on purpose.
+A bet on one scenario of one game (or on an individual edge within it). A lineup can back an angle, hedge it, or avoid it, and a set of lineups spreads exposure across angles on purpose. A lineup's angles may sit in different games; they are not forced to correlate.
 _Avoid_: Stack (a stack is one way to express an angle), narrative
 
 **Interaction**:
@@ -64,6 +68,10 @@ _Avoid_: Thesis (ambiguous with game thesis), angle, stack idea
 
 ### Availability
 
-**Questionable clearance**:
-Evidence that a Questionable player practiced Friday (full, or limited with a positive report), which lets him be rostered. Without one, a Questionable player is treated as out.
-_Avoid_: Probable override, status override
+**Questionable decision**:
+The system's call on a Questionable player, made from the official practice report: full participation clears him, anything else leaves him out. Printed with its basis.
+_Avoid_: Clearance (it is a decision the system makes, not a list Chris keeps)
+
+**Override**:
+Chris's instruction, when he has additional information or disagrees, to clear or bar a player against the system's call.
+_Avoid_: Clearance, manual exclusion
