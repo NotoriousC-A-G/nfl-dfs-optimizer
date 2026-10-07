@@ -27,8 +27,11 @@ explicit amendment instead of a silent departure. Chris's decision: "We're movin
 3. **Numbers stay in code; judgment is reasoned and transparent.** Numeric aggregation is deterministic and testable;
    LLM steps see real evidence, state reasons, cite packet fields, and every output is saved. A deterministic baseline sits
    under each LLM judgment and an LLM override carries a written reason.
-4. **Monte Carlo / scenario-tree simulation stays deferred.** Pull-in criterion: at least two graded slates showing the
-   scenario probabilities beat their line-implied anchor, plus Chris's sign-off. A deterministic proxy covers v2's first cut.
+4. **Monte Carlo / scenario-tree simulation stays deferred.** Pull-in criterion (revised 2026-10-07 after model-analytics review):
+   a pre-registered minimum of ~100 graded pivotal questions with a favorable paired Brier difference against their
+   line/reference anchors (two slates give only ~22 questions and cannot be informative), plus Chris's sign-off. A
+   lightweight Monte Carlo *over branch vectors* for rescoring candidate lineups is in scope; the full scenario-tree
+   simulator is not. A deterministic proxy covers v2's first cut.
 5. **Unchanged:** GPP-only, DK Classic main slate; no Showdown; no automated entry submission; PRD §7 construction rules
    (QB + pass-catcher stack in each lineup, no two final lineups with the same core stack, dup-risk buckets — the buckets
    now applied as a post-filter on each agent's own candidates); Chris plays up to three lineups (L1–L3) that he chooses
