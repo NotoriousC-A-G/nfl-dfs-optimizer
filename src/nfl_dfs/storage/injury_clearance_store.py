@@ -1,25 +1,24 @@
-"""Hand-kept list of Questionable players cleared to be rostered this week.
+"""Chris's manual overrides to the automatic Questionable-player decisions.
 
-**Why this exists (Chris, 2026-10-07):** lineups are built before final inactives are known, so a
-Questionable (Q) player is assumed NOT to play -- `optimizer.lineup.EXCLUDED_INJURY_STATUSES`
-contains "Q" -- unless there is real evidence he practiced Friday. This file is where that
-evidence is recorded; a Q player with a row here is given the non-excluded `Q_CLEARED` status
-(`normalization.injury_lookup.apply_questionable_clearances`), anyone else stays out. A player
-who is "going to test it out pre-game" / a game-time decision is deliberately NOT clearable here
--- that is an avoid, so the right action is to leave him off the list.
+**How Questionable (Q) players are handled (Chris, 2026-10-07):** lineups are generated before final
+inactives, so a Q player is assumed NOT to play unless there is evidence he practiced Friday. The
+*system* makes that call from the official NFL practice report
+(`normalization.injury_lookup.resolve_questionable_players`: Full participation clears a Q player;
+Limited, Did Not Participate or no evidence leaves him out) and prints every decision with its
+basis. **This file is where Chris overrides the system** when he has additional information or
+disagrees -- in either direction:
 
-**Evidence rule, enforced at write/read time, not left to discipline:** `practice` must be `Full`
-or `Limited`. `Limited` additionally requires a non-empty `note` (the "positive report" that makes
-a limited practice enough -- who said it, what they said). `Full` may carry a note but doesn't need
-one. A `Limited` row with no note is rejected, so a limited practice can never clear a player on its
-own.
+- `clear`: roster this player. Allowed on a Q or Doubtful player (never on OUT/IR, a guaranteed zero).
+- `bar`: do not roster this player, whatever his status says -- allowed on anyone.
 
-**No live source feeds this yet** -- the official nflverse report lags and RotoGrinders' "PART"
-column is the body part, not practice participation (ADR-0031), so the Friday status is entered by
-hand (`scripts/log_q_clearance.py`). A scraper that pre-fills it is a follow-up.
+A "will test it out pre-game" / game-time-decision player is an avoid by default, so he needs no
+row; add a `clear` row only if you have information that changes that. `note` is optional but is
+echoed in the decision printout and saved with the run, so the post-mortem can see which calls were
+overrides and why.
 
-CSV at `data/overrides/q_clearances.csv`; append-only and idempotent on `(season, week, name, team)`
--- re-logging the same player the same week replaces nothing and is reported as already present.
+CSV at `data/overrides/q_overrides.csv`; append-only, idempotent on `(season, week, name, team)`
+-- re-logging the same player the same week is reported as already present (edit the file by hand
+to change a decision).
 """
 
 from __future__ import annotations
@@ -30,54 +29,49 @@ from dataclasses import dataclass
 from pathlib import Path
 
 _REPO_ROOT = Path(__file__).resolve().parents[3]
-CLEARANCES_PATH = _REPO_ROOT / "data" / "overrides" / "q_clearances.csv"
+OVERRIDES_PATH = _REPO_ROOT / "data" / "overrides" / "q_overrides.csv"
 
-FIELDNAMES = ["season", "week", "name", "team", "practice", "note"]
-VALID_PRACTICE = ("Full", "Limited")
+FIELDNAMES = ["season", "week", "name", "team", "decision", "note"]
+VALID_DECISIONS = ("clear", "bar")
 
 
 @dataclass(frozen=True)
-class QuestionableClearance:
+class QuestionableOverride:
     season: int
     week: int
     name: str
     team: str
-    practice: str  # "Full" | "Limited"
+    decision: str  # "clear" | "bar"
     note: str = ""
 
     def __post_init__(self) -> None:
-        if self.practice not in VALID_PRACTICE:
-            raise ValueError(f"{self.name}: practice must be one of {VALID_PRACTICE}, got {self.practice!r}")
-        if self.practice == "Limited" and not self.note.strip():
-            raise ValueError(
-                f"{self.name}: a Limited practice only clears a player with a positive report -- "
-                "add a note saying who reported what (otherwise leave him excluded)"
-            )
+        if self.decision not in VALID_DECISIONS:
+            raise ValueError(f"{self.name}: decision must be one of {VALID_DECISIONS}, got {self.decision!r}")
         if not self.name.strip() or not self.team.strip():
             raise ValueError("name and team are required")
 
 
-def read_clearances(*, season: int | None = None, week: int | None = None, path: Path | None = None) -> list[QuestionableClearance]:
-    path = path or CLEARANCES_PATH
+def read_overrides(*, season: int | None = None, week: int | None = None, path: Path | None = None) -> list[QuestionableOverride]:
+    path = path or OVERRIDES_PATH
     if not path.exists():
         return []
-    rows: list[QuestionableClearance] = []
+    rows: list[QuestionableOverride] = []
     with open(path, newline="") as f:
         for r in csv.DictReader(f):
-            c = QuestionableClearance(
+            o = QuestionableOverride(
                 season=int(r["season"]), week=int(r["week"]), name=r["name"], team=r["team"].upper(),
-                practice=r["practice"], note=r.get("note", "") or "",
+                decision=r["decision"], note=r.get("note", "") or "",
             )
-            if (season is None or c.season == season) and (week is None or c.week == week):
-                rows.append(c)
+            if (season is None or o.season == season) and (week is None or o.week == week):
+                rows.append(o)
     return rows
 
 
-def save_clearances(rows: list[QuestionableClearance], *, path: Path | None = None) -> list[QuestionableClearance]:
+def save_overrides(rows: list[QuestionableOverride], *, path: Path | None = None) -> list[QuestionableOverride]:
     """Appends rows not already present (idempotent on season/week/name/team); returns what was
     actually written."""
-    path = path or CLEARANCES_PATH
-    existing = {(c.season, c.week, c.name.lower(), c.team) for c in read_clearances(path=path)}
+    path = path or OVERRIDES_PATH
+    existing = {(o.season, o.week, o.name.lower(), o.team) for o in read_overrides(path=path)}
     new = []
     for row in rows:
         key = (row.season, row.week, row.name.lower(), row.team.upper())
@@ -92,6 +86,6 @@ def save_clearances(rows: list[QuestionableClearance], *, path: Path | None = No
         w = csv.writer(f)
         if write_header:
             w.writerow(FIELDNAMES)
-        for c in new:
-            w.writerow([c.season, c.week, c.name, c.team.upper(), c.practice, c.note])
+        for o in new:
+            w.writerow([o.season, o.week, o.name, o.team.upper(), o.decision, o.note])
     return new

@@ -18,6 +18,7 @@ fallback instead, so those two sections DO populate with real 2024/2025 PFF grad
 
 from __future__ import annotations
 
+import datetime as _dt
 import warnings
 
 from nfl_dfs.analysis.dup_risk_calibration import DEFAULT_RECENT_WINDOW, build_dup_risk_lookup_table
@@ -55,14 +56,16 @@ from nfl_dfs.ingestion.weather import WeatherReading, fetch_weather_reading
 from nfl_dfs.matchup.context import MatchupFacetInputs, PlayerMatchupInput, build_matchup_context_pool
 from nfl_dfs.normalization.crosswalk import fetch_crosswalk
 from nfl_dfs.normalization.injury_lookup import (
-    apply_questionable_clearances,
     overlay_injury_report_exclusions,
+    resolve_questionable_players,
     team_injuries,
 )
 from nfl_dfs.normalization.matcher import reconcile_week
 from nfl_dfs.normalization.registry import PlayerRegistry
 from nfl_dfs.optimizer.lineup import EXCLUDED_INJURY_STATUSES, LineupGenerationError
-from nfl_dfs.storage.injury_clearance_store import read_clearances
+from nfl_dfs.ingestion.official_injury_report import fetch_official_injury_report
+from nfl_dfs.storage.injury_clearance_store import read_overrides
+from nfl_dfs.storage.official_injury_snapshot_store import OfficialInjurySnapshot, write_snapshot
 from nfl_dfs.output.weekly_output import build_weekly_output
 from nfl_dfs.ingestion.footballguys_ownership import fetch_roster_percentages
 from nfl_dfs.ownership.blend import blend_ownership_rows
@@ -190,16 +193,28 @@ def main() -> None:
     dk_injury_status = overlay_injury_report_exclusions(
         dk_injury_status, identities, early_injury_entries, EXCLUDED_INJURY_STATUSES
     )
-    # Questionable is assumed OUT unless a Friday-practice clearance is on file (Chris, 2026-10-07):
-    # `data/overrides/q_clearances.csv`, filled by hand via `scripts/log_q_clearance.py`.
-    clearances = read_clearances(season=SEASON, week=WEEK)
-    dk_injury_status, unmatched_clearances = apply_questionable_clearances(dk_injury_status, identities, clearances)
-    for c in unmatched_clearances:
-        print(f"  WARNING: clearance for {c.name} ({c.team}) matched no Questionable player -- typo, or he isn't Q; ignored")
-    _q_names = {str(dk.native_id): i.display_name for i in identities if (dk := i.sources.get("draftkings")) and dk.native_id}
-    for status, label in (("Q", "EXCLUDED (Questionable, no clearance)"), ("Q_CLEARED", "CLEARED to roster (Friday practice)")):
-        names = sorted(_q_names[k] for k, v in dk_injury_status.items() if v == status and k in _q_names)
-        print(f"  Q players {label}: {', '.join(names) if names else 'none'}")
+    # Questionable is assumed OUT unless the OFFICIAL practice report shows Full participation (ADR-0045,
+    # Chris 2026-10-07). The system decides every Q player and prints its basis; Chris overrides in
+    # `data/overrides/q_overrides.csv` (`scripts/log_q_override.py`) when he has more information.
+    # Re-check Sunday morning (`scripts/sunday_availability_check.py`) -- inactives land ~90 min pre-kickoff.
+    _fetched_at = _dt.datetime.now(_dt.timezone.utc).isoformat()
+    try:
+        official_entries = [e for e in fetch_official_injury_report(SEASON) if e.week == WEEK]
+        write_snapshot(OfficialInjurySnapshot(_fetched_at, SEASON, WEEK, official_entries))
+    except Exception as exc:  # noqa: BLE001
+        print(f"  Official injury report FAILED ({exc}) -- every Q player is excluded (no practice evidence)")
+        official_entries = []
+    print(f"  Official injury report: {len(official_entries)} week-{WEEK} row(s) across {len({e.team for e in official_entries})} team(s), as of {_fetched_at[:16]}Z")
+    dk_injury_status, q_decisions, unmatched_overrides = resolve_questionable_players(
+        dk_injury_status, identities, official_entries, read_overrides(season=SEASON, week=WEEK), week=WEEK, as_of=_fetched_at[:16] + "Z"
+    )
+    for o in unmatched_overrides:
+        print(f"  WARNING: override {o.decision} for {o.name} ({o.team}) matched no eligible player -- typo, OUT/IR, or not Q/D; ignored")
+    for label in ("cleared", "barred", "excluded"):
+        rows = [d for d in q_decisions if d.decision == label]
+        print(f"  Q/override decisions -- {label.upper()} ({len(rows)}):")
+        for d in sorted(rows, key=lambda d: (d.team, d.name)):
+            print(f"    {d.name} ({d.team}): {d.basis}")
     rotogrinders_fpts = extract_rotogrinders_fpts(rg_payload) if rg_payload else {}
     footballguys_points = {}
     for html in fbg_html_by_position.values():
