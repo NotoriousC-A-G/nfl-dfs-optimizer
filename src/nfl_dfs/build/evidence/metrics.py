@@ -16,6 +16,8 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 
+from nfl_dfs.normalization.team_aliases import normalize_team
+
 # metric -> (numerator column, denominator column): pooled season-to-date value = sum(num) / sum(den).
 # Rates and averages are both pooled this way, so `n` is always a real play/dropback count.
 RATE_PARTS: dict[str, tuple[str, str]] = {
@@ -105,6 +107,9 @@ def team_game_metrics(pbp: pd.DataFrame, *, season_type: str | None = "REG") -> 
             mask = out["game_id"] == game_id
             home = out.loc[mask, "team"] == r["home_team"]
             out.loc[mask, col] = np.where(home, margin > 0, margin < 0).astype(float)
+    # play-by-play spells the Rams "LA"; the rest of the pipeline (DK, the slate snapshot) says "LAR".
+    # Normalize at the very end so every internal comparison above used one consistent (raw) code set.
+    out["team"] = out["team"].map(lambda t: normalize_team("nflverse_schedule", t) or t)
     return out
 
 

@@ -248,3 +248,44 @@ def test_team_metrics_flow_into_the_packet_with_league_percentiles():
     assert mv.league_percentile == pytest.approx(1.0)  # HOM's 0.25 is the highest of the two teams
     assert "sack_rate" in {k.split(".")[-1] for k in packet_keys(p) if k.startswith("units.HOM.")}
     assert p.teams["HOM"].def_metrics["def_sack_rate"].value == 0.0
+
+
+# ---------------------------------------------------------------------------------------------
+# render
+# ---------------------------------------------------------------------------------------------
+from nfl_dfs.build.evidence.render import render_evidence_page  # noqa: E402
+
+
+def test_page_renders_each_game_with_lines_gaps_players_and_escapes_everything():
+    pool = _pool()
+    pool[1]["identity"]["display_name"] = "<script>alert(1)</script> Back"
+    pool[1]["projection"] = 99.0
+    packets = build_evidence_packets(pool, _sp(), None, season=2026, week=5)
+    page = render_evidence_page(packets, title="Evidence <b>packets</b>", generated_at="now")
+    assert "<script>alert(1)" not in page and "&lt;script&gt;alert(1)" in page  # player names are escaped
+    assert "Evidence &lt;b&gt;packets&lt;/b&gt;" in page  # title is escaped
+    assert "BBB @ AAA" in page and "BBB by 3.0" in page and "total 45.5" in page
+    assert "availability-unaware" in page and "no weather reading" in page  # data gaps are shown
+    assert "Citeable keys" in page and packets["BBB@AAA"].packet_sha in page
+
+
+def test_missing_values_render_as_dashes_not_numbers_and_metrics_show_league_percentile():
+    tg = team_game_metrics(_pbp())
+    pool = [_rec("HOM_qb", "QB HOM", "HOM", "QB", 6000, 20.0, own=None), _rec("AWY_qb", "QB AWY", "AWY", "QB", 6000, 19.0)]
+    packets = build_evidence_packets(pool, [{"home_team": "HOM", "away_team": "AWY", "spread": -2.0}], tg, season=2026, week=2)
+    page = render_evidence_page(packets, title="t")
+    assert "25.0%" in page  # HOM sack rate rendered as a percentage
+    assert "&mdash;" in page  # null ownership etc. shown as a dash
+    assert render_evidence_page({}, title="t").count("No games.") == 1
+
+
+def test_pbp_team_codes_are_normalized_so_the_rams_join_the_rest_of_the_pipeline():
+    pbp = _pbp()
+    for col in ("home_team", "away_team", "posteam", "defteam"):
+        pbp[col] = pbp[col].replace({"HOM": "LA"})
+    tg = team_game_metrics(pbp)
+    assert set(tg["team"]) == {"LAR", "AWY"}  # pbp's "LA" -> "LAR" (the Rams)
+    assert tg[tg["team"] == "LAR"]["lead_at_q4"].iloc[0] == 1.0  # flags computed on raw codes still line up
+    pool = [_rec("LAR_qb", "QB LAR", "LAR", "QB", 6000, 20.0), _rec("AWY_qb", "QB AWY", "AWY", "QB", 6000, 19.0)]
+    p = build_evidence_packets(pool, [{"home_team": "LAR", "away_team": "AWY", "spread": -2.0}], tg, season=2026, week=2)["AWY@LAR"]
+    assert p.teams["LAR"].metrics  # the Rams have metrics
