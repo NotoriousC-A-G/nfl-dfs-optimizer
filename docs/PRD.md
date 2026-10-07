@@ -11,7 +11,7 @@
 
 Build a lineup construction tool for DraftKings NFL Classic GPP contests. The tool blends external projection and grading sources with an in-house game-environment and correlation model, then generates a small slate of lineups built around explicit stacking theses rather than raw point-per-dollar optimization.
 
-The technical pipeline (Section 5) is a single linear system in v1, not the eight-agent runtime the MLB optimizer uses — that stays a later-phase option, not a v1 requirement. Separately, the *work* of building, validating, and running that pipeline is owned by a defined team of Claude Code subagents (Section 10). Those are two different things: one is the shape of the software, the other is who's responsible for what while it gets built and operated.
+The technical pipeline (Section 5) is a single linear system in v1, not the eight-agent runtime the MLB optimizer uses — that stays a later-phase option, not a v1 requirement. **Amended 2026-10-07 (ADR-0046): Chris moved beyond v1 — a reasoning-based multi-agent runtime pipeline (per-game analysts, an expert, pool-built builder agents) is now in scope; Monte Carlo remains deferred.** Separately, the *work* of building, validating, and running that pipeline is owned by a defined team of Claude Code subagents (Section 10). Those are two different things: one is the shape of the software, the other is who's responsible for what while it gets built and operated.
 
 ## 2. Scope & Contest Focus
 
@@ -122,7 +122,7 @@ A single linear pipeline, in this order:
 8. **Lineup construction** — an ILP-based optimizer, constrained by salary cap, roster rules, and the stack theses defined in Section 7, producing a small set of distinct lineups rather than N near-duplicates.
 9. **Output** — lineup list plus an exposure report showing how often each player appears across the generated set.
 
-Simulation (Monte Carlo outcome modeling, the way the MLB build uses it) is deferred to v2. For v1, `GameEnvironmentScore` and `StackProfile` carry the correlation logic instead of full game simulation.
+**Amendment (ADR-0046, 2026-10-07): v1's linear pipeline is extended by a reasoning-based multi-agent runtime stage ahead of lineup construction; see `docs/design/lineup-objective-redesign-plan.md`.** Simulation (Monte Carlo outcome modeling, the way the MLB build uses it) is deferred to v2. For v1, `GameEnvironmentScore` and `StackProfile` carry the correlation logic instead of full game simulation.
 
 ## 6. Core Analytical Components
 
@@ -391,12 +391,12 @@ Decision rights: the Architect owns the technical spec and the Product Owner own
 - **Phase 1 — Foundation:** Data ingestion for all sources, player ID reconciliation, and `GameEnvironmentScore` / `StackProfile` / `MatchupContext` finalized and implemented against Phase 0's findings.
 - **Phase 2 — Optimizer wiring:** ILP lineup construction against the rules in Section 7, ownership/leverage layer, exposure reporting.
 - **Phase 3 — Output & review tooling:** CSV export, lineup rationale generation, a lightweight review dashboard that includes Performance Analytics' hit-rate and ROI tracking once results start coming in.
-- **Phase 4 (later, out of v1 scope):** Monte Carlo simulation layer, a multi-agent *runtime* pipeline (distinct from the subagent build/ops team in Section 10), Showdown/Captain Mode support.
+- **Phase 4 (later, out of v1 scope):** Monte Carlo simulation layer, a multi-agent *runtime* pipeline (distinct from the subagent build/ops team in Section 10), Showdown/Captain Mode support. **Amended (ADR-0046, 2026-10-07): the multi-agent runtime pipeline is pulled forward and in scope now (Phase 4a); the Monte Carlo layer and Showdown remain deferred.**
 
 ## 13. Out of Scope (v1)
 
 - Cash game / high-floor optimization
 - Showdown/Captain Mode slates
 - Full Monte Carlo simulation
-- A multi-agent runtime pipeline (the build/ops team in Section 10 is separate from this)
+- ~~A multi-agent runtime pipeline~~ **(now in scope — ADR-0046, 2026-10-07; the build/ops team in Section 10 remains separate)**
 - Automated bet/entry submission of any kind
