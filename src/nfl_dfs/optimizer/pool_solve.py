@@ -31,10 +31,10 @@ from nfl_dfs.projection.blend import PlayerProjection
 
 STACK_BONUS = 1.8
 BRING_BACK_BONUS = 0.8
-# A lineup that leaves a lot of cap unspent usually means the pool lacks the players to spend it (a thin pool), which is
-# a quality problem no hard rule catches. Surfaced as a WARNING for now (2026-10-07 rehearsal: one lineup spent $41,400);
-# whether to make it an error and loop it back to the expert is Chris's call.
-MIN_SALARY_USED = 47_000
+# A lineup that leaves cap unspent means the pool lacks (or the objective is steering away from) players worth buying with it.
+# This is a DETECTION trigger, not a solver constraint (Chris, 2026-10-07: no hard rules): the agent fails loudly with a supply
+# diagnosis and the expert re-tiers once (`build/expert/repair.py`). Draft threshold, not backtested: $2,000 unspent.
+MIN_SALARY_USED = 48_000
 PAIR_TOP_N = 4  # only each team's top-N catchers by value get pair terms (bounds the model size)
 # Failure codes widening can plausibly fix; anything else is an expert/contract error and fails at once.
 _WIDENABLE_PREFIXES = ("feasibility_", "stack_teams", "min_core", "distinct_stacks")
@@ -115,6 +115,19 @@ def _solve(
     )
 
 
+def _supply(players: list[PlayerProjection]) -> dict[str, list[tuple[str, int]]]:
+    """Per position, the five highest-priced players the solver was allowed to use -- what an under-spend diagnosis needs."""
+    out: dict[str, list[tuple[str, int]]] = {}
+    for pos in ("QB", "RB", "WR", "TE", "DST"):
+        ranked = sorted((p for p in players if p.position == pos and p.salary), key=lambda p: -p.salary)[:5]
+        out[pos] = [(p.display_name, p.salary) for p in ranked]
+    return out
+
+
+def _supply_summary(players: list[PlayerProjection]) -> str:
+    return "; ".join(f"{pos} " + ", ".join(f"{n} ${s:,}" for n, s in top) for pos, top in _supply(players).items())
+
+
 def _verify(lineup: Lineup, pool: Pool, core_ids: set[str], playable_ids: set[str], opponent_of: dict[str, str]) -> list[str]:
     """Independent post-solve checks (do not trust the solver to have honoured its own constraints)."""
     problems = []
@@ -192,10 +205,12 @@ def build_agent_lineups(
                     if problems:
                         raise PoolBuildFailure(pool.agent_id, "post_solve_verification", f"lineup {i + 1}: " + "; ".join(problems), {"attempts": attempts, "lineup": [p.display_name for p in lu.players]})
                     if lu.total_salary < MIN_SALARY_USED:
-                        warnings.append(Violation(
-                            "salary_left", f"lineup {i + 1} spends only ${lu.total_salary:,} of $50,000 (${50_000 - lu.total_salary:,} unspent): "
-                            "the pool probably lacks spendable players -- add higher-priced options for this agent's angle", "lineup", "warning",
-                        ))
+                        raise PoolBuildFailure(
+                            pool.agent_id, "underspend",
+                            f"lineup {i + 1} spends only ${lu.total_salary:,} of $50,000 (${50_000 - lu.total_salary:,} unspent): the pool does not give the solver "
+                            f"anything worth buying with the rest. Pool supply by position (top salaries, core+eligible): {_supply_summary(playable)}",
+                            {"attempts": attempts, "lineup": [p.display_name for p in lu.players], "supply": _supply(playable)},
+                        )
                     for v in lint_lineup_pair_signs({p.canonical_id for p in lu.players}, list(pair_signs)):
                         if v.severity == "error":
                             raise PoolBuildFailure(pool.agent_id, "pair_sign_lint", f"lineup {i + 1}: {v.message}", {"attempts": attempts, "lineup": [p.display_name for p in lu.players]})
