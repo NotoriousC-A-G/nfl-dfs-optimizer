@@ -324,6 +324,78 @@ def _extract_core_stack(selected: list[PlayerProjection]) -> tuple[frozenset[str
     return frozenset({qb.canonical_id} | pass_catchers_same_team), qb.team
 
 
+
+# Largest number of an opponent's WR/TE (3 WR + TE + FLEX) or RB (2 RB + FLEX) a lineup could hold --
+# the big-M for the bring-back constraint below, so QB_t = 1 forces the opposing group to zero.
+_MAX_OPP_CATCHERS = 5
+_MAX_OPP_RBS = 3
+
+
+def _bring_back_constraints(
+    players: list[PlayerProjection],
+    x: dict[str, pulp.LpVariable],
+    opponent_of: dict[str, str],
+    *,
+    forbid_pass_catcher_bring_back: bool,
+    forbid_rb_bring_back: bool,
+) -> list:
+    """Real, hard bring-back constraints (a lineup with a QB from team T may hold NO player from
+    T's opponent in the forbidden group). Until 2026-10-08 `NflAgentConstructor.bring_back_allowed`
+    only gated an objective BOOST in `agents/scoring.py` -- nothing here stopped a bring-back from
+    being selected on projection alone, despite docs calling it a "hard gate". This is the hard
+    version, opt-in via `generate_lineups(forbid_bring_back=...)` so every existing solve (including
+    the Chalk Anchor baseline) is byte-identical.
+
+    Per team T with a QB in the pool: `sum(x[opp WR/TE]) <= M * (1 - sum(x[QB_T]))` (and the RB
+    analogue), which is vacuous when no T-QB is rostered and forces the group to zero when one is."""
+    constraints = []
+    by_team: dict[str, list[PlayerProjection]] = defaultdict(list)
+    for p in players:
+        by_team[p.team].append(p)
+    for team, team_players in by_team.items():
+        qbs = [p for p in team_players if p.position == "QB"]
+        opp = opponent_of.get(team)
+        if not qbs or opp is None or opp not in by_team:
+            continue
+        qb_sum = pulp.lpSum(x[p.canonical_id] for p in qbs)
+        if forbid_pass_catcher_bring_back:
+            opp_catchers = [p for p in by_team[opp] if p.position in ("WR", "TE")]
+            if opp_catchers:
+                constraints.append(
+                    pulp.lpSum(x[p.canonical_id] for p in opp_catchers) <= _MAX_OPP_CATCHERS * (1 - qb_sum)
+                )
+        if forbid_rb_bring_back:
+            opp_rbs = [p for p in by_team[opp] if p.position == "RB"]
+            if opp_rbs:
+                constraints.append(pulp.lpSum(x[p.canonical_id] for p in opp_rbs) <= _MAX_OPP_RBS * (1 - qb_sum))
+    return constraints
+
+
+def bring_back_violations(
+    lineup: "Lineup",
+    opponent_of: dict[str, str],
+    *,
+    forbid_pass_catcher_bring_back: bool,
+    forbid_rb_bring_back: bool,
+) -> list[str]:
+    """Post-solve assertion helper: every opposing player the lineup holds against its own QB's team
+    in a forbidden group, as human-readable strings (empty = clean). Independent of the solver, so a
+    constraint bug can't also hide in the check."""
+    violations = []
+    qb_teams = {p.team for p in lineup.players if p.position == "QB"}
+    for p in lineup.players:
+        if p.position == "QB" or p.position == "DST":
+            continue
+        for qb_team in qb_teams:
+            if opponent_of.get(qb_team) != p.team:
+                continue
+            if forbid_pass_catcher_bring_back and p.position in ("WR", "TE"):
+                violations.append(f"{p.display_name} ({p.team} {p.position}) is a bring-back against the {qb_team} QB")
+            if forbid_rb_bring_back and p.position == "RB":
+                violations.append(f"{p.display_name} ({p.team} RB) is an RB bring-back against the {qb_team} QB")
+    return violations
+
+
 def _solve_single_lineup(
     pool_by_id: dict[str, PlayerProjection],
     previous_core_stacks: list[frozenset[str]],
@@ -331,6 +403,8 @@ def _solve_single_lineup(
     *,
     objective_delta_by_id: dict[str, float] | None = None,
     opponent_of: dict[str, str] | None = None,
+    forbid_pass_catcher_bring_back: bool = False,
+    forbid_rb_bring_back: bool = False,
 ) -> Lineup | None:
     """One ILP solve: maximize total blended projection subject to PRD Section 3's roster/salary
     rules, Section 7's QB+pass-catcher stack rule, a no-good cut per already-generated lineup's
@@ -408,6 +482,15 @@ def _solve_single_lineup(
         )
         prob += catcher_sum >= qb_sum
 
+    if forbid_pass_catcher_bring_back or forbid_rb_bring_back:
+        if not opponent_of:
+            raise ValueError("forbidding a bring-back needs `opponent_of` (team -> opponent); refusing to silently skip the rule")
+        for constraint in _bring_back_constraints(
+            players, x, opponent_of,
+            forbid_pass_catcher_bring_back=forbid_pass_catcher_bring_back, forbid_rb_bring_back=forbid_rb_bring_back,
+        ):
+            prob += constraint
+
     # No-good cuts -- one per already-generated lineup's core stack (see module docstring).
     for i, core_stack in enumerate(previous_core_stacks):
         members_in_pool = [pid for pid in core_stack if pid in x]
@@ -446,6 +529,8 @@ def generate_lineups(
     objective_delta_by_id: dict[str, float] | None = None,
     seed_core_stacks: list[frozenset[str]] | None = None,
     opponent_of: dict[str, str] | None = None,
+    forbid_pass_catcher_bring_back: bool = False,
+    forbid_rb_bring_back: bool = False,
 ) -> list[Lineup]:
     """Generate up to `n` distinct-core-stack lineups from a `build_projection_pool` output.
 
@@ -476,6 +561,11 @@ def generate_lineups(
     `opponent_of` (PRD Section 7's DST-correlation term, 2026-09-20) -- see
     `_dst_correlation_terms`' own docstring. `None` (the default) preserves this function's exact
     prior behavior.
+
+    `forbid_pass_catcher_bring_back` / `forbid_rb_bring_back` (2026-10-08) -- real HARD constraints:
+    the lineup's QB team's opponent contributes no WR/TE (resp. RB). Both default `False`, so every
+    existing caller is unchanged; needs `opponent_of` (raises `ValueError` otherwise rather than
+    silently skipping). See `_bring_back_constraints`.
     """
     import warnings
 
@@ -491,6 +581,8 @@ def generate_lineups(
             game_environment_scores,
             objective_delta_by_id=objective_delta_by_id,
             opponent_of=opponent_of,
+            forbid_pass_catcher_bring_back=forbid_pass_catcher_bring_back,
+            forbid_rb_bring_back=forbid_rb_bring_back,
         )
         if lineup is None:
             if i == 0:
