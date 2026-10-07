@@ -174,3 +174,48 @@ def test_score_and_backfill_resolves_dst_via_team_week_points(tmp_path):
     # 1 sack (1.0) + 1 interception (2.0) = 3.0, plus points-allowed band (0 points allowed -> +10.0
     # in this fixture's minimal scoring context handled entirely by dst_actual_scoring.py itself)
     assert result.scored[0].total_dk_score is not None
+
+
+def test_known_player_absent_from_settled_team_game_scores_zero_as_dnp(tmp_path):
+    path = tmp_path / "agent_results.csv"
+    save_agent_results(
+        [_row("chalk_anchor", "Chalk Anchor", ("Justin Jefferson (WR-MIN)", "Inactive Back (RB-MIN)"))],
+        path=path,
+    )
+    weekly = pd.DataFrame(
+        [
+            _weekly_row("Justin Jefferson", "MIN", receptions=5, receiving_yards=60, week=2),
+            _weekly_row("Inactive Back", "MIN", receptions=2, receiving_yards=10, week=1),  # known, absent wk 2
+        ]
+    )
+    result = score_and_backfill_agent_results(2026, 2, weekly=weekly, pbp=pd.DataFrame([_pbp_row("SEA")]), path=path)
+
+    assert result.unresolved == ()
+    assert result.scored[0].total_dk_score == 11.0  # Jefferson only; the inactive back is a real 0
+
+
+def test_never_seen_player_on_settled_team_stays_unresolved_not_zero(tmp_path):
+    path = tmp_path / "agent_results.csv"
+    save_agent_results(
+        [_row("chalk_anchor", "Chalk Anchor", ("Justin Jefferson (WR-MIN)", "Mystery Rookie (RB-MIN)"))],
+        path=path,
+    )
+    weekly = pd.DataFrame([_weekly_row("Justin Jefferson", "MIN", receptions=5, receiving_yards=60, week=2)])
+    result = score_and_backfill_agent_results(2026, 2, weekly=weekly, pbp=pd.DataFrame([_pbp_row("SEA")]), path=path)
+
+    assert result.unresolved[0][2] == ("Mystery Rookie (RB-MIN)",)
+    assert result.scored[0].total_dk_score is None
+
+
+def test_known_player_on_team_with_no_settled_game_stays_unresolved(tmp_path):
+    path = tmp_path / "agent_results.csv"
+    save_agent_results([_row("chalk_anchor", "Chalk Anchor", ("Inactive Back (RB-NYJ)",))], path=path)
+    weekly = pd.DataFrame(
+        [
+            _weekly_row("Inactive Back", "NYJ", week=1),  # known from wk 1, but NYJ has no wk 2 rows yet
+            _weekly_row("Justin Jefferson", "MIN", week=2),
+        ]
+    )
+    result = score_and_backfill_agent_results(2026, 2, weekly=weekly, pbp=pd.DataFrame([_pbp_row("SEA")]), path=path)
+
+    assert result.unresolved[0][2] == ("Inactive Back (RB-NYJ)",)
