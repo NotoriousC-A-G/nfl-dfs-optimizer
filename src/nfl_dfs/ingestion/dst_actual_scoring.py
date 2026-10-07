@@ -54,6 +54,52 @@ def _points_allowed_bonus(points_allowed: int) -> float:
     return POINTS_ALLOWED_35_PLUS
 
 
+def _opponent_defensive_points(
+    df: pd.DataFrame, defensive_td_rows: pd.DataFrame, safety_rows: pd.DataFrame
+) -> pd.Series:
+    """Points each team's offense conceded to the opponent's DEFENSE/SPECIAL TEAMS, per
+    (team, week). DK's "Points Allowed" bracket excludes these -- confirmed against a real DK
+    Classic result (2026 wk 4: ARI allowed 36 on the scoreboard, 6 of them a last-minute pick-six,
+    and DK scored the 28-34 bracket, -1, not 35+, -4).
+
+    Counted: each defensive/special-teams TD (6), the extra point (1) or two-point conversion (2)
+    the scoring team attempts on the very next play, and each safety (2). The conceding team is the
+    `posteam` of the scoring play (the offense, or the kicking team on a return TD)."""
+    conceded: dict[tuple[str, int], int] = {}
+
+    def _add(team: str, week: int, points: int) -> None:
+        conceded[(team, week)] = conceded.get((team, week), 0) + points
+
+    # Real pbp always carries the conversion columns; a trimmed frame may lack some -- treat a
+    # missing column as "no such conversion" rather than skipping the lookup entirely.
+    df = df.assign(**{c: None for c in ("extra_point_attempt", "two_point_attempt", "extra_point_result", "two_point_conv_result") if c not in df.columns})
+    game_plays = {}
+    if len(defensive_td_rows):
+        for game_id, grp in df[df["game_id"].isin(defensive_td_rows["game_id"].unique())].groupby("game_id"):
+            game_plays[game_id] = grp.sort_values("play_id")
+
+    for row in defensive_td_rows.itertuples(index=False):
+        _add(row.posteam, int(row.week), int(DEFENSIVE_TD_POINTS))
+        plays = game_plays.get(row.game_id)
+        if plays is None:
+            continue
+        after = plays[plays["play_id"] > row.play_id]
+        if after.empty:
+            continue
+        nxt = after.iloc[0]
+        if nxt["posteam"] != row.defteam:
+            continue
+        if nxt["extra_point_attempt"] == 1 and nxt["extra_point_result"] == "good":
+            _add(row.posteam, int(row.week), 1)
+        elif nxt["two_point_attempt"] == 1 and nxt["two_point_conv_result"] == "success":
+            _add(row.posteam, int(row.week), 2)
+
+    for row in safety_rows.itertuples(index=False):
+        _add(row.posteam, int(row.week), 2)
+
+    return pd.Series(conceded, dtype="int64") if conceded else pd.Series(dtype="int64")
+
+
 @dataclass(frozen=True)
 class DstWeekScoring:
     """One team's real DK Classic DST points for one real, settled week -- every component
@@ -74,8 +120,13 @@ class DstWeekScoring:
     safeties: int
     blocked_kicks: int
     defensive_two_point_returns: int
+    # DK-basis points allowed: the opponent's final score MINUS what the opponent's own defense/
+    # special teams scored against this team's offense (see `_opponent_defensive_points`).
     points_allowed: int
     dk_points: float
+    # What was subtracted from the opponent's raw final score to get `points_allowed` -- exposed so
+    # a caller can see why a team's DK-basis figure is below the real scoreboard number.
+    opponent_defensive_points_excluded: int = 0
 
 
 def aggregate_team_week_dst_points(pbp: pd.DataFrame, *, season_type: str | None = "REG") -> list[DstWeekScoring]:
@@ -126,7 +177,14 @@ def aggregate_team_week_dst_points(pbp: pd.DataFrame, *, season_type: str | None
         .size()
     )
 
-    safeties = df[df["safety"] == 1].groupby(["defteam", "week"]).size()
+    safety_rows = df[df["safety"] == 1]
+    safeties = safety_rows.groupby(["defteam", "week"]).size()
+
+    # Points the OPPONENT's defense/special teams scored against each team's offense -- excluded
+    # from DK's points-allowed bracket (see `_opponent_defensive_points`).
+    td_cols = ["game_id", "play_id", "week", "posteam", "defteam"]
+    defensive_td_rows = pd.concat([int_return_tds[td_cols], fumble_return_tds[td_cols], st_return_tds[td_cols]])
+    excluded_points = _opponent_defensive_points(df, defensive_td_rows, safety_rows[["posteam", "week"]])
 
     # Blocked kicks -- the block itself (+2), whether or not it's ALSO returned for a TD (that
     # bonus is counted separately above via `st_return_tds`; DK's table lists them as additive
@@ -161,7 +219,8 @@ def aggregate_team_week_dst_points(pbp: pd.DataFrame, *, season_type: str | None
         n_safety = int(safeties.get((team, week), 0))
         n_blocked = int(blocked_kicks.get((team, week), 0))
         n_2pt = int(two_point_returns.get((team, week), 0))
-        pts_allowed = int(points_allowed.get((team, week), 0))
+        excluded = int(excluded_points.get((team, week), 0))
+        pts_allowed = max(0, int(points_allowed.get((team, week), 0)) - excluded)
 
         dk_points = (
             n_sacks * SACK_POINTS
@@ -187,6 +246,7 @@ def aggregate_team_week_dst_points(pbp: pd.DataFrame, *, season_type: str | None
                 defensive_two_point_returns=n_2pt,
                 points_allowed=pts_allowed,
                 dk_points=dk_points,
+                opponent_defensive_points_excluded=excluded,
             )
         )
     return results

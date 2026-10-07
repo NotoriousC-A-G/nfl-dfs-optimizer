@@ -228,3 +228,59 @@ def test_offensive_fumble_recovery_td_bonus_excludes_non_touchdown_recoveries():
         _row(play_id=1, fumble=1, fumble_recovery_1_team="AWAY", fumble_recovery_1_player_id="player-789", touchdown=0),
     ]
     assert offensive_fumble_recovery_td_bonus(pd.DataFrame(rows)) == {}
+
+
+def test_points_allowed_excludes_opponent_pick_six_and_its_extra_point():
+    # Modeled on 2026 wk 4 ARI-NYG (NYG 36 on the scoreboard incl. a pick-six of ARI's QB; DK scored
+    # ARI's DST in the 28-34 bracket, -1, not 35+, -4). The real play had no extra point (game
+    # ending); this synthetic version includes one to cover that path: 36 - 7 = 29.
+    rows = [
+        _row(
+            play_id=1, posteam="ARI", defteam="NYG", home_team="NYG", away_team="ARI",
+            interception=1, touchdown=1, td_team="NYG",
+        ),
+        _row(
+            play_id=2, posteam="NYG", defteam="ARI", home_team="NYG", away_team="ARI",
+            extra_point_attempt=1, extra_point_result="good",
+        ),
+        _row(play_id=3, home_team="NYG", away_team="ARI", posteam="NYG", defteam="ARI", total_home_score=36, total_away_score=24),
+    ]
+    results = aggregate_team_week_dst_points(pd.DataFrame(rows))
+    ari = _dst_for(results, "ARI")
+    assert ari.points_allowed == 29
+    assert ari.opponent_defensive_points_excluded == 7
+    assert ari.dk_points == pytest.approx(-1.0)
+    # NYG's own DST is unaffected: it allowed ARI's 24 (no ARI defensive points).
+    nyg = _dst_for(results, "NYG")
+    assert nyg.points_allowed == 24
+    assert nyg.opponent_defensive_points_excluded == 0
+    assert nyg.defensive_touchdowns == 1
+
+
+def test_points_allowed_excludes_two_point_conversion_after_opponent_defensive_td():
+    rows = [
+        _row(
+            play_id=1, posteam="AWAY", defteam="HOME", interception=1, touchdown=1, td_team="HOME",
+        ),
+        _row(
+            play_id=2, posteam="HOME", defteam="AWAY", two_point_attempt=1, two_point_conv_result="success",
+        ),
+        _final_row(3, home_score=8, away_score=0),
+    ]
+    results = aggregate_team_week_dst_points(pd.DataFrame(rows))
+    away = _dst_for(results, "AWAY")
+    assert away.opponent_defensive_points_excluded == 8
+    assert away.points_allowed == 0
+
+
+def test_points_allowed_excludes_safety_scored_by_opponent_defense():
+    rows = [
+        _row(play_id=1, posteam="AWAY", defteam="HOME", safety=1),
+        _final_row(2, home_score=2, away_score=0),
+    ]
+    results = aggregate_team_week_dst_points(pd.DataFrame(rows))
+    away = _dst_for(results, "AWAY")
+    assert away.opponent_defensive_points_excluded == 2
+    assert away.points_allowed == 0
+    assert away.dk_points == pytest.approx(10.0)
+    assert _dst_for(results, "HOME").safeties == 1

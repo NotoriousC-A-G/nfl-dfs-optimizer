@@ -23,6 +23,10 @@ class PlayerOutcome:
     projected: float
     actual: float | None  # None when no real settled match was found (see LineupOutcome docstring)
     delta: float | None  # actual - projected; None when actual is None
+    # True when `actual` is a real 0.0 because the player did not play (his team's game is settled
+    # and his id has no row that week) -- DK scores an inactive rostered player 0, so a lineup
+    # holding one is still fully scoreable. Distinct from `actual=None` (a genuine unknown).
+    did_not_play: bool = False
 
 
 @dataclass(frozen=True)

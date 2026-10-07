@@ -205,3 +205,68 @@ def test_run_postmortem_surfaces_unresolved_players_without_crashing(tmp_path, m
     chalk_anchor = next(lo for lo in report.lineup_outcomes if lo.agent_id == "chalk_anchor")
     assert chalk_anchor.actual_total is None
     assert chalk_anchor.unresolved_players == ("Nobody Matched",)
+
+
+def _dnp_report(tmp_path, monkeypatch, *, weekly_rows, player_id_col):
+    import nfl_dfs.storage.slate_snapshot_store as snap_store
+    import nfl_dfs.storage.agent_results_store as agent_store
+    monkeypatch.setattr(snap_store, "DEFAULT_ROOT", tmp_path / "snapshots")
+    monkeypatch.setattr(agent_store, "AGENT_RESULTS_PATH", tmp_path / "agent_results.csv")
+
+    lineup = [
+        ("00-0000001", "Active Guy", "NYJ", "WR", 6000, 10.0),
+        ("00-0000002", "Inactive Back", "NYJ", "RB", 6000, 15.0),
+    ]
+    pool = [_pool_row(cid, name, team, pos, sal, proj) for (cid, name, team, pos, sal, proj) in lineup]
+    snap_store.save_slate_snapshot(
+        2026, 4, player_details=pool, agent_results=[_agent_lineup_entry("chalk_anchor", lineup)], stack_profiles=[],
+        timestamp="120000", base_dir=tmp_path / "snapshots",
+    )
+    weekly = pd.DataFrame(weekly_rows)
+    if player_id_col:
+        weekly["player_id"] = player_id_col
+    pbp = pd.DataFrame([_pbp_row("SEA", week=4)])
+    report = run_postmortem(2026, 4, weekly=weekly, pbp=pbp)
+    return next(lo for lo in report.lineup_outcomes if lo.agent_id == "chalk_anchor")
+
+
+def test_player_absent_from_a_settled_teams_game_scores_zero_and_is_flagged_dnp(tmp_path, monkeypatch):
+    # NYJ's game is settled (a teammate has a row) but the inactive back's id has none -> DK scores 0.
+    outcome = _dnp_report(
+        tmp_path, monkeypatch,
+        weekly_rows=[_weekly_row("Active Guy", "NYJ", receptions=5, receiving_yards=60, week=4)],
+        player_id_col=["00-0000001"],
+    )
+    inactive = next(p for p in outcome.players if p.display_name == "Inactive Back")
+    assert inactive.actual == 0.0 and inactive.did_not_play is True
+    assert inactive.delta == -15.0
+    assert outcome.unresolved_players == ()
+    assert outcome.actual_total == 11.0  # 5 rec (5.0) + 60 yds (6.0)
+
+
+def test_player_on_a_team_with_no_settled_game_stays_unscored_not_zero(tmp_path, monkeypatch):
+    # Nobody from NYJ has a row yet -> the game may not be settled; absence is NOT a DNP.
+    outcome = _dnp_report(
+        tmp_path, monkeypatch,
+        weekly_rows=[_weekly_row("Some Other", "MIN", week=4)],
+        player_id_col=["00-0000099"],
+    )
+    assert outcome.actual_total is None
+    assert set(outcome.unresolved_players) == {"Active Guy", "Inactive Back"}
+    assert all(not p.did_not_play for p in outcome.players)
+
+
+def test_name_match_miss_with_id_present_is_not_treated_as_dnp(tmp_path, monkeypatch):
+    # The id IS in the week's rows (he played) but under a name we fail to match: must stay
+    # unscored rather than have a 0 fabricated for a player who actually played.
+    outcome = _dnp_report(
+        tmp_path, monkeypatch,
+        weekly_rows=[
+            _weekly_row("Active Guy", "NYJ", receptions=5, receiving_yards=60, week=4),
+            _weekly_row("Totally Different Spelling", "NYJ", receptions=3, receiving_yards=30, week=4),
+        ],
+        player_id_col=["00-0000001", "00-0000002"],
+    )
+    back = next(p for p in outcome.players if p.display_name == "Inactive Back")
+    assert back.actual is None and back.did_not_play is False
+    assert outcome.actual_total is None
