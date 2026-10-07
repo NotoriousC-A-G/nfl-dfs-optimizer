@@ -36,11 +36,14 @@ two real defects:
 ## Consequences
 
 - Historical DST actuals were understated whenever the opposing defense/ST scored (10 of 128
-  team-weeks so far in 2026); any DST-projection calibration built on them (ADR-0008/0009) should be
-  re-checked.
+  team-weeks so far in 2026; 9 changed bracket). Checked for impact: no DST-projection calibration
+  consumes these actuals (ADR-0008/0009's backtests are still pending), and no stored
+  `agent_results.csv` lineup from weeks 1-3 holds an affected DST -- week 4's Cardinals was the only
+  case, now corrected. Any future DST backtest should use the corrected scoring.
 - Week 4 totals now reconcile with DK to the cent for all three played lineups.
-- Not changed: `tracking/agent_results_collector.py` (the CSV backfill) still leaves a lineup blank
-  if a rostered player has no row. No actually-played lineup has hit this yet.
+- `tracking/agent_results_collector.py` (the CSV backfill) gets the same DNP rule, adapted to its
+  id-less name tokens: a missing player scores 0 only if his team's game is settled this week AND
+  that exact (name, team) has a real row in another week of the season; anyone else stays unresolved.
 - Unverified convention: whether DK also excludes the extra point after a defensive TD (the week 4
   case had none). The implementation excludes it, the standard reading of "points scored by the
   defense/ST".

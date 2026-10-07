@@ -50,10 +50,28 @@ class ScoreCollectionResult:
     unresolved: tuple[tuple[str, str, tuple[str, ...]], ...] = field(default_factory=tuple)
 
 
+def _dnp_context(weekly: pd.DataFrame, season: int, week: int) -> tuple[set[str], set[tuple[str, str]]]:
+    """(teams whose game is settled this week, (name, team) keys with a real row in ANOTHER week
+    of the same season). A rostered player absent this week is a did-not-play (scores 0, as DK
+    does) only when his team's game is settled AND he's a known player -- seen in another week on
+    that team. Anyone else (a name-match miss, a first-week call-up, a mid-season trade) stays
+    unresolved rather than having a 0 fabricated. Mirrors `postmortem/replay.py`'s id-based guard;
+    this module's tokens carry no id, so name+team-seen-this-season is the available equivalent."""
+    df = weekly[(weekly["season"] == season) & (weekly["season_type"] == "REG")]
+    this_week = df[df["week"] == week]
+    settled_teams = {normalize_team("nflverse_schedule", t) or t for t in this_week["recent_team"].dropna().unique()}
+    known: set[tuple[str, str]] = set()
+    for other_week in sorted(set(df["week"].unique()) - {week}):
+        known.update(settled_offensive_points_by_player(weekly, season, int(other_week)).keys())
+    return settled_teams, known
+
+
 def _score_one_row(
     row: AgentResultRow,
     offensive_points: dict[tuple[str, str], float],
     dst_points: dict[str, float],
+    settled_teams: set[str] | None = None,
+    known_players: set[tuple[str, str]] | None = None,
 ) -> tuple[float, tuple[str, ...]]:
     """Returns (total, missing_tokens). `total` is only meaningful when `missing_tokens` is empty."""
     total = 0.0
@@ -70,6 +88,8 @@ def _score_one_row(
         key = (normalize_player_name(name), team)
         if key in offensive_points:
             total += offensive_points[key]
+        elif settled_teams and team in settled_teams and known_players and key in known_players:
+            total += 0.0  # did not play: settled game, known player, no row -> DK scores 0
         else:
             missing.append(token)
 
@@ -97,6 +117,8 @@ def score_and_backfill_agent_results(
         if row.week == week
     }
 
+    settled_teams, known_players = _dnp_context(weekly, season, week)
+
     all_rows = read_agent_results(path=path)
     this_week = [r for r in all_rows if r.season == season and r.week == week]
     other_weeks = [r for r in all_rows if not (r.season == season and r.week == week)]
@@ -104,7 +126,7 @@ def score_and_backfill_agent_results(
     scored_rows: list[AgentResultRow] = []
     unresolved: list[tuple[str, str, tuple[str, ...]]] = []
     for row in this_week:
-        total, missing = _score_one_row(row, offensive_points, dst_points)
+        total, missing = _score_one_row(row, offensive_points, dst_points, settled_teams, known_players)
         if missing:
             unresolved.append((row.agent_id, row.strategy_name, missing))
             scored_rows.append(row)  # left as-is -- total_dk_score stays whatever it was (None, typically)
