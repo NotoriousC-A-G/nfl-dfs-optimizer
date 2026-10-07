@@ -107,7 +107,12 @@ ROSTER_POSITIONS = ("QB", "RB", "WR", "TE", "DST")
 # lineups) -- all excluded from the candidate pool entirely in `_eligible_pool`. Q stays eligible:
 # a real, disclosed DFS strategic decision, not a guaranteed non-play, the same "unresolved is
 # not unavailable" treatment this project's own injury-uncertainty-flag machinery applies.
-EXCLUDED_INJURY_STATUSES = frozenset({"IR", "OUT", "D"})
+#
+# **Q (Questionable) is excluded too (Chris, 2026-10-07)**: lineups are built before final inactives,
+# and a doubtful Breece Hall already cost a week-4 slate -- so Q is assumed not to play unless a
+# Friday-practice clearance is on file (`storage/injury_clearance_store.py`), which rewrites that
+# player's status to `Q_CLEARED` (not excluded). A "will test it out pre-game" player is an avoid.
+EXCLUDED_INJURY_STATUSES = frozenset({"IR", "OUT", "D", "Q"})
 
 # Deliberately tiny -- see module docstring's "Full game-stack favoring" note. Blended
 # projections are on the order of 5-30 DK points per player; this weight can only ever matter

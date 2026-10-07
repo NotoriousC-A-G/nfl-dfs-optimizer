@@ -54,10 +54,15 @@ from nfl_dfs.ingestion.usage_share import ROLE_RB, ROLE_WR, aggregate_player_tra
 from nfl_dfs.ingestion.weather import WeatherReading, fetch_weather_reading
 from nfl_dfs.matchup.context import MatchupFacetInputs, PlayerMatchupInput, build_matchup_context_pool
 from nfl_dfs.normalization.crosswalk import fetch_crosswalk
-from nfl_dfs.normalization.injury_lookup import overlay_injury_report_exclusions, team_injuries
+from nfl_dfs.normalization.injury_lookup import (
+    apply_questionable_clearances,
+    overlay_injury_report_exclusions,
+    team_injuries,
+)
 from nfl_dfs.normalization.matcher import reconcile_week
 from nfl_dfs.normalization.registry import PlayerRegistry
 from nfl_dfs.optimizer.lineup import EXCLUDED_INJURY_STATUSES, LineupGenerationError
+from nfl_dfs.storage.injury_clearance_store import read_clearances
 from nfl_dfs.output.weekly_output import build_weekly_output
 from nfl_dfs.ingestion.footballguys_ownership import fetch_roster_percentages
 from nfl_dfs.ownership.blend import blend_ownership_rows
@@ -185,6 +190,16 @@ def main() -> None:
     dk_injury_status = overlay_injury_report_exclusions(
         dk_injury_status, identities, early_injury_entries, EXCLUDED_INJURY_STATUSES
     )
+    # Questionable is assumed OUT unless a Friday-practice clearance is on file (Chris, 2026-10-07):
+    # `data/overrides/q_clearances.csv`, filled by hand via `scripts/log_q_clearance.py`.
+    clearances = read_clearances(season=SEASON, week=WEEK)
+    dk_injury_status, unmatched_clearances = apply_questionable_clearances(dk_injury_status, identities, clearances)
+    for c in unmatched_clearances:
+        print(f"  WARNING: clearance for {c.name} ({c.team}) matched no Questionable player -- typo, or he isn't Q; ignored")
+    _q_names = {str(dk.native_id): i.display_name for i in identities if (dk := i.sources.get("draftkings")) and dk.native_id}
+    for status, label in (("Q", "EXCLUDED (Questionable, no clearance)"), ("Q_CLEARED", "CLEARED to roster (Friday practice)")):
+        names = sorted(_q_names[k] for k, v in dk_injury_status.items() if v == status and k in _q_names)
+        print(f"  Q players {label}: {', '.join(names) if names else 'none'}")
     rotogrinders_fpts = extract_rotogrinders_fpts(rg_payload) if rg_payload else {}
     footballguys_points = {}
     for html in fbg_html_by_position.values():
