@@ -79,7 +79,7 @@ def main() -> int:
     expert = e_res[0].result
 
     # Projections for exactly the players the expert/analysts saw (statuses use the DK vocabulary after the Q pass)
-    status_map = {"cleared": "Q_CLEARED", "barred": "BARRED", "out": "OUT"}
+    status_map = {"cleared": "Q_CLEARED", "barred": "BARRED", "out": "OUT", "unresolved": "Q_UNRESOLVED"}
     # Opportunity -> points: a player who inherits a vacated role gets the extra carries/targets priced into his projection BEFORE the tail-value
     # calibration and the analysts' multipliers (vendor projections assume a Questionable player plays; ours treat him as out).
     rates = PointsPerOpportunity.from_json(RATES.read_text())
@@ -102,6 +102,10 @@ def main() -> int:
     print(f"{len(theses)} theses; expert unavailable: {expert.unavailable or 'none'}; portfolio: {expert.portfolio_notes[:200]}")
     avoid: list[frozenset[str]] = []
     exit_code = 0
+    # Players whose Questionable status is still UNRESOLVED (time-aware Q handling): available, but a lineup that holds one is flagged so the
+    # exposure to his status is visible. The vacated-work shares in the packets do NOT assume he is out.
+    unresolved = {(d.name, d.team): d.basis for d in availability if d.decision == "unresolved"}
+    unresolved_ids = {p.canonical_id: unresolved[(p.name, p.team)] for pk in packets.values() for p in pk.players if (p.name, p.team) in unresolved}
     scripted: dict = {}
     agents_record: dict[str, dict] = {a: {"status": "unavailable_by_expert", "detail": r} for a, r in expert.unavailable.items()}
     for out in expert.outputs:
@@ -138,8 +142,11 @@ def main() -> int:
             print(f"  L{i} ${lu.total_salary:,} proj {lu.total_projected_points:.1f} [core {tc['core']} / eligible {tc['eligible']} / reach {tc['reach']}] "
                   f"stack {[nm.get(c, c) for c in var.stack]} views {list(var.views)}\n      "
                   + ", ".join(f"{p.position} {p.display_name}" + ("*" if tier_of.get(p.canonical_id) == "reach" else "") for p in lu.players))
+            flagged = [f"{p.display_name} ({unresolved_ids[p.canonical_id]})" for p in lu.players if p.canonical_id in unresolved_ids]
+            if flagged:
+                print("      UNRESOLVED STATUS in this lineup: " + "; ".join(flagged))
             lineup_records.append({"views": list(var.views), "stack": list(var.stack), "note": var.note, "player_ids": [p.canonical_id for p in lu.players],
-                                   "salary": lu.total_salary, "projected": lu.total_projected_points, "tiers": tc})
+                                   "salary": lu.total_salary, "projected": lu.total_projected_points, "tiers": tc, "unresolved_players": flagged})
         for w in res.warnings:
             print(f"  warning: {w.message}")
         agents_record[out.agent_id] = {
