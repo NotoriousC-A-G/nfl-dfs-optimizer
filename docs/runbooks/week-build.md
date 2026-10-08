@@ -13,7 +13,7 @@ Bump `WEEK` and `DRAFT_GROUP_ID` in `scripts/live_integration_check_dashboard.py
 2. `render_evidence_packets.py` -- open `dashboard_output/evidence_packets.html`; read the data gaps and the vacated roles.
 3. `run_llm_stages.py prepare-analysts` -> a backend answers each `prompt.md` with `response.json` -> `collect-analysts` (retry once on a rejected
    answer) -> `prepare-expert` -> answer -> `collect-expert`.
-4. `build_pool_lineups.py --n 2`. An agent that under-spends or cannot be built goes back to the expert ONCE (exit code 2 while a repair request
+4. `build_pool_lineups.py` (one lineup per agent: its favorite variation, listed first by the expert; `--n 2`/`--n 3` also builds the alternates). An agent that under-spends or cannot be built goes back to the expert ONCE (exit code 2 while a repair request
    waits in `data/cache/build_llm/<season>/<week>/expert_repair/<agent>__<key>/prompt.md`); answer it, re-run. An agent still failing is reported
    unavailable with its diagnosis -- nothing is substituted.
    Every run writes a build record to `data/snapshots/redesign/` (theses, pools, lineups, failures) for the post-mortem.

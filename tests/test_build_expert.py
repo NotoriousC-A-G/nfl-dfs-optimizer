@@ -354,3 +354,10 @@ def test_two_bets_that_each_need_a_quarterback_are_rejected_with_the_exact_reaso
     ]
     errors = [x for x in _parse(d)[1] if x.code == "bets_roster"]
     assert errors and "2 QB declared but a lineup holds at most 1" in errors[0].message and "only one bet may contain a QB" in errors[0].message
+
+
+def test_the_prompt_asks_for_the_favorite_variation_first_and_alternates_only_when_genuinely_different():
+    packet = _packet()
+    thesis, _ = parse_analyst_response(json.dumps(_response(packet)), packet, league_fn, prompt_version="p", model="m")
+    p = expert_prompt({packet.game_id: thesis}, {packet.game_id: packet})
+    assert "FAVORITE variation FIRST" in p and "ALTERNATES" in p and "not to reach a count" in p
