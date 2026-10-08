@@ -75,3 +75,15 @@ _Avoid_: Clearance (it is a decision the system makes, not a list Chris keeps)
 **Override**:
 Chris's instruction, when he has additional information or disagrees, to clear or bar a player against the system's call.
 _Avoid_: Clearance, manual exclusion
+
+**Opportunity**:
+A skill player's claim on his team's work: his share of its carries and targets (and, later, snaps and routes). It, not depth-chart rank, says whether a player is a safe or a volatile source of points.
+_Avoid_: Starter, role (too vague), usage (already means the red-zone shares)
+
+**Vacated role**:
+The share of a team's carries and targets held by a player who will not play, to be taken up by his teammates. The question an injury poses is where it goes, not who replaces him.
+_Avoid_: Replacement, injury beneficiary (a beneficiary is a teammate who absorbs a vacated role)
+
+**Floor lean**:
+An agent's tilt, from -1 to 1, between valuing a player's downside and his upside when the solver values him. Zero is neutral; positive prefers steady opportunity, negative prefers ceiling.
+_Avoid_: Risk setting, variance weight

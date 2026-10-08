@@ -18,7 +18,9 @@ import json
 from dataclasses import asdict, dataclass, field, replace
 from typing import Any
 
-SCHEMA_VERSION = 1
+from nfl_dfs.build.evidence.opportunity import VacatedRole
+
+SCHEMA_VERSION = 2
 
 
 @dataclass(frozen=True)
@@ -72,6 +74,14 @@ class PlayerEvidence:
     status_after_q_pass: str | None  # e.g. "Q_CLEARED", "BARRED", "OUT" from the Q/override pass
     circumstance_note: str | None
     qb_designed_run_rate: float | None = None
+    # Opportunity (play-by-play, last 4 team games; `evidence/opportunity.py`). Carries/targets only -- no snap or route data.
+    carry_share_l4: float | None = None
+    target_share_l4: float | None = None
+    touch_share_l4: float | None = None  # (carries + targets) share
+    touch_share_min_l4: float | None = None  # lowest single-game touch share: the floor-role stability measure
+    carry_share_expected: float | None = None  # trailing + his portion of what unavailable teammates leave behind
+    target_share_expected: float | None = None
+    opportunity_note: str | None = None
 
 
 @dataclass(frozen=True)
@@ -100,6 +110,7 @@ class EvidencePacket:
     weather: dict[str, Any] | None
     data_gaps: tuple[str, ...]
     interactions: tuple[dict[str, Any], ...] = ()  # measured unit interactions -- empty until measured
+    vacated: tuple[VacatedRole, ...] = ()  # roles held by players who will not play, with the carry/target share they leave
     packet_sha: str = ""
 
 
@@ -146,6 +157,12 @@ def flatten(packet: EvidencePacket) -> dict[str, Any]:
         by_team[a.team] = i + 1
         for k, v in asdict(a).items():
             out[f"availability.{a.team}.{i}.{k}"] = v
+    by_vac: dict[str, int] = {}
+    for v in packet.vacated:
+        i = by_vac.get(v.team, 0)
+        by_vac[v.team] = i + 1
+        for k, val in asdict(v).items():
+            out[f"vacated.{v.team}.{i}.{k}"] = val
     if packet.weather:
         for k, v in packet.weather.items():
             out[f"weather.{k}"] = v

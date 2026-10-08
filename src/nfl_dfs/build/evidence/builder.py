@@ -11,11 +11,13 @@ from __future__ import annotations
 from typing import Any, Iterable
 
 import pandas as pd
+from dataclasses import replace
 
 from nfl_dfs.build.evidence.anchors import favorite_win_probability
 from nfl_dfs.build.evidence.contracts import (
     SCHEMA_VERSION, AvailabilityItem, EvidencePacket, Lines, MetricValue, PlayerEvidence, TeamEvidence, with_sha,
 )
+from nfl_dfs.build.evidence.opportunity import GAP_NO_SNAPS, UNAVAILABLE_STATUSES, OpportunityTable, TeamOpportunity, redistribute
 from nfl_dfs.build.evidence.metrics import DEFENSE_METRICS, OFFENSE_METRICS, season_to_date
 
 MAX_PLAYERS_PER_TEAM = 10
@@ -77,6 +79,31 @@ def _player_evidence(rec: dict, decision_by_key: dict[tuple[str, str], Any]) -> 
     )
 
 
+def _unavailable_status(rec: dict, decision_by_key: dict[tuple[str, str], Any]) -> str | None:
+    """Why this pool player will not play (or None): a Q/override decision of excluded/barred, or a listed status that counts as out
+    unless a decision cleared him. Questionable counts as out (ADR-0045)."""
+    d = decision_by_key.get((rec["identity"]["display_name"], rec["team"]))
+    if d is not None:
+        return d.decision if d.decision in ("excluded", "barred", "out") else None
+    inj = rec.get("injury")
+    status = inj.get("status") if isinstance(inj, dict) else None
+    return status if status in UNAVAILABLE_STATUSES else None
+
+
+def _with_opportunity(pe: PlayerEvidence, shares: dict, team_opp: TeamOpportunity | None) -> PlayerEvidence:
+    s = shares.get(pe.canonical_id)
+    e = team_opp.expected.get(pe.canonical_id) if team_opp else None
+    if s is None and e is None:
+        return pe
+    return replace(
+        pe,
+        carry_share_l4=s.carry_share if s else None, target_share_l4=s.target_share if s else None,
+        touch_share_l4=s.touch_share if s else None, touch_share_min_l4=s.touch_share_min if s else None,
+        carry_share_expected=e.carry_share if e else None, target_share_expected=e.target_share if e else None,
+        opportunity_note=e.note if e else None,
+    )
+
+
 def _team_metric_values(
     tg: pd.DataFrame | None, teams: Iterable[str], season: int, through_week: int
 ) -> dict[str, dict[str, tuple[float | None, int | None]]]:
@@ -101,6 +128,7 @@ def build_evidence_packets(
     availability: Iterable[Any] = (),
     weather_by_home_team: dict[str, dict[str, Any]] | None = None,
     as_of: str = "",
+    opportunity: OpportunityTable | None = None,
 ) -> dict[str, EvidencePacket]:
     """`{game_id: EvidencePacket}`. `availability` are `AvailabilityDecision`s from the Q/override pass;
     `team_game_table` may be `None`/empty (the packet then records the missing metrics as a data gap)."""
@@ -159,13 +187,31 @@ def build_evidence_packets(
                 implied_total=implied(team), metrics=metrics, def_metrics=def_metrics,
             )
 
+        opp_by_team: dict[str, TeamOpportunity] = {}
+        if opportunity is None:
+            gaps.append("opportunity shares (carries/targets, who inherits a missing player's work) were not computed for this packet")
+        else:
+            gaps.append(GAP_NO_SNAPS)
+            for team in (home, away):
+                if team not in opportunity:
+                    gaps.append(f"{team}: no play-by-play shares (no games before week {week})")
+                    continue
+                recs = by_team.get(team, [])
+                out_players = {
+                    r["identity"]["canonical_id"]: (r["identity"]["display_name"], _unavailable_status(r, decision_by_key))
+                    for r in recs if _unavailable_status(r, decision_by_key)
+                }
+                listed = {r["identity"]["canonical_id"]: r["position"] for r in recs if r.get("salary") is not None}
+                opp_by_team[team] = redistribute(team, opportunity[team], out_players, listed)
+                gaps.extend(f"{team}: {u}" for u in opp_by_team[team].unassigned)
+
         players: list[PlayerEvidence] = []
         for team in (home, away):
             usable = [r for r in by_team.get(team, []) if r.get("salary") is not None and r.get("projection") is not None]
             usable.sort(key=lambda r: -r["projection"])
             skill = [r for r in usable if r["position"] != "DST"][: MAX_PLAYERS_PER_TEAM - 1]
             dst = [r for r in usable if r["position"] == "DST"][:1]
-            players += [_player_evidence(r, decision_by_key) for r in skill + dst]
+            players += [_with_opportunity(_player_evidence(r, decision_by_key), (opportunity or {}).get(team, {}), opp_by_team.get(team)) for r in skill + dst]
         owned = sum(1 for p in players if p.ownership_pct is not None)
         if owned < len(players):
             gaps.append(f"ownership is populated for {owned} of {len(players)} listed players")
@@ -190,6 +236,6 @@ def build_evidence_packets(
         slate_window = next((r.get("slate_window") for r in by_team.get(home, []) if r.get("slate_window")), None)
         packets[game_id] = with_sha(EvidencePacket(
             SCHEMA_VERSION, game_id, season, week, home, away, slate_window, lines, teams, tuple(players),
-            tuple(items), weather, tuple(gaps),
+            tuple(items), weather, tuple(gaps), vacated=tuple(v for t in (home, away) for v in opp_by_team.get(t, TeamOpportunity()).vacated),
         ))
     return packets

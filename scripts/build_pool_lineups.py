@@ -23,6 +23,7 @@ import nfl_data_py as nfl
 
 from nfl_dfs.build.agents import POOL_AGENT_BY_ID
 from nfl_dfs.build.evidence.builder import build_evidence_packets
+from nfl_dfs.build.evidence.opportunity import trailing_shares
 from nfl_dfs.build.evidence.metrics import league_values, team_game_metrics
 from nfl_dfs.build.expert.repair import build_with_repair
 from nfl_dfs.build.expert.stage import expert_spec
@@ -57,7 +58,7 @@ def main() -> int:
     tg = team_game_metrics(pbp)
     league_fn = lambda m: league_values(tg, m)
     as_of = str(snapshot.get("timestamp", "unknown"))[:16] + "Z"
-    packets = build_evidence_packets(snapshot["player_pool"], snapshot["stack_profiles"], tg[tg["season"] == SEASON], season=SEASON, week=WEEK, as_of=as_of)
+    packets = build_evidence_packets(snapshot["player_pool"], snapshot["stack_profiles"], tg[tg["season"] == SEASON], season=SEASON, week=WEEK, as_of=as_of, opportunity=trailing_shares(pbp, season=SEASON, through_week=WEEK - 1))
     fresh, kw = _freshness(), dict(season=SEASON, week=WEEK)
 
     a_res = collect_results(analyst_specs(packets, league_fn, model=MODEL_ID, freshness=fresh), **kw)

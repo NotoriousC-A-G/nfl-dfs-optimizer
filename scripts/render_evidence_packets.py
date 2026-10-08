@@ -23,6 +23,7 @@ from pathlib import Path
 import nfl_data_py as nfl
 
 from nfl_dfs.build.evidence.builder import build_evidence_packets
+from nfl_dfs.build.evidence.opportunity import trailing_shares
 from nfl_dfs.build.evidence.metrics import team_game_metrics
 from nfl_dfs.build.evidence.render import render_evidence_page
 from nfl_dfs.storage.slate_snapshot_store import load_latest_slate_snapshot
@@ -40,7 +41,7 @@ def main() -> None:
         warnings.simplefilter("ignore")
         pbp = nfl.import_pbp_data([SEASON], include_participation=False)
     tg = team_game_metrics(pbp)
-    packets = build_evidence_packets(snapshot["player_pool"], snapshot["stack_profiles"], tg, season=SEASON, week=WEEK)
+    packets = build_evidence_packets(snapshot["player_pool"], snapshot["stack_profiles"], tg, season=SEASON, week=WEEK, opportunity=trailing_shares(pbp, season=SEASON, through_week=WEEK - 1))
 
     OUT_DIR.mkdir(exist_ok=True)
     (OUT_DIR / "evidence_packets").mkdir(exist_ok=True)
