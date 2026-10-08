@@ -35,8 +35,10 @@ TOTALS = {"LAR@PHI": 46.0, "KC@LV": 43.0}
 
 
 def _agent(aid, backs, core_groups, *, eligible=(), default="exclude", reason="why", **extra):
+    team = core_groups[0][0] if core_groups else (eligible[0][0] if eligible else "KC")
     a = {
         "agent_id": aid, "build_thesis": {"backs": backs, "avoids": [], "hedges": [], "stack_anchor": [], "reason": reason},
+        "variations": [{"views": backs, "stack": [f"{team}_qb", f"{team}_wr0"], "note": ""}],
         "default_tier": default,
         "group_tiers": [{"tier": "core", "reason": "branch story", "team": t, "position": p, "game_id": None} for t, p in core_groups]
         + [{"tier": "eligible", "reason": "", "team": t, "position": p, "game_id": None} for t, p in eligible],
@@ -103,10 +105,10 @@ def test_every_pool_agent_must_be_present_and_no_unknown_agents():
 
 def test_backs_must_reference_real_branches_and_not_be_empty():
     d = _expert()
-    d["agents"][0]["build_thesis"]["backs"] = ["KC@LV:nope"]
+    d["agents"][0]["variations"][0]["views"] = ["KC@LV:nope"]
     assert "unknown_branch" in _codes(_parse(d)[1])
     d = _expert()
-    d["agents"][0]["build_thesis"]["backs"] = []
+    d["agents"][0]["variations"][0]["views"] = []
     assert "backs_empty" in _codes(_parse(d)[1])
 
 
@@ -134,9 +136,14 @@ def test_agent_probability_floor_and_minimum_game_total_are_enforced():
 
 def test_at_most_two_agents_may_back_the_same_game():
     d = _expert()
-    d["agents"][0]["build_thesis"]["backs"] = ["LAR@PHI:b0"]
-    d["agents"][4]["build_thesis"]["backs"] = ["LAR@PHI:b3"]  # now contrarian, chalk_pivot, shootout, volume all on LAR@PHI
+    for i in (0, 1, 2, 4):
+        a = d["agents"][i]
+        a["variations"][0]["stack"] = ["LAR_qb", "LAR_wr0"]  # shootout, contrarian, chalk_pivot and volume all STACK LAR@PHI
     assert "game_concentration" in _codes(_parse(d)[1])
+    d = _expert()
+    d["agents"][0]["variations"][0]["views"] = ["LAR@PHI:b0"]  # holding a VIEW of a game is not stacking it
+    d["agents"][4]["variations"][0]["views"] = ["LAR@PHI:b3"]
+    assert "game_concentration" not in _codes(_parse(d)[1])
 
 
 def test_unknown_players_missing_reasons_and_bad_selectors_are_rejected():
@@ -239,20 +246,48 @@ def test_the_analyst_prompt_asks_for_battles_and_the_expert_prompt_shows_their_c
     assert "CALL: LAR wins it" in ep and "BUILD ON THE ANALYSTS' CALLS" in ep
 
 
-def test_derived_is_a_valid_default_with_optional_explicit_core_and_at_most_three_scripts():
+def test_derived_is_a_valid_default_with_optional_explicit_core_and_one_to_three_variations():
     d = _expert()
     for a in d["agents"]:
         if "build_thesis" in a:
             a["default_tier"] = "derived"
-            a["group_tiers"] = []  # no explicit core at all: the engine supplies it per script
+            a["group_tiers"] = []  # no explicit core at all: the engine supplies it per variation
     result, v = _parse(d)
     assert _codes(v) == set(), [x.message for x in v]
     assert {o.default_tier for o in result.outputs} == {"derived"}
     d2 = _expert()
-    d2["agents"][0]["default_tier"] = "derived"
-    d2["agents"][0]["build_thesis"]["backs"] = ["KC@LV:b0", "KC@LV:b1", "KC@LV:b2", "KC@LV:b3"]
-    assert "too_many_scripts" in _codes(_parse(d2)[1])
+    d2["agents"][0]["variations"] = [d2["agents"][0]["variations"][0]] * 4
+    assert "variations_count" in _codes(_parse(d2)[1])
     d3 = _expert()
     d3["agents"][0]["default_tier"] = "reach"
     d3["agents"][0]["group_tiers"] = []
     assert "core_size" in _codes(_parse(d3)[1])  # without "derived" the explicit core minimum still applies
+
+
+def test_a_variation_holds_at_most_one_view_per_game_and_a_real_stack():
+    d = _expert()
+    d["agents"][0]["variations"][0]["views"] = ["KC@LV:b0", "KC@LV:b1"]
+    assert "one_view_per_game" in _codes(_parse(d)[1])
+    d = _expert()
+    d["agents"][0]["variations"][0]["stack"] = ["KC_qb", "KC_rb0"]  # a QB with a running back is not a pass-catcher stack
+    assert "stack_shape" in _codes(_parse(d)[1])
+    d = _expert()
+    d["agents"][0]["variations"][0]["stack"] = ["KC_qb", "ghost"]
+    assert "unknown_player" in _codes(_parse(d)[1])
+
+
+def test_variations_carry_their_own_views_and_stack_and_the_spend_plan_is_validated():
+    d = _expert()
+    d["agents"][0]["variations"] = [
+        {"views": ["KC@LV:b0", "LAR@PHI:b1"], "stack": ["KC_qb", "KC_wr0", "KC_wr1"], "note": "A"},
+        {"views": ["KC@LV:b2"], "stack": ["LV_qb", "LV_wr0"], "note": "B"},
+    ]
+    d["agents"][0]["spend_plan"] = {"RB": "value", "WR": "pay"}
+    result, v = _parse(d)
+    assert _codes(v) == set(), [x.message for x in v]
+    out = next(o for o in result.outputs if o.agent_id == "shootout_stack")
+    assert out.variations[0].views == ("KC@LV:b0", "LAR@PHI:b1") and out.variations[1].stack == ("LV_qb", "LV_wr0")
+    assert dict(out.spend_plan) == {"RB": "value", "WR": "pay"}
+    assert out.build_thesis.backs == ("KC@LV:b0", "LAR@PHI:b1", "KC@LV:b2")  # the record of what the agent believes
+    d["agents"][0]["spend_plan"] = {"QB": "lots", "K": "pay"}
+    assert "spend_plan" in _codes(_parse(d)[1])

@@ -43,6 +43,8 @@ def output_to_json(out: ExpertAgentOutput) -> dict:
         "group_tiers": [{"tier": g.tier, "reason": g.reason, "team": g.team, "position": g.position, "game_id": g.game_id} for g in out.group_tiers],
         "overrides": [{"player_id": o.canonical_id, "tier": o.tier, "reason": o.reason} for o in out.overrides],
         "min_core": out.rules.min_core,
+        "variations": [{"views": list(x.views), "stack": list(x.stack), "note": x.note} for x in out.variations],
+        "spend_plan": dict(out.spend_plan),
     }
 
 

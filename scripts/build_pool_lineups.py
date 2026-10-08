@@ -34,7 +34,7 @@ from nfl_dfs.build.runner import collect_results, require_all_ok
 from nfl_dfs.build.thesis.contracts import PairSign
 from nfl_dfs.build.thesis.stage import analyst_specs
 from nfl_dfs.build.value.calibration import CalibrationTable
-from nfl_dfs.optimizer.script_solve import build_agent_by_script
+from nfl_dfs.optimizer.script_solve import build_agent_by_variation
 from nfl_dfs.projection.blend import PlayerProjection
 from nfl_dfs.storage.build_artifact_store import save_build_artifact
 from nfl_dfs.storage.slate_snapshot_store import load_latest_slate_snapshot
@@ -96,7 +96,7 @@ def main() -> int:
 
         def build(o, _avoid=list(avoid)):
             # One lineup per script variation; a repaired pool may back different scripts than the first one
-            sb = build_agent_by_script(
+            sb = build_agent_by_variation(
                 o, universe=universe, theses=theses, packets=packets, projections=projs, table=table, floor_lean=lean, n=args.n,
                 opponent_of=opp, game_id_by_team=game_of, pair_signs=signs, avoid_lineups=_avoid,
             )
@@ -114,22 +114,25 @@ def main() -> int:
             continue
         sb = scripted[out.agent_id]
         res = sb.result
-        print(f"\n[{out.agent_id}] (floor lean {lean:+.1f}){' REPAIRED by the expert after: ' + str(oc.first_failure) if oc.repaired else ''} | "
-              f"scripts {list(dict.fromkeys(sb.scripts))} | {res.pool.build_thesis.reason[:150]}")
+        plan = dict(out.spend_plan)
+        print(f"\n[{out.agent_id}] (floor lean {lean:+.1f}; spend {plan or 'neutral'}){' REPAIRED by the expert after: ' + str(oc.first_failure) if oc.repaired else ''} | {res.pool.build_thesis.reason[:160]}")
         lineup_records = []
-        for i, (lu, ref) in enumerate(zip(res.lineups, sb.scripts), 1):
-            tier_of = {e.canonical_id: e.tier for e in sb.pools[ref].entries}
+        for i, (lu, var, pool) in enumerate(zip(res.lineups, sb.variations, sb.pools), 1):
+            tier_of = {e.canonical_id: e.tier for e in pool.entries}
             tc = {t: sum(1 for p in lu.players if tier_of.get(p.canonical_id) == t) for t in ("core", "eligible", "reach")}
             avoid.append(frozenset(p.canonical_id for p in lu.players))
-            print(f"  L{i} [{ref}] ${lu.total_salary:,} proj {lu.total_projected_points:.1f} [core {tc['core']} / eligible {tc['eligible']} / reach {tc['reach']}] | "
+            nm = {p.canonical_id: p.display_name for p in lu.players}
+            print(f"  L{i} ${lu.total_salary:,} proj {lu.total_projected_points:.1f} [core {tc['core']} / eligible {tc['eligible']} / reach {tc['reach']}] "
+                  f"stack {[nm.get(c, c) for c in var.stack]} views {list(var.views)}\n      "
                   + ", ".join(f"{p.position} {p.display_name}" + ("*" if tier_of.get(p.canonical_id) == "reach" else "") for p in lu.players))
-            lineup_records.append({"script": ref, "player_ids": [p.canonical_id for p in lu.players], "salary": lu.total_salary, "projected": lu.total_projected_points, "tiers": tc})
+            lineup_records.append({"views": list(var.views), "stack": list(var.stack), "note": var.note, "player_ids": [p.canonical_id for p in lu.players],
+                                   "salary": lu.total_salary, "projected": lu.total_projected_points, "tiers": tc})
         for w in res.warnings:
             print(f"  warning: {w.message}")
         agents_record[out.agent_id] = {
             "status": "built", "floor_lean": lean, "repaired": oc.repaired, "first_failure": str(oc.first_failure) if oc.first_failure else None,
-            "scripts": list(dict.fromkeys(sb.scripts)), "build_thesis": asdict(res.pool.build_thesis), "expert_pool": output_to_json(out),
-            "pools_used": {ref: [(e.canonical_id, e.tier, e.reason) for e in p.entries if e.tier != "exclude"] for ref, p in sb.pools.items()},
+            "spend_plan": plan, "build_thesis": asdict(res.pool.build_thesis), "expert_pool": output_to_json(out),
+            "pools_used": [[(e.canonical_id, e.tier, e.reason) for e in p.entries if e.tier != "exclude"] for p in sb.pools],
             "lineups": lineup_records, "warnings": [w.message for w in res.warnings],
         }
     path = save_build_artifact(SEASON, WEEK, {

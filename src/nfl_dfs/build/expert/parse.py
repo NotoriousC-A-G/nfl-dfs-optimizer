@@ -17,7 +17,7 @@ from typing import Any
 
 from nfl_dfs.build.agents import POOL_AGENT_BY_ID, POOL_AGENTS, PoolAgentSpec
 from nfl_dfs.build.common import Violation
-from nfl_dfs.build.pool.contracts import DEFAULT_TIERS, DERIVED, TIERS, BuildThesis, ExpertAgentOutput, GroupTier, PlayerRef, PoolEntry
+from nfl_dfs.build.pool.contracts import DEFAULT_TIERS, DERIVED, SPEND_VALUES, TIERS, Variation, BuildThesis, ExpertAgentOutput, GroupTier, PlayerRef, PoolEntry
 from nfl_dfs.build.pool.expand import expand_pool
 from nfl_dfs.build.pool.validate import core_overlap
 from nfl_dfs.build.thesis.parse import _strip_fences
@@ -34,6 +34,11 @@ class ExpertResult:
     outputs: tuple[ExpertAgentOutput, ...]
     unavailable: dict[str, str] = field(default_factory=dict)  # agent_id -> reason
     portfolio_notes: str = ""
+
+
+def _stack_games(out: ExpertAgentOutput, universe: list[PlayerRef]) -> set[str]:
+    game_of = {p.canonical_id: p.game_id for p in universe}
+    return {game_of[c] for var in out.variations for c in var.stack if game_of.get(c)}
 
 
 def _game_of_ref(ref: str) -> str:
@@ -72,7 +77,7 @@ def parse_expert_response(
         if a is None:
             continue
         try:
-            out, unavail = _parse_agent(a, spec, ids, teams, games, v)
+            out, unavail = _parse_agent(a, spec, ids, teams, games, v, {p.canonical_id: p for p in universe})
         except (KeyError, TypeError, ValueError, AttributeError) as exc:
             v.append(Violation("parse", f"{spec.agent_id}: does not match the schema: {type(exc).__name__}: {exc}", spec.agent_id))
             continue
@@ -82,23 +87,34 @@ def parse_expert_response(
         _check_agent(out, spec, universe, branch_probs, game_totals, v)
         outputs.append(out)
 
-    backs = Counter(g for o in outputs for g in {_game_of_ref(r) for r in o.build_thesis.backs})
-    for g, n in backs.items():
+    stacked = Counter(g for o in outputs for g in _stack_games(o, universe))
+    for g, n in stacked.items():
         if n > MAX_AGENTS_PER_GAME:
-            v.append(Violation("game_concentration", f"{n} agents back {g} (at most {MAX_AGENTS_PER_GAME}); spread the agents across games", g))
+            v.append(Violation("game_concentration", f"{n} agents stack in {g} (at most {MAX_AGENTS_PER_GAME}); spread the agents' stacks across games", g))
     pools = [expand_pool(o, universe) for o in outputs]
     v += core_overlap(pools)
     return ExpertResult(tuple(outputs), unavailable, str(d.get("portfolio_notes", ""))), v
 
 
-def _parse_agent(a: dict, spec: PoolAgentSpec, ids: set, teams: set, games: set, v: list[Violation]) -> tuple[ExpertAgentOutput | None, str | None]:
+def _parse_agent(a: dict, spec: PoolAgentSpec, ids: set, teams: set, games: set, v: list[Violation], by_id: dict | None = None) -> tuple[ExpertAgentOutput | None, str | None]:
     if a.get("unavailable"):
         reason = str(a.get("reason", "")).strip()
         if not reason:
             v.append(Violation("unavailable_reason", f"{spec.agent_id}: 'unavailable' needs a reason", spec.agent_id))
         return None, reason or "no reason given"
     bt = a["build_thesis"]
-    thesis = BuildThesis(tuple(bt.get("backs", ())), tuple(bt.get("avoids", ())), tuple(bt.get("hedges", ())), tuple(bt.get("stack_anchor", ())), bt.get("reason", ""))
+    by_id = by_id or {}
+    variations = _parse_variations(a, bt, spec, ids, by_id, v)
+    # the build thesis's `backs` is the union of the variations' views (the record of what the agent believes), `stack_anchor` of their stacks
+    backs = tuple(dict.fromkeys(r for var in variations for r in var.views))
+    anchors = tuple(dict.fromkeys(i for var in variations for i in var.stack))
+    thesis = BuildThesis(backs, tuple(bt.get("avoids", ())), tuple(bt.get("hedges", ())), anchors, bt.get("reason", ""))
+    spend = []
+    for pos, how in (a.get("spend_plan") or {}).items():
+        if pos not in POSITIONS or how not in SPEND_VALUES:
+            v.append(Violation("spend_plan", f"{spec.agent_id}: spend_plan entry {pos!r}: {how!r} must be a position in {POSITIONS} with a value in {SPEND_VALUES}", spec.agent_id))
+        else:
+            spend.append((pos, how))
     for cid in thesis.stack_anchor:
         if cid not in ids:
             v.append(Violation("unknown_player", f"{spec.agent_id}: stack_anchor id {cid!r} is not on the slate", spec.agent_id))
@@ -128,7 +144,35 @@ def _parse_agent(a: dict, spec: PoolAgentSpec, ids: set, teams: set, games: set,
         overrides.append(pe)
     min_core = int(a.get("min_core", spec.rules.min_core))
     rules = replace(spec.rules, min_core=min(max(min_core, 1), 8))  # hard sliders stay the spec's; only the minimum is the expert's call
-    return ExpertAgentOutput(spec.agent_id, thesis, default_tier, tuple(groups), tuple(overrides), rules), None
+    return ExpertAgentOutput(spec.agent_id, thesis, default_tier, tuple(groups), tuple(overrides), rules, variations, tuple(spend)), None
+
+
+def _parse_variations(a: dict, bt: dict, spec: PoolAgentSpec, ids: set, by_id: dict, v: list[Violation]) -> tuple[Variation, ...]:
+    """The agent's lineup variations. An older-style answer (no `variations`) becomes one: its `backs` as views and its `stack_anchor` as the stack."""
+    raw = a.get("variations")
+    if raw is None:
+        raw = [{"views": list(bt.get("backs", ())), "stack": list(bt.get("stack_anchor", ())), "note": ""}]
+    out = []
+    aid = spec.agent_id
+    if not (1 <= len(raw) <= MAX_SCRIPTS):
+        v.append(Violation("variations_count", f"{aid}: give 1-{MAX_SCRIPTS} variations (one lineup each), got {len(raw)}", aid))
+    for i, x in enumerate(raw):
+        var = Variation(tuple(x.get("views", ())), tuple(x.get("stack", ())), x.get("note", ""))
+        games_seen: dict[str, str] = {}
+        for ref in var.views:
+            g = _game_of_ref(ref)
+            if g in games_seen:
+                v.append(Violation("one_view_per_game", f"{aid}: variation {i + 1} holds two views of {g} ({games_seen[g]!r}, {ref!r}); games are independent and a game has one view", aid))
+            games_seen[g] = ref
+        for cid in var.stack:
+            if cid not in ids:
+                v.append(Violation("unknown_player", f"{aid}: variation {i + 1} stack id {cid!r} is not on the slate", aid))
+        members = [by_id[c] for c in var.stack if c in by_id]
+        qbs = [p for p in members if p.position == "QB"]
+        if by_id and not (qbs and any(p.team == qbs[0].team and p.position in ("WR", "TE") for p in members)):
+            v.append(Violation("stack_shape", f"{aid}: variation {i + 1}'s stack needs a QB plus at least one of his pass catchers (WR/TE); got {[p.name for p in members]}", aid))
+        out.append(var)
+    return tuple(out)
 
 
 def _check_agent(out: ExpertAgentOutput, spec: PoolAgentSpec, universe: list[PlayerRef], branch_probs: dict[str, float], game_totals: dict, v: list[Violation]) -> None:
@@ -143,10 +187,10 @@ def _check_agent(out: ExpertAgentOutput, spec: PoolAgentSpec, universe: list[Pla
         if not any(branch_probs.get(r, 0.0) >= spec.must_back_probability for r in backs):
             v.append(Violation("probability_floor", f"{aid}: needs a backed branch with probability >= {spec.must_back_probability}; none of {list(backs)} qualifies -- say unavailable instead", aid))
     if spec.min_game_total is not None:
-        for g in {_game_of_ref(r) for r in backs}:
+        for g in _stack_games(out, universe):
             total = game_totals.get(g)
             if total is None or total < spec.min_game_total:
-                v.append(Violation("min_total", f"{aid}: backs {g} with total {total}, below the {spec.min_game_total} minimum", aid))
+                v.append(Violation("min_total", f"{aid}: stacks in {g} with total {total}, below the {spec.min_game_total} minimum", aid))
     pool = expand_pool(out, universe)
     n = len(universe)
     core = sum(1 for e in pool.entries if e.tier == "core")
@@ -155,8 +199,6 @@ def _check_agent(out: ExpertAgentOutput, spec: PoolAgentSpec, universe: list[Pla
     low = 0 if out.default_tier == DERIVED else MIN_CORE
     if not (low <= core <= MAX_CORE):
         v.append(Violation("core_size", f"{aid}: {core} explicit core players; use between {low} and {MAX_CORE}", aid))
-    if len(backs) > MAX_SCRIPTS:
-        v.append(Violation("too_many_scripts", f"{aid}: backs {len(backs)} branches; each is a script variation with its own lineup, use at most {MAX_SCRIPTS}", aid))
     if n and live / n > MAX_BROAD_FRACTION:
         # An advisory, not a limit (Chris, 2026-10-09): a wide pool is the expert's call. It is surfaced so the build record shows it.
         v.append(Violation("pool_broad", f"{aid}: {live} of {n} players are core/eligible ({live / n:.0%}); past about {MAX_BROAD_FRACTION:.0%} the stand gets diluted and tends to converge on the same plays as other agents", aid, "warning"))

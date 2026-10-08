@@ -7,7 +7,7 @@ from nfl_dfs.build.agents import POOL_AGENT_BY_ID
 from nfl_dfs.build.expert.repair import (
     REPAIRABLE_STAGES, build_with_repair, describe_failure, output_to_json, repair_prompt, repair_spec,
 )
-from nfl_dfs.build.pool.contracts import BuildThesis, ExpertAgentOutput, GroupTier, PlayerRef, PoolEntry, PoolRules
+from nfl_dfs.build.pool.contracts import BuildThesis, ExpertAgentOutput, GroupTier, PlayerRef, PoolEntry, PoolRules, Variation
 from nfl_dfs.build.thesis.parse import parse_analyst_response
 from nfl_dfs.optimizer.pool_solve import PoolBuildFailure
 from tests._build_fixtures import _packet, _response, league_fn
@@ -34,6 +34,7 @@ def _prior(universe) -> ExpertAgentOutput:
     return ExpertAgentOutput(
         AGENT, BuildThesis((f"{universe[0].game_id}:b0",), (), (), (), "stack the shootout"), "eligible",
         (GroupTier("core", "branch story", first.team, "QB", None),), (PoolEntry(universe[1].canonical_id, "exclude", "field owns him"),), PoolRules(min_core=4),
+        (Variation((f"{universe[0].game_id}:b0",), (f"{first.team}_qb", f"{first.team}_wr0")),),
     )
 
 

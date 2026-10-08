@@ -5,13 +5,13 @@ import numpy as np
 import pytest
 
 from nfl_dfs.build.evidence.contracts import with_sha
-from nfl_dfs.build.pool.contracts import BuildThesis, ExpertAgentOutput, GroupTier, PlayerRef, PoolEntry, PoolRules
+from nfl_dfs.build.pool.contracts import BuildThesis, ExpertAgentOutput, GroupTier, PlayerRef, PoolEntry, PoolRules, Variation
 from nfl_dfs.build.pool.derive import LIFT, derive_tiers, is_beneficiary
 from nfl_dfs.build.pool.expand import expand_pool
 from nfl_dfs.build.thesis.contracts import Branch, GameThesis, PlayerBranchOutcome
 from nfl_dfs.build.value.calibration import CalibrationTable, CellStat
 from nfl_dfs.optimizer.pool_solve import PoolBuildFailure
-from nfl_dfs.optimizer.script_solve import build_agent_by_script
+from nfl_dfs.optimizer.script_solve import SPEND_TILT, build_agent_by_variation, spend_tilt
 from nfl_dfs.projection.blend import PlayerProjection
 
 OPP = {"T1": "T2", "T2": "T1", "T3": "T4", "T4": "T3"}
@@ -49,55 +49,87 @@ class _Pk:  # the slice of an EvidencePacket derive_tiers reads
         self.players = players
 
 
-def test_a_script_lifts_hurts_and_leaves_neutral_in_its_own_game_and_other_games_are_fills():
-    t = derive_tiers(_universe(), THESES, {}, "g0:b0")
-    assert t["qb_T1"][0] == "core" and "lifts him" in t["qb_T1"][1]
-    assert t["rb0_T1"][0] == "eligible"  # not named by the branch -> neutral
-    assert t["qb_T3"][0] == "eligible" or t["qb_T3"][0] == "reach"  # other game: lifted in its own mix only if the mix lifts him
-    assert all(t[p.canonical_id][0] in ("reach", "eligible") for p in _universe() if p.game_id == "g1")
-    t2 = derive_tiers(_universe(), THESES, {}, "g0:b1")
-    assert t2["rb1_T2"][0] == "reach" and "hurts him" in t2["rb1_T2"][1] and t2["qb_T1"][0] == "eligible"  # the same player flips with the script
+def test_stack_is_core_lifted_teammates_on_a_stack_team_are_core_lifted_pieces_elsewhere_eligible_hurt_players_reach():
+    t = derive_tiers(_universe(), THESES, {}, ["g0:b0", "g1:b0"], ["qb_T1", "wr2_T1"])
+    assert t["qb_T1"] == ("core", "on the agent's core stack") and t["wr2_T1"][0] == "core"
+    assert t["wr1_T1"][0] == "core" and "stack team" in t["wr1_T1"][1]  # g0:b0 lifts him and he plays for a stack team
+    assert t["qb_T3"][0] == "eligible" and "piece of a game" in t["qb_T3"][1]  # lifted in g1's view, not on the stack -> grab a piece
+    t2 = derive_tiers(_universe(), THESES, {}, ["g0:b1", "g1:b0"], ["qb_T1", "wr2_T1"])
+    assert t2["rb1_T2"][0] == "reach" and "avoid" in t2["rb1_T2"][1]  # g0:b1 hurts him
 
 
-def test_tiers_flip_with_the_script_core_in_one_reach_in_the_other():
-    th = {"g0": _thesis("g0", ["rb1_T1"], ["rb1_T1"])}
-    # the same RB is lifted in b0 and hurt in b1 -- build the second explicitly
+def test_a_game_has_its_own_view_games_do_not_influence_each_other():
+    a = derive_tiers(_universe(), THESES, {}, ["g0:b0"], ["qb_T1", "wr2_T1"])
+    b = derive_tiers(_universe(), THESES, {}, ["g0:b0", "g1:b1"], ["qb_T1", "wr2_T1"])
+    assert all(a[p.canonical_id] == b[p.canonical_id] for p in _universe() if p.game_id == "g0")  # g1's view changes nothing in g0
+    assert a["wr2_T4"][0] == "reach" and b["wr2_T4"][0] == "reach"  # g1:b1 hurts T4's WR2; with no g1 view he is a fill
+
+
+def test_the_same_player_flips_tier_with_the_view_core_when_lifted_reach_when_hurt():
     b0 = Branch("b0", (("q1", True),), False, 0.5, "d", player_outcomes=(PlayerBranchOutcome("rb1_T1", 1.3, 1.3),))
     b1 = Branch("b1", (("q1", False),), False, 0.4, "d", player_outcomes=(PlayerBranchOutcome("rb1_T1", 0.8, 0.8),))
-    th = {"g0": replace(th["g0"], branches=(b0, b1, Branch("res", (), True, 0.10, "d")))}
-    a, b = derive_tiers(_universe(), th, {}, "g0:b0")["rb1_T1"][0], derive_tiers(_universe(), th, {}, "g0:b1")["rb1_T1"][0]
-    assert (a, b) == ("core", "reach")
+    th = {"g0": replace(THESES["g0"], branches=(b0, b1, Branch("res", (), True, 0.10, "d")))}
+    lifted = derive_tiers(_universe(), th, {}, ["g0:b0"], ["qb_T1", "wr2_T1"])["rb1_T1"][0]
+    hurt = derive_tiers(_universe(), th, {}, ["g0:b1"], ["qb_T1", "wr2_T1"])["rb1_T1"][0]
+    assert (lifted, hurt) == ("core", "reach")
 
 
-def test_unavailable_players_are_excluded_with_the_reason_and_unknown_games_raise():
-    u = [replace(p, status="OUT") if p.canonical_id == "qb_T1" else p for p in _universe()]
-    t = derive_tiers(u, THESES, {}, "g0:b0")
-    assert t["qb_T1"] == ("exclude", "unavailable (OUT)")
+def test_unavailable_players_are_excluded_unknown_games_raise_and_a_game_with_no_view_is_a_fill_unless_lifted_in_its_mix():
+    u = [replace(p, status="OUT") if p.canonical_id == "qb_T3" else p for p in _universe()]
+    t = derive_tiers(u, THESES, {}, ["g0:b0"], ["qb_T1", "wr2_T1"])
+    assert t["qb_T3"] == ("exclude", "unavailable (OUT)")
+    assert t["wr0_T3"][0] == "reach" and "no view" in t["wr0_T3"][1]
     with pytest.raises(ValueError, match="no thesis"):
-        derive_tiers(_universe(), THESES, {}, "zz@yy:b0")
+        derive_tiers(_universe(), THESES, {}, ["zz@yy:b0"], [])
 
 
-def test_a_beneficiary_is_core_in_a_script_that_does_not_hurt_him_and_eligible_elsewhere():
+def test_a_defense_is_never_a_haircut_fill_and_its_value_moves_opposite_to_the_quarterback_it_faces():
+    from nfl_dfs.build.pool.derive import DST_MULT_RANGE, dst_multipliers, opposing_qb_by_dst
+    from nfl_dfs.build.value.tail_value import conditional_multipliers
+    th = {"g0": _thesis("g0", ["qb_T2"], ["qb_T1"])}
+    for views in (["g0:b0"], ["g0:b1"], []):
+        t = derive_tiers(_universe(), th, {}, views, ["qb_T1", "wr2_T1"])
+        assert all(t[f"dst_{x}"][0] == "eligible" for x in ("T1", "T2", "T3", "T4"))  # eligible even with no view of the game: priced on merit
+    assert opposing_qb_by_dst(_universe())["dst_T1"] == "qb_T2" and opposing_qb_by_dst(_universe())["dst_T3"] == "qb_T4"
+    lifted_qb = conditional_multipliers(th.values(), ["g0:b0"])  # b0 lifts qb_T2 (x1.3)
+    hurt_qb = conditional_multipliers(th.values(), ["g0:b1"])  # b1 hurts qb_T1 (x0.8)
+    assert dst_multipliers(_universe(), lifted_qb)["dst_T1"][0] == pytest.approx(DST_MULT_RANGE[0])  # 1 - 0.5*0.3 = 0.85, floored at 0.9
+    assert dst_multipliers(_universe(), hurt_qb)["dst_T2"][0] == pytest.approx(1.10)  # 1 + 0.5*0.2
+    assert "dst_T3" not in dst_multipliers(_universe(), hurt_qb)  # a game the view does not touch: no change
+    named = {"dst_T2": (1.3, 1.3), **hurt_qb}
+    assert "dst_T2" not in dst_multipliers(_universe(), named)  # an analyst's own price for the defense wins
+
+
+def test_a_beneficiary_is_eligible_even_in_a_game_without_a_view_and_core_on_a_stack_team():
     from nfl_dfs.build.evidence.contracts import PlayerEvidence
     pe = lambda cid, gain: PlayerEvidence(cid, cid, "T1", "WR", 5000, 10.0, None, None, False, False, None, None, None, None, None, None, None, None,
                                           target_share_l4=0.10, target_share_expected=0.10 + gain)
     assert is_beneficiary(pe("x", 0.04)) and not is_beneficiary(pe("x", 0.01)) and not is_beneficiary(None)
     pk = {"g0": _Pk([pe("wr0_T1", 0.05), pe("wr0_T3", 0.05)])}
-    t = derive_tiers(_universe(), THESES, pk, "g0:b0")
-    assert t["wr0_T1"][0] == "core" and "vacated role" in t["wr0_T1"][1]  # in the scripted game, not hurt
-    assert t["wr0_T3"][0] == "eligible"  # elsewhere: eligible, not core
+    t = derive_tiers(_universe(), THESES, pk, ["g0:b0"], ["qb_T1", "wr2_T1"])
+    assert t["wr0_T1"][0] == "core"  # stack team, view does not hurt him
+    assert t["wr0_T3"][0] == "eligible" and "vacated role" in t["wr0_T3"][1]  # g1 has no view, still eligible
 
 
 def test_expand_uses_the_derived_map_for_unnamed_players_and_the_experts_adjustments_win():
     out = ExpertAgentOutput("a", BuildThesis(("g0:b0",), (), (), (), "r"), "derived",
                             (GroupTier("exclude", "refuse the chalk", "T2", "QB", None),), (PoolEntry("wr0_T1", "core", "battle call"),), PoolRules(min_core=2))
-    d = derive_tiers(_universe(), THESES, {}, "g0:b0")
-    pool = expand_pool(out, _universe(), d)
-    tier = {e.canonical_id: e.tier for e in pool.entries}
-    assert tier["qb_T1"] == "core"  # derived
-    assert tier["qb_T2"] == "exclude"  # the expert's group adjustment
-    assert tier["wr0_T1"] == "core" and next(e for e in pool.entries if e.canonical_id == "wr0_T1").reason == "battle call"
-    assert {e.tier for e in expand_pool(out, _universe(), None).entries if e.canonical_id == "qb_T3"} == {"reach"}  # no script -> fallback is reach
+    d = derive_tiers(_universe(), THESES, {}, ["g0:b0"], ["qb_T1", "wr2_T1"])
+    tier = {e.canonical_id: e.tier for e in expand_pool(out, _universe(), d).entries}
+    assert tier["qb_T1"] == "core" and tier["qb_T2"] == "exclude" and tier["wr0_T1"] == "core"
+    assert {e.tier for e in expand_pool(out, _universe(), None).entries if e.canonical_id == "qb_T3"} == {"reach"}
+
+
+def test_the_spend_plan_tilts_value_by_salary_pay_up_value_down_neutral_untouched():
+    projs = _projections()
+    base = {p.canonical_id: 10.0 for p in projs}
+    out = spend_tilt(base, projs, (("WR", "pay"), ("RB", "value")))
+    wr = next(p for p in projs if p.canonical_id == "wr2_T1")
+    rb = next(p for p in projs if p.canonical_id == "rb1_T1")
+    qb = next(p for p in projs if p.canonical_id == "qb_T1")
+    assert out["wr2_T1"] == pytest.approx(10.0 + SPEND_TILT * wr.salary / 1000)
+    assert out["rb1_T1"] == pytest.approx(10.0 - SPEND_TILT * rb.salary / 1000)
+    assert out["qb_T1"] == 10.0 and spend_tilt(base, projs, ()) == base
 
 
 def _projections():
@@ -107,39 +139,58 @@ def _projections():
 TABLE = CalibrationTable({pos: (CellStat(-np.inf, np.inf, 1000, 1.0, 1.8, 0.5),) for pos in ("QB", "RB", "WR", "TE", "DST")})
 
 
-def _build(backs, n=2, **kw):
-    out = ExpertAgentOutput("a1", BuildThesis(tuple(backs), (), (), (), "r"), "derived", (), (), PoolRules(min_core=2))
-    return build_agent_by_script(
+def _build(variations, n=2, spend=(), **kw):
+    out = ExpertAgentOutput("a1", BuildThesis((), (), (), (), "r"), "derived", (), (), PoolRules(min_core=2), tuple(variations), tuple(spend))
+    return build_agent_by_variation(
         out, universe=_universe(), theses=THESES, packets={}, projections=_projections(), table=TABLE, floor_lean=0.0, n=n,
         opponent_of=OPP, game_id_by_team=GAME, pair_signs=[], avoid_lineups=[], **kw,
     )
 
 
-def test_one_lineup_per_script_in_order_each_built_under_its_own_scripts_tiers():
-    sb = _build(["g0:b0", "g1:b0"])
-    assert sb.scripts == ("g0:b0", "g1:b0") and len(sb.result.lineups) == 2
-    # the lineup for g0:b0 is built from the g0 script's core, the other from g1's
-    core0 = {e.canonical_id for e in sb.pools["g0:b0"].entries if e.tier == "core"}
-    core1 = {e.canonical_id for e in sb.pools["g1:b0"].entries if e.tier == "core"}
-    assert core0 and core1 and core0 != core1
-    ids0 = {p.canonical_id for p in sb.result.lineups[0].players}
-    ids1 = {p.canonical_id for p in sb.result.lineups[1].players}
-    assert len(ids0 & core0) >= 2 and len(ids1 & core1) >= 2
-    assert len(ids0 & ids1) <= 6  # kept apart by the 3-player minimum difference
+def test_one_lineup_per_variation_each_carrying_its_own_stack():
+    a = Variation(("g0:b0", "g1:b0"), ("qb_T1", "wr2_T1"))
+    b = Variation(("g0:b0", "g1:b0"), ("qb_T3", "wr2_T3"))
+    vb = _build([a, b])
+    assert len(vb.result.lineups) == 2 and vb.variations == (a, b)
+    ids = [{p.canonical_id for p in lu.players} for lu in vb.result.lineups]
+    assert {"qb_T1", "wr2_T1"} <= ids[0] and {"qb_T3", "wr2_T3"} <= ids[1]  # the core stack is in the lineup it belongs to
+    assert len(ids[0] & ids[1]) <= 6
 
 
-def test_fewer_scripts_than_lineups_reuse_the_scripts_in_order():
-    sb = _build(["g0:b0"], n=2)
-    assert sb.scripts == ("g0:b0", "g0:b0")
-    a, b = ({p.canonical_id for p in lu.players} for lu in sb.result.lineups)
-    assert a != b
+def test_a_lineup_spans_games_it_is_not_one_game():
+    vb = _build([Variation(("g0:b0", "g1:b0"), ("qb_T1", "wr2_T1"))], n=1)
+    teams = {p.team for p in vb.result.lineups[0].players}
+    assert any(GAME[t] == "g0" for t in teams) and any(GAME[t] == "g1" for t in teams)
 
 
-def test_no_script_or_an_unknown_game_fails_loudly_for_the_expert_loop():
+def test_fewer_variations_than_lineups_repeat_in_order_and_the_lineups_still_differ():
+    vb = _build([Variation(("g0:b0",), ("qb_T1", "wr2_T1"))], n=2)
+    a, b = ({p.canonical_id for p in lu.players} for lu in vb.result.lineups)
+    assert vb.variations[0] == vb.variations[1] and a != b
+
+
+def test_a_spend_plan_shifts_where_the_salary_goes():
+    var = [Variation(("g0:b0",), ("qb_T1", "wr2_T1"))]
+    base = _build(var, n=1).result.lineups[0]
+    value_rb = _build(var, n=1, spend=(("RB", "value"), ("WR", "pay"))).result.lineups[0]
+    rb_salary = lambda lu: sum(p.salary for p in lu.players if p.position == "RB")
+    assert rb_salary(value_rb) <= rb_salary(base)
+
+
+def test_no_variation_or_an_unknown_game_fails_loudly_for_the_expert_loop():
     out = ExpertAgentOutput("a1", BuildThesis((), (), (), (), "r"), "derived", (), (), PoolRules(min_core=2))
     kw = dict(universe=_universe(), theses=THESES, packets={}, projections=_projections(), table=TABLE, floor_lean=0.0, n=2, opponent_of=OPP,
               game_id_by_team=GAME, pair_signs=[], avoid_lineups=[])
-    with pytest.raises(PoolBuildFailure, match="no script"):
-        build_agent_by_script(out, **kw)
+    with pytest.raises(PoolBuildFailure, match="no variation"):
+        build_agent_by_variation(out, **kw)
     with pytest.raises(PoolBuildFailure, match="no thesis"):
-        _build(["zz@yy:b0"])
+        _build([Variation(("zz@yy:b0",), ("qb_T1", "wr2_T1"))])
+
+
+def test_a_declared_stack_player_who_cannot_play_fails_the_build_loudly():
+    u = [replace(p, status="OUT") if p.canonical_id == "wr2_T1" else p for p in _universe()]
+    projs = [replace(p, dk_injury_status="OUT") if p.canonical_id == "wr2_T1" else p for p in _projections()]
+    out = ExpertAgentOutput("a1", BuildThesis((), (), (), (), "r"), "derived", (), (), PoolRules(min_core=1), (Variation(("g0:b0",), ("qb_T1", "wr2_T1")),))
+    with pytest.raises(PoolBuildFailure, match="declared stack player"):
+        build_agent_by_variation(out, universe=u, theses=THESES, packets={}, projections=projs, table=TABLE, floor_lean=0.0, n=1,
+                                 opponent_of=OPP, game_id_by_team=GAME, pair_signs=[], avoid_lineups=[])
