@@ -22,6 +22,7 @@ from pathlib import Path
 
 import nfl_data_py as nfl
 
+from nfl_dfs.build.availability import availability_from_snapshot
 from nfl_dfs.build.evidence.builder import build_evidence_packets
 from nfl_dfs.build.evidence.opportunity import trailing_shares
 from nfl_dfs.build.evidence.metrics import team_game_metrics
@@ -41,7 +42,10 @@ def main() -> None:
         warnings.simplefilter("ignore")
         pbp = nfl.import_pbp_data([SEASON], include_participation=False)
     tg = team_game_metrics(pbp)
-    packets = build_evidence_packets(snapshot["player_pool"], snapshot["stack_profiles"], tg, season=SEASON, week=WEEK, opportunity=trailing_shares(pbp, season=SEASON, through_week=WEEK - 1))
+    availability, _warn = availability_from_snapshot(snapshot)
+    if _warn:
+        print(f"WARNING: {_warn}")
+    packets = build_evidence_packets(snapshot["player_pool"], snapshot["stack_profiles"], tg, season=SEASON, week=WEEK, availability=availability, opportunity=trailing_shares(pbp, season=SEASON, through_week=WEEK - 1))
 
     OUT_DIR.mkdir(exist_ok=True)
     (OUT_DIR / "evidence_packets").mkdir(exist_ok=True)
