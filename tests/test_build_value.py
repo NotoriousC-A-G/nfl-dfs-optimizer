@@ -86,3 +86,60 @@ def test_expected_multipliers_weight_by_branch_probability_with_unnamed_branches
 
 def test_real_resultsdb_loader_maps_defense_label_and_tolerates_a_missing_root(tmp_path):
     assert len(load_resultsdb_player_rows(root=tmp_path / "nope")) == 0
+
+
+def _floor_table():
+    # two WRs with the same mean: a steady one (tight tails) and a volatile one (low floor, high ceiling)
+    return CalibrationTable({
+        "WR": (CellStat(-np.inf, 10.0, 1000, 1.0, 1.6, 0.8), CellStat(10.0, np.inf, 1000, 1.0, 2.4, 0.2)),
+    })
+
+
+def test_floor_lean_zero_is_exactly_the_neutral_value():
+    t = _floor_table()
+    for cid, proj in (("steady", 8.0), ("boom", 12.0)):
+        assert tail_values([(cid, "WR", proj)], t, floor_lean=0.0)[cid].tv == tail_values([(cid, "WR", proj)], t)[cid].tv
+
+
+def test_a_floor_lean_prefers_the_steady_player_and_a_ceiling_lean_the_volatile_one():
+    t = _floor_table()
+    steady, boom = ("steady", "WR", 10.0 - 1e-6), ("boom", "WR", 10.0)
+    floor = tail_values([steady, boom], t, floor_lean=0.6)
+    ceiling = tail_values([steady, boom], t, floor_lean=-0.6)
+    assert floor["steady"].tv > floor["boom"].tv
+    assert ceiling["boom"].tv > ceiling["steady"].tv
+    assert floor["boom"].q25 < floor["steady"].q25 <= floor["steady"].mu
+
+
+def test_a_ceiling_lean_does_not_reward_a_bad_floor():
+    t = _floor_table()
+    # a ceiling lean only raises the weight on the upside; the left tail is never credited
+    neutral = tail_values([("boom", "WR", 12.0)], t)["boom"]
+    ceiling = tail_values([("boom", "WR", 12.0)], t, floor_lean=-0.5)["boom"]
+    assert ceiling.tv == pytest.approx(neutral.mu + C_DEFAULT * 1.5 * (neutral.q90 - neutral.mu))
+
+
+def test_a_floor_lean_needs_a_table_with_a_left_tail_and_refuses_to_invent_one():
+    old = CalibrationTable({"WR": (CellStat(-np.inf, np.inf, 1000, 1.0, 2.0),)})
+    with pytest.raises(ValueError, match="q25_ratio"):
+        tail_values([("w", "WR", 10.0)], old, floor_lean=0.3)
+    assert tail_values([("w", "WR", 10.0)], old, floor_lean=-0.3)["w"].tv > tail_values([("w", "WR", 10.0)], old)["w"].tv  # ceiling lean needs no q25
+    with pytest.raises(ValueError, match="floor_lean"):
+        tail_values([("w", "WR", 10.0)], old, floor_lean=1.5)
+
+
+def test_fit_cells_measures_a_left_tail_below_the_mean_and_it_survives_the_json_round_trip():
+    t = fit_cells(_df())
+    for cells in t.cells.values():
+        for c in cells:
+            assert 0 < c.q25_ratio < c.mean_ratio < c.q90_ratio
+    assert CalibrationTable.from_json(t.to_json()).cells["WR"][0].q25_ratio == pytest.approx(t.cells["WR"][0].q25_ratio)
+    legacy = '{"fitted_seasons": [], "cells": {"WR": [{"lo": -Infinity, "hi": Infinity, "n": 9, "mean_ratio": 1.0, "q90_ratio": 2.0}]}}'
+    assert CalibrationTable.from_json(legacy).cells["WR"][0].q25_ratio is None  # an old saved table still loads
+
+
+def test_the_pool_agents_carry_a_floor_dial_in_range_with_anchors_leaning_floor_and_stack_agents_ceiling():
+    from nfl_dfs.build.agents import POOL_AGENT_BY_ID, POOL_AGENTS
+    assert all(-1.0 <= a.floor_lean <= 1.0 for a in POOL_AGENTS)
+    assert POOL_AGENT_BY_ID["volume_anchor"].floor_lean > 0
+    assert POOL_AGENT_BY_ID["shootout_stack"].floor_lean < 0 and POOL_AGENT_BY_ID["contrarian_game"].floor_lean < 0

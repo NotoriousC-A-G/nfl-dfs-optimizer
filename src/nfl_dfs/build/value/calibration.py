@@ -7,6 +7,7 @@ position and projection tier we measure how actual points relate to the projecti
 
 - `mean_ratio` = mean(actual) / mean(projection)  -- calibrates the mean (and is where regression to the
   mean for high-projection players shows up as a ratio below 1);
+- `q25_ratio`  = q25(actual)  / mean(projection)  -- the left tail (a floor measure, for the per-agent floor dial);
 - `q90_ratio`  = q90(actual)  / mean(projection)  -- the right tail, as an empirical quantile of a large
   cell (the model-analytics review's objection was to q90 from ~17 games, not to q90 from thousands).
 
@@ -41,6 +42,9 @@ class CellStat:
     n: int
     mean_ratio: float
     q90_ratio: float
+    # The left tail, for the floor dial (draft, not backtested). None on a table fitted before the floor dial existed:
+    # the dial then has no downside to read and `tail_values` refuses a floor-leaning request rather than inventing one.
+    q25_ratio: float | None = None
 
 
 @dataclass(frozen=True)
@@ -107,7 +111,7 @@ def fit_cells(df: pd.DataFrame, *, n_bins: int = N_BINS, min_cell_n: int = MIN_C
             act = g["actual_points"].to_numpy()[m]
             lo = -np.inf if b == 0 else float(edges[b - 1])
             hi = np.inf if b == len(edges) else float(edges[b])
-            out.append(CellStat(lo, hi, int(m.sum()), float(act.mean() / proj_mean), float(np.quantile(act, 0.9) / proj_mean)))
+            out.append(CellStat(lo, hi, int(m.sum()), float(act.mean() / proj_mean), float(np.quantile(act, 0.9) / proj_mean), float(np.quantile(act, 0.25) / proj_mean)))
         cells[pos] = tuple(out)
     seasons = tuple(sorted(int(s) for s in d["season"].unique())) if "season" in d.columns else ()
     return CalibrationTable(cells, seasons)

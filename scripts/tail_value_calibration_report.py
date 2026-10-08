@@ -35,7 +35,7 @@ def main() -> None:
     CACHE.write_text(table.to_json())
     print(f"\nFitted on all seasons {list(table.fitted_seasons)} -> {CACHE}")
     for pos, cells in table.cells.items():
-        print(f"  {pos}: " + "  ".join(f"[{('-inf' if c.lo < -1e9 else f'{c.lo:.1f}')},{('inf' if c.hi > 1e9 else f'{c.hi:.1f}')}) n={c.n} mean x{c.mean_ratio:.2f} q90 x{c.q90_ratio:.2f}" for c in cells))
+        print(f"  {pos}: " + "  ".join(f"[{('-inf' if c.lo < -1e9 else f'{c.lo:.1f}')},{('inf' if c.hi > 1e9 else f'{c.hi:.1f}')}) n={c.n} mean x{c.mean_ratio:.2f} q25 x{(c.q25_ratio or 0):.2f} q90 x{c.q90_ratio:.2f}" for c in cells))
 
 
 if __name__ == "__main__":
