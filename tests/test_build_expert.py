@@ -172,7 +172,7 @@ def test_prompt_carries_agent_briefs_theses_refs_rules_and_retry_errors():
     assert not [e for e in errs if e.severity == "error"]
     theses, packets = {packet.game_id: thesis}, {packet.game_id: packet}
     p = expert_prompt(theses, packets)
-    assert PROMPT_VERSION in p and "POOLS MUST BE NARROW" in p and "VALID BRANCH REFS" in p
+    assert PROMPT_VERSION in p and "THE STAND MUST BE NARROW" in p and "VALID BRANCH REFS" in p
     for a in POOL_AGENTS:
         assert a.agent_id in p
     assert "NO WR/TE bring-backs" in p  # volume anchor's hard rule is stated
@@ -192,3 +192,23 @@ def test_expert_spec_key_changes_with_the_theses_and_freshness():
     import dataclasses
     changed = dataclasses.replace(thesis, branches=tuple(dataclasses.replace(b, prob=b.prob * 0.5) if i == 0 else b for i, b in enumerate(thesis.branches)))
     assert a.key != expert_spec({packet.game_id: changed}, packets, u, model="m", freshness="f1").key
+
+
+def test_reach_is_a_valid_default_and_group_tier_and_does_not_count_toward_narrowness():
+    d = _expert()
+    for a in d["agents"]:
+        if "build_thesis" in a:
+            a["default_tier"] = "reach"
+    result, v = _parse(d)
+    assert _codes(v) == set(), [x.message for x in v]
+    assert {o.default_tier for o in result.outputs} == {"reach"}
+    d2 = _expert()
+    d2["agents"][0]["group_tiers"].append({"tier": "reach", "reason": "a shot: quiet game, 33% shootout branch", "team": "LV", "position": "TE", "game_id": None})
+    assert _codes(_parse(d2)[1]) == set()
+
+
+def test_the_prompt_explains_graded_tiers_and_defaults_the_open_remainder_to_reach():
+    packet = _packet()
+    thesis, _ = parse_analyst_response(json.dumps(_response(packet)), packet, league_fn, prompt_version="p", model="m")
+    p = expert_prompt({packet.game_id: thesis}, {packet.game_id: packet})
+    assert "GRADED CONFIDENCE, not a fence" in p and 'default_tier "reach"' in p and "SHOT" in p

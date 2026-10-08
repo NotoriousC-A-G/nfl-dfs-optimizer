@@ -9,7 +9,10 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 SCHEMA_VERSION = 1
-TIERS = ("core", "eligible", "exclude")
+# Graded confidence, not a fence (Chris, 2026-10-08): core = the players the agent's stand is built on; eligible = fits the stand;
+# reach = usable at a value haircut (a salary/position fill, or a deliberate shot such as a quiet game with a real chance of a
+# shootout); exclude = barred, only for a stated reason. Unnamed players default to reach.
+TIERS = ("core", "eligible", "reach", "exclude")
 
 
 @dataclass(frozen=True)

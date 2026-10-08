@@ -35,6 +35,9 @@ BRING_BACK_BONUS = 0.8
 # This is a DETECTION trigger, not a solver constraint (Chris, 2026-10-07: no hard rules): the agent fails loudly with a supply
 # diagnosis and the expert re-tiers once (`build/expert/repair.py`). Draft threshold, not backtested: $2,000 unspent.
 MIN_SALARY_USED = 48_000
+# A reach-tier player is allowed anywhere in the lineup but is worth less to the solver (draft, not backtested): he is taken to fit a
+# salary or position need, or because his value still beats the alternatives after the haircut -- not as a default.
+REACH_HAIRCUT = 0.12
 PAIR_TOP_N = 4  # only each team's top-N catchers by value get pair terms (bounds the model size)
 # Failure codes widening can plausibly fix; anything else is an expert/contract error and fails at once.
 _WIDENABLE_PREFIXES = ("feasibility_", "stack_teams", "min_core", "distinct_stacks")
@@ -93,6 +96,8 @@ def _solve(
     avoid_lineups: list[frozenset[str]] | None = None, min_player_difference: int = 1,
 ) -> list[Lineup]:
     rules = pool.rules
+    reach_ids = {e.canonical_id for e in pool.entries if e.tier == "reach"}
+    values = {i: (v * (1.0 - REACH_HAIRCUT) if i in reach_ids else v) for i, v in values.items()}
     pairs = stack_bonus_pairs(
         playable, values, opponent_of,
         allow_bring_back=not rules.forbid_pass_catcher_bring_back,

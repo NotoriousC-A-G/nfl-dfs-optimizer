@@ -12,7 +12,7 @@ from nfl_dfs.build.evidence.contracts import EvidencePacket
 from nfl_dfs.build.pool.contracts import PlayerRef
 from nfl_dfs.build.thesis.contracts import GameThesis
 
-PROMPT_VERSION = "expert-v2"
+PROMPT_VERSION = "expert-v3"
 
 
 def branch_refs(theses: dict[str, GameThesis]) -> dict[str, float]:
@@ -82,18 +82,25 @@ def _brief(a: PoolAgentSpec) -> str:
 
 _RULES = """\
 You are the lineup-construction EXPERT. You have the game theses (each game's pivotal questions, scenarios and player outcomes) and the
-field layer (ownership, leverage). For each pool agent below, build a POOL: the players that agent may draw from this slate, arranged in
-tiers -- core (you want them used), eligible (allowed), exclude (barred) -- plus a build thesis saying which angles it backs.
+field layer (ownership, leverage). For each pool agent below, build a POOL: every player on the slate arranged by how much confidence the
+agent's stand gives him, plus a build thesis saying which angles it backs. The tiers are GRADED CONFIDENCE, not a fence:
+  core     -- the players the stand is built on; you want them used (4-16 players).
+  eligible -- good fits for the stand, used freely.
+  reach    -- allowed at a value haircut: a salary or position fill, or a deliberate SHOT (for example a player in a game the market expects to
+              be quiet that still has a real chance of a shootout). A lineup may take one, but should not lean on him and he should not be in
+              every lineup. Name a reach player with a reason when you mean him as a shot.
+  exclude  -- barred. Only with a stated reason: an avoid pair, a branch you are betting against, a chalk player you refuse.
 
 RULES (machine-checked; a violation sends your answer back for one retry):
 1. Give each agent EITHER a pool OR {"agent_id": ..., "unavailable": true, "reason": "..."}. Unavailable is legitimate when the slate has no
    fit for that agent's angle (the brief says when) -- do NOT stretch an agent over a slate that does not suit it.
-2. POOLS MUST BE NARROW. Broad pools make every agent pick the same highest-value players. Use default_tier "exclude" unless you have a reason,
-   then bring players in: core 4-16 players; core + eligible must be at most 45% of the players listed. Use group_tiers (team / position /
-   game_id selectors) for broad strokes and overrides (player_id) for named players. Later entries win over earlier ones.
+2. THE STAND MUST BE NARROW. Use default_tier "reach" for the open remainder of the slate, then rank the players the stand is about: core 4-16
+   players; core + eligible must be at most 45% of the players listed (reach and exclude do not count toward that). Use group_tiers (team /
+   position / game_id selectors) for broad strokes and overrides (player_id) for named players. Later entries win over earlier ones.
 3. POOLS MUST DIFFER. At most TWO agents may back the same game; the agents' core tiers should not be near-duplicates; each agent backs
    different branches. backs/avoids/hedges are refs of the form "GAME:branch_id" copied from the BRANCH lines below.
-4. Every core and every exclude assignment (group tier or override) carries a one-line reason citing a thesis branch or the field layer.
+4. Every core and every exclude assignment (group tier or override) carries a one-line reason citing a thesis branch or the field layer. A reach
+   assignment you mean as a shot carries a reason too.
 5. Never put a player with an injury status in core; the engine strips them and rejects an unavailable core player. Injury BENEFICIARIES
    named in the theses (who inherits a vacated role) are a core input to EVERY pool where they fit -- unless the field already owns them.
 6. Hard sliders (bring-back rules) are enforced in code from each agent's spec; you cannot and need not set them.
@@ -107,7 +114,7 @@ OUTPUT: one JSON object, no markdown fences:
  "agents": [
   {"agent_id": "shootout_stack",
    "build_thesis": {"backs": ["GAME:b0"], "avoids": [], "hedges": [], "stack_anchor": ["<canonical_id>"], "reason": "..."},
-   "default_tier": "exclude",
+   "default_tier": "reach",
    "group_tiers": [{"tier": "core", "reason": "...", "team": "XXX", "position": "QB", "game_id": null}],
    "overrides": [{"player_id": "<canonical_id>", "tier": "core", "reason": "..."}],
    "min_core": 4},

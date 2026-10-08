@@ -227,3 +227,29 @@ def test_an_under_spent_lineup_fails_loudly_with_a_supply_diagnosis_not_a_warnin
     assert exc.value.stage == "underspend"
     assert "$41,400" in str(exc.value) and "$8,600" in str(exc.value)
     assert set(exc.value.diagnostics["supply"]) == {"QB", "RB", "WR", "TE", "DST"}
+
+
+def test_reach_tier_is_usable_but_worth_less_to_the_solver_by_the_haircut_and_nobody_else_is_touched(monkeypatch):
+    projs = _projections()
+    seen = {}
+    real = ps.generate_lineups
+
+    def spy(*a, **k):
+        seen.setdefault("values", k["base_value_by_id"])
+        return real(*a, **k)
+    monkeypatch.setattr(ps, "generate_lineups", spy)
+    entries = tuple(PoolEntry(p.canonical_id, "reach" if p.canonical_id == "wr0_T4" else "eligible", "") for p in projs)
+    _build(Pool(1, "a1", THESIS, entries, PoolRules(min_core=0)), projs, n=1)
+    raw = _values(projs)
+    assert seen["values"]["wr0_T4"] == pytest.approx(raw["wr0_T4"] * (1.0 - ps.REACH_HAIRCUT))
+    assert all(seen["values"][i] == pytest.approx(raw[i]) for i in raw if i != "wr0_T4")
+    # a big enough edge still wins despite the haircut: he is a shot, not a ban
+    boosted = _build(Pool(1, "a1", THESIS, entries, PoolRules(min_core=0)), projs, n=1, values=_values(projs, {"wr0_T4": 60.0}))
+    assert "wr0_T4" in {p.canonical_id for p in boosted.lineups[0].players}
+
+
+def test_a_reach_player_still_counts_as_playable_for_the_feasibility_checks():
+    projs = _projections()
+    entries = tuple(PoolEntry(p.canonical_id, "core" if p.canonical_id in ("qb_T1", "wr2_T1", "wr2_T2", "rb1_T2") else "reach", "r" if p.canonical_id in ("qb_T1", "wr2_T1", "wr2_T2", "rb1_T2") else "") for p in projs)
+    res = _build(Pool(1, "a1", THESIS, entries, PoolRules(min_core=2)), projs, n=2)
+    assert len(res.lineups) == 2 and not res.pool.widened_steps  # the open remainder removes the need to widen at all
