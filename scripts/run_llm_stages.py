@@ -23,6 +23,7 @@ from pathlib import Path
 
 import nfl_data_py as nfl
 
+from nfl_dfs.build.availability import availability_from_snapshot
 from nfl_dfs.build.evidence.builder import build_evidence_packets
 from nfl_dfs.build.evidence.opportunity import trailing_shares
 from nfl_dfs.build.evidence.metrics import league_values, team_game_metrics
@@ -36,6 +37,10 @@ from nfl_dfs.storage.slate_snapshot_store import load_latest_slate_snapshot
 from scripts.live_integration_check_dashboard import SEASON, WEEK
 
 MODEL_ID = "claude-session-subagent"
+# Analyst answers are keyed on the packet's MATERIAL fingerprint (line, units, availability, vacated roles, weather), which already
+# carries the Q/override decisions, so nothing outside the packet should invalidate them. In particular NOT the injury-capture time:
+# a Sunday-noon re-pull must re-ask only the games whose facts changed.
+ANALYST_FRESHNESS = "packet-v1"
 
 
 def _freshness() -> str:
@@ -58,7 +63,10 @@ def _load(games: set[str] | None):
     # The data's own capture time, NOT the wall clock: a clock-derived stamp changes the packet hash every minute and
     # silently invalidates cached analyst answers (found in the 2026-10-07 rehearsal).
     as_of = str(snapshot.get("timestamp", "unknown"))[:16] + "Z"
-    packets = build_evidence_packets(snapshot["player_pool"], snapshot["stack_profiles"], tg_current, season=SEASON, week=WEEK, as_of=as_of, opportunity=trailing_shares(pbp, season=SEASON, through_week=WEEK - 1))
+    availability, _warn = availability_from_snapshot(snapshot)
+    if _warn:
+        print(f"WARNING: {_warn}")
+    packets = build_evidence_packets(snapshot["player_pool"], snapshot["stack_profiles"], tg_current, season=SEASON, week=WEEK, as_of=as_of, availability=availability, opportunity=trailing_shares(pbp, season=SEASON, through_week=WEEK - 1))
     if games:
         unknown = games - set(packets)
         if unknown:
@@ -88,7 +96,7 @@ def main() -> int:
     packets, league_fn, snapshot = _load(games)
     kw = dict(season=SEASON, week=WEEK)
     fresh = _freshness()
-    a_specs = analyst_specs(packets, league_fn, model=MODEL_ID, freshness=fresh)
+    a_specs = analyst_specs(packets, league_fn, model=MODEL_ID, freshness=ANALYST_FRESHNESS)
 
     if args.command == "prepare-analysts":
         pending = prepare_requests(a_specs, **kw)

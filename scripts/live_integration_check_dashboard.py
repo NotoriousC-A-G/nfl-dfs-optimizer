@@ -19,6 +19,8 @@ fallback instead, so those two sections DO populate with real 2024/2025 PFF grad
 from __future__ import annotations
 
 import datetime as _dt
+import os
+from dataclasses import asdict
 import warnings
 
 from nfl_dfs.analysis.dup_risk_calibration import DEFAULT_RECENT_WINDOW, build_dup_risk_lookup_table
@@ -84,14 +86,15 @@ from scripts.live_integration_check_output import _build_ges, fetch_dk_raw_for_l
 from scripts.live_integration_check_projection import fetch_footballguys_raw, fetch_rotogrinders_raw
 
 SEASON = 2026
-WEEK = 4
+# NFL_DFS_WEEK is for dry runs of the build scripts against a saved earlier week (e.g. NFL_DFS_WEEK=4); unset in production.
+WEEK = int(os.environ.get("NFL_DFS_WEEK", 5))
 # Set to a specific DK draftGroupId to target that exact slate directly, bypassing auto-detection
 # entirely -- required once DK is serving more than one plausible main-shaped slate at once (a
 # real, live 2026-09-19 case; see ingestion.draftkings.fetch_slate_by_draft_group_id's own
 # docstring). Leave None to auto-detect (works fine when only one real main slate is live) -- if
 # auto-detection hits real ambiguity, it now fails loudly with the real candidate ids to choose
 # from here, rather than silently substituting an unrelated slate.
-DRAFT_GROUP_ID: int | None = 154078  # confirmed live 2026-10-04: the 12-game Sunday main slate (week 4); 154081 is the 4-game late slate
+DRAFT_GROUP_ID: int | None = 154468  # 2026-10-08: the 11-game Sunday main slate (week 5; DET@ARI, SF@SEA, CIN@MIA, ... DEN@LAC). 154469 is the 8-game early-only slate, 154467 the Thu-Mon slate. CONFIRM before the Friday run.
 
 
 def main() -> None:
@@ -996,7 +999,10 @@ def main() -> None:
     # "build the persistence layer", after reviewing the sister MLB project's own postmortem
     # system and finding it's all built on top of exactly this kind of snapshot).
     snapshot_path = save_slate_snapshot(
-        SEASON, WEEK, player_details=player_details, agent_results=agent_results, stack_profiles=stack_profiles
+        SEASON, WEEK, player_details=player_details, agent_results=agent_results, stack_profiles=stack_profiles,
+        # What the redesigned build reads (ADR-0046): every Questionable/override decision with its basis, and when the official
+        # injury report it was based on was pulled.
+        redesign={"availability": [asdict(d) for d in q_decisions], "official_injury_pulled_at": _fetched_at},
     )
     print(f"Wrote real slate snapshot to {snapshot_path}")
 

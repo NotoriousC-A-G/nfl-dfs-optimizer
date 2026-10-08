@@ -82,8 +82,13 @@ def save_slate_snapshot(
     stack_profiles: list[Any],
     timestamp: str | None = None,
     base_dir: Path | None = None,
+    redesign: dict[str, Any] | None = None,
 ) -> Path:
-    """Writes one full snapshot of the live script's real computed state for `(season, week)`.
+    """`redesign` carries what the redesigned build needs that the legacy state does not (ADR-0046): the Questionable/override
+    decisions with their basis, which the game packets read as availability. Omitted -> no `redesign` key, and the build says
+    loudly that availability is missing instead of assuming it.
+
+    Writes one full snapshot of the live script's real computed state for `(season, week)`.
     `player_details`/`agent_results`/`stack_profiles` are the exact in-memory lists the live
     script already builds (`PlayerDetailRecord`, `AgentLineupResult`, `StackProfile`) -- passed
     in rather than recomputed, so this module never becomes a second source of truth for any of
@@ -102,6 +107,8 @@ def save_slate_snapshot(
         "agent_lineups": _as_dict_list(agent_results),
         "stack_profiles": _as_dict_list(stack_profiles),
     }
+    if redesign is not None:
+        envelope["redesign"] = redesign
 
     root = snapshot_dir(base_dir=base_dir)
     root.mkdir(parents=True, exist_ok=True)

@@ -16,16 +16,18 @@ from __future__ import annotations
 
 import argparse
 import sys
+from dataclasses import asdict
 import warnings
 from pathlib import Path
 
 import nfl_data_py as nfl
 
 from nfl_dfs.build.agents import POOL_AGENT_BY_ID
+from nfl_dfs.build.availability import availability_from_snapshot
 from nfl_dfs.build.evidence.builder import build_evidence_packets
 from nfl_dfs.build.evidence.opportunity import trailing_shares
 from nfl_dfs.build.evidence.metrics import league_values, team_game_metrics
-from nfl_dfs.build.expert.repair import build_with_repair
+from nfl_dfs.build.expert.repair import build_with_repair, output_to_json
 from nfl_dfs.build.expert.stage import expert_spec
 from nfl_dfs.build.pool.contracts import PlayerRef
 from nfl_dfs.build.pool.expand import expand_pool
@@ -36,9 +38,10 @@ from nfl_dfs.build.value.calibration import CalibrationTable
 from nfl_dfs.build.value.tail_value import expected_multipliers, tail_values
 from nfl_dfs.optimizer.pool_solve import build_agent_lineups
 from nfl_dfs.projection.blend import PlayerProjection
+from nfl_dfs.storage.build_artifact_store import save_build_artifact
 from nfl_dfs.storage.slate_snapshot_store import load_latest_slate_snapshot
 from scripts.live_integration_check_dashboard import SEASON, WEEK
-from scripts.run_llm_stages import MODEL_ID, _freshness
+from scripts.run_llm_stages import ANALYST_FRESHNESS, MODEL_ID, _freshness
 
 TABLE = Path("data/cache/tail_value_cells.json")
 RG_STATUS = {"O": "OUT", "D": "D", "Q": "Q"}
@@ -58,10 +61,13 @@ def main() -> int:
     tg = team_game_metrics(pbp)
     league_fn = lambda m: league_values(tg, m)
     as_of = str(snapshot.get("timestamp", "unknown"))[:16] + "Z"
-    packets = build_evidence_packets(snapshot["player_pool"], snapshot["stack_profiles"], tg[tg["season"] == SEASON], season=SEASON, week=WEEK, as_of=as_of, opportunity=trailing_shares(pbp, season=SEASON, through_week=WEEK - 1))
+    availability, _warn = availability_from_snapshot(snapshot)
+    if _warn:
+        print(f"WARNING: {_warn}")
+    packets = build_evidence_packets(snapshot["player_pool"], snapshot["stack_profiles"], tg[tg["season"] == SEASON], season=SEASON, week=WEEK, as_of=as_of, availability=availability, opportunity=trailing_shares(pbp, season=SEASON, through_week=WEEK - 1))
     fresh, kw = _freshness(), dict(season=SEASON, week=WEEK)
 
-    a_res = collect_results(analyst_specs(packets, league_fn, model=MODEL_ID, freshness=fresh), **kw)
+    a_res = collect_results(analyst_specs(packets, league_fn, model=MODEL_ID, freshness=ANALYST_FRESHNESS), **kw)
     require_all_ok("analyst", a_res)  # raises with the full list if any game is incomplete
     theses = {r.item_id: r.result for r in a_res}
     universe = [PlayerRef(p.canonical_id, p.name, p.team, p.position, p.salary, p.projection, p.status_after_q_pass or p.injury_status, gid)
@@ -87,6 +93,7 @@ def main() -> int:
     print(f"{len(theses)} theses; expert unavailable: {expert.unavailable or 'none'}; portfolio: {expert.portfolio_notes[:200]}")
     avoid: list[frozenset[str]] = []
     exit_code = 0
+    agents_record: dict[str, dict] = {a: {"status": "unavailable_by_expert", "detail": r} for a, r in expert.unavailable.items()}
     for out in expert.outputs:
         lean = POOL_AGENT_BY_ID[out.agent_id].floor_lean  # each agent maximizes its own tilt of the tail value
         values = {i: v.tv for i, v in tail_values(inputs, table, multipliers=mult, floor_lean=lean).items()}
@@ -101,6 +108,8 @@ def main() -> int:
             print(f"\n[{out.agent_id}] {label} -- {oc.detail}")
             if oc.first_failure is not None:
                 print(f"  diagnosis: {oc.first_failure}")
+            agents_record[out.agent_id] = {"status": oc.status, "floor_lean": lean, "detail": oc.detail, "first_failure": str(oc.first_failure) if oc.first_failure else None,
+                                           "failure_diagnostics": oc.first_failure.diagnostics if oc.first_failure else None, "expert_pool": output_to_json(out)}
             continue
         res = oc.result
         o = res.pool
@@ -111,6 +120,21 @@ def main() -> int:
             print(f"  L{i} ${lu.total_salary:,} proj {lu.total_projected_points:.1f} | " + ", ".join(f"{p.position} {p.display_name}" for p in lu.players))
         for w in res.warnings:
             print(f"  warning: {w.message}")
+        agents_record[out.agent_id] = {
+            "status": "built", "floor_lean": lean, "repaired": oc.repaired, "first_failure": str(oc.first_failure) if oc.first_failure else None,
+            "widened_steps": list(o.widened_steps), "build_thesis": asdict(o.build_thesis), "expert_pool": output_to_json(out),
+            "pool_used": [(e.canonical_id, e.tier, e.reason) for e in o.entries if e.tier != "exclude"],
+            "lineups": [{"player_ids": [p.canonical_id for p in lu.players], "salary": lu.total_salary, "projected": lu.total_projected_points} for lu in res.lineups],
+            "warnings": [w.message for w in res.warnings],
+        }
+    path = save_build_artifact(SEASON, WEEK, {
+        "snapshot_timestamp": snapshot.get("timestamp"), "snapshot_filename": snapshot.get("snapshot_filename"), "model": MODEL_ID,
+        "availability_decisions": [asdict(d) for d in availability],
+        "theses": {gid: asdict(t) for gid, t in theses.items()},
+        "expert": {"unavailable": dict(expert.unavailable), "portfolio_notes": expert.portfolio_notes},
+        "agents": agents_record, "exit_code": exit_code,
+    })
+    print(f"\nWrote the build record (theses, pools, lineups, failures) to {path}")
     return exit_code
 
 
