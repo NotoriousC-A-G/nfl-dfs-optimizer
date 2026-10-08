@@ -94,7 +94,7 @@ WEEK = int(os.environ.get("NFL_DFS_WEEK", 5))
 # docstring). Leave None to auto-detect (works fine when only one real main slate is live) -- if
 # auto-detection hits real ambiguity, it now fails loudly with the real candidate ids to choose
 # from here, rather than silently substituting an unrelated slate.
-DRAFT_GROUP_ID: int | None = 154468  # 2026-10-08: the 11-game Sunday main slate (week 5; DET@ARI, SF@SEA, CIN@MIA, ... DEN@LAC). 154469 is the 8-game early-only slate, 154467 the Thu-Mon slate. CONFIRM before the Friday run.
+DRAFT_GROUP_ID: int | None = 154468  # 2026-10-08: the 11-game Sunday main slate (week 5; DET@ARI, SF@SEA, CIN@MIA, ... DEN@LAC). 154469 is the 8-game early-only slate, 154467 the Thu-Mon slate. Confirmed by Chris 2026-10-08.
 
 
 def main() -> None:
