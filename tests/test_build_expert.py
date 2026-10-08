@@ -122,28 +122,29 @@ def test_pools_must_be_narrow_and_core_must_be_a_sensible_size():
     assert "core_size" in _codes(_parse(d)[1])
 
 
-def test_agent_probability_floor_and_minimum_game_total_are_enforced():
+def test_an_agents_usual_bars_are_guidance_a_warning_never_a_rejection():
     d = _expert()
     d["agents"][3] = _agent("short_field", ["KC@LV:b9"], [("LV", "QB"), ("LV", "WR")])  # branch p=0.05 < 0.25
-    assert "probability_floor" in _codes(_parse(d)[1])
+    codes, warns = _codes(_parse(d)[1]), _codes(_parse(d)[1], "warning")
+    assert "probability_floor" not in codes and "probability_floor" in warns
     d = _expert()
-    d["agents"][3] = _agent("short_field", ["KC@LV:b2"], [("LV", "QB"), ("LV", "WR")])  # p=0.30 -> allowed
-    assert "probability_floor" not in _codes(_parse(d)[1])
+    d["agents"][3] = _agent("short_field", ["KC@LV:b2"], [("LV", "QB"), ("LV", "WR")])  # p=0.30 -> meets the usual bar, no warning
+    assert "probability_floor" not in _codes(_parse(d)[1]) | _codes(_parse(d)[1], "warning")
     d = _expert()
-    d["agents"][1] = _agent("contrarian_game", ["KC@LV:b1"], [("KC", "QB"), ("KC", "WR")])  # KC@LV total 43 < 44
-    assert "min_total" in _codes(_parse(d)[1])
+    d["agents"][1] = _agent("contrarian_game", ["KC@LV:b1"], [("KC", "QB"), ("KC", "WR")])  # KC@LV total 43 < the usual 44
+    assert "min_total" not in _codes(_parse(d)[1]) and "min_total" in _codes(_parse(d)[1], "warning")
 
 
-def test_at_most_two_agents_may_back_the_same_game():
+def test_more_than_two_agents_stacking_the_same_game_is_a_warning():
     d = _expert()
     for i in (0, 1, 2, 4):
         a = d["agents"][i]
         a["variations"][0]["stack"] = ["LAR_qb", "LAR_wr0"]  # shootout, contrarian, chalk_pivot and volume all STACK LAR@PHI
-    assert "game_concentration" in _codes(_parse(d)[1])
+    assert "game_concentration" not in _codes(_parse(d)[1]) and "game_concentration" in _codes(_parse(d)[1], "warning")  # guidance, not a rule
     d = _expert()
     d["agents"][0]["variations"][0]["views"] = ["LAR@PHI:b0"]  # holding a VIEW of a game is not stacking it
     d["agents"][4]["variations"][0]["views"] = ["LAR@PHI:b3"]
-    assert "game_concentration" not in _codes(_parse(d)[1])
+    assert "game_concentration" not in _codes(_parse(d)[1]) | _codes(_parse(d)[1], "warning")
 
 
 def test_unknown_players_missing_reasons_and_bad_selectors_are_rejected():

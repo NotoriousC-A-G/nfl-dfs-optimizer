@@ -12,7 +12,7 @@ from nfl_dfs.build.evidence.contracts import EvidencePacket
 from nfl_dfs.build.pool.contracts import PlayerRef
 from nfl_dfs.build.thesis.contracts import GameThesis
 
-PROMPT_VERSION = "expert-v8"
+PROMPT_VERSION = "expert-v9"
 
 
 def branch_refs(theses: dict[str, GameThesis]) -> dict[str, float]:
@@ -116,8 +116,8 @@ RULES (machine-checked; a violation sends your answer back for one retry):
    players (4-16 when you do not use "derived"). Explicit core + eligible is best kept well under about 45% of the players listed -- a guide,
    not a limit. Use group_tiers (team / position / game_id selectors) for broad strokes and overrides (player_id) for named players.
 3. BUILD ON THE ANALYSTS' CALLS. An agent's variations rest on calls you believe in, ranked by conviction; say in the build thesis reason
-   which battles they rest on. Prefer high-conviction calls, and let the agents rest on different ones. At most TWO agents may place a pass-volume
-   or shootout bet in the same game. At most 3 variations per agent, at most 3 bets per variation, at most ONE view per game in a variation.
+   which battles they rest on. Prefer high-conviction calls, and let the agents rest on different ones. Usually no more than TWO agents place a pass-volume
+   or shootout bet in the same game (guidance; say why if the slate really points at one game). At most 3 variations per agent, at most 3 bets per variation, at most ONE view per game in a variation.
    Views, avoids and hedges are refs "GAME:branch_id" copied from the BRANCH lines below.
 4. Every core and every exclude assignment (group tier or override) carries a one-line reason citing a thesis branch or the field layer. A
    reach assignment you mean as a shot carries a reason too. Every bet carries a mechanism (pass_volume | shootout | lead_protect | pressure |

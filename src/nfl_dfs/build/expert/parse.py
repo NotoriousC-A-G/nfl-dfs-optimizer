@@ -95,7 +95,7 @@ def parse_expert_response(
     stacked = Counter(g for o in outputs for g in _stack_games(o, universe))
     for g, n in stacked.items():
         if n > MAX_AGENTS_PER_GAME:
-            v.append(Violation("game_concentration", f"{n} agents stack in {g} (at most {MAX_AGENTS_PER_GAME}); spread the agents' stacks across games", g))
+            v.append(Violation("game_concentration", f"{n} agents place a stack in {g} (more than {MAX_AGENTS_PER_GAME}); spread the agents' stacks across games unless the slate really points at one game (guidance, not a rule)", g, "warning"))
     pools = [expand_pool(o, universe) for o in outputs]
     v += core_overlap(pools)
     return ExpertResult(tuple(outputs), unavailable, str(d.get("portfolio_notes", ""))), v
@@ -206,12 +206,12 @@ def _check_agent(out: ExpertAgentOutput, spec: PoolAgentSpec, universe: list[Pla
             v.append(Violation("unknown_branch", f"{aid}: {ref!r} is not a branch of any game thesis (valid: {sorted(branch_probs)[:6]}...)", aid))
     if spec.must_back_probability is not None and backs:
         if not any(branch_probs.get(r, 0.0) >= spec.must_back_probability for r in backs):
-            v.append(Violation("probability_floor", f"{aid}: needs a backed branch with probability >= {spec.must_back_probability}; none of {list(backs)} qualifies -- say unavailable instead", aid))
+            v.append(Violation("probability_floor", f"{aid}: usually backs a branch with probability >= {spec.must_back_probability}; none of {list(backs)} reaches it (guidance, not a rule -- the build thesis should say why)", aid, "warning"))
     if spec.min_game_total is not None:
         for g in _stack_games(out, universe):
             total = game_totals.get(g)
             if total is None or total < spec.min_game_total:
-                v.append(Violation("min_total", f"{aid}: stacks in {g} with total {total}, below the {spec.min_game_total} minimum", aid))
+                v.append(Violation("min_total", f"{aid}: stacks in {g} with total {total}, below its usual {spec.min_game_total} bar (guidance, not a rule -- the build thesis should say why)", aid, "warning"))
     pool = expand_pool(out, universe)
     n = len(universe)
     core = sum(1 for e in pool.entries if e.tier == "core")
