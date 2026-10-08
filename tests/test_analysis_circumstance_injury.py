@@ -71,12 +71,23 @@ def test_detects_out_teammate_with_real_share_and_a_real_remaining_candidate() -
 
 
 def test_returns_none_when_nobody_is_out() -> None:
+    # A Friday-cleared Questionable player (Q_CLEARED) is expected to play, so he is not "out".
+    mason = _player_role_share("mason", "J.Mason", 0.50)
+    jones = _player_role_share("jones", "A.Jones", 0.49)
+    role_share = _role_share_result("MIN", [mason, jones])
+    status_by_id = {"mason": "Q_CLEARED", "jones": None}
+
+    assert detect_injury_circumstance_change(role_share, status_by_id) is None
+
+
+def test_an_uncleared_questionable_lead_player_is_treated_as_out() -> None:
+    # Q is assumed not to play (EXCLUDED_INJURY_STATUSES, 2026-10-07), so his teammates' role change fires.
     mason = _player_role_share("mason", "J.Mason", 0.50)
     jones = _player_role_share("jones", "A.Jones", 0.49)
     role_share = _role_share_result("MIN", [mason, jones])
     status_by_id = {"mason": "Q", "jones": None}
 
-    assert detect_injury_circumstance_change(role_share, status_by_id) is None
+    assert detect_injury_circumstance_change(role_share, status_by_id) is not None
 
 
 def test_returns_none_when_out_players_share_is_below_the_floor() -> None:

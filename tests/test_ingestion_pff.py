@@ -363,3 +363,70 @@ def test_team_coverage_tendency_handles_no_data_without_crashing():
     )
     tendency = team_coverage_tendency(facet_grades)
     assert tendency == {}
+
+
+class _Resp:
+    def __init__(self, status, body=None):
+        self.status_code, self._body = status, body if body is not None else {"players": []}
+
+    def raise_for_status(self):
+        import requests
+        if self.status_code >= 400:
+            raise requests.HTTPError(f"{self.status_code} Server Error", response=self)
+
+    def json(self):
+        return self._body
+
+
+class _Session:
+    def __init__(self, *outcomes):
+        self.outcomes, self.calls = list(outcomes), 0
+
+    def get(self, *a, **k):
+        self.calls += 1
+        o = self.outcomes.pop(0)
+        if isinstance(o, Exception):
+            raise o
+        return o
+
+
+@pytest.fixture
+def no_sleep(monkeypatch):
+    import nfl_dfs.ingestion.pff as pff
+    slept = []
+    monkeypatch.setattr(pff.time, "sleep", lambda s: slept.append(s))
+    return slept
+
+
+def test_a_gateway_timeout_is_retried_with_backoff_then_succeeds(no_sleep):
+    from nfl_dfs.ingestion.pff import _get_grade_facet_payload
+    s = _Session(_Resp(504), _Resp(502), _Resp(200, {"ok": 1}))
+    assert _get_grade_facet_payload("defense/run", {"season": 2026}, api_key="k", session=s) == {"ok": 1}
+    assert s.calls == 3 and no_sleep == [5.0, 15.0]
+
+
+def test_a_persistent_server_error_is_raised_after_the_last_attempt_never_swallowed(no_sleep):
+    import requests
+    from nfl_dfs.ingestion.pff import _get_grade_facet_payload
+    s = _Session(_Resp(504), _Resp(504), _Resp(504), _Resp(504))
+    with pytest.raises(requests.HTTPError):
+        _get_grade_facet_payload("defense/run", {"season": 2026}, api_key="k", session=s)
+    assert s.calls == 4 and no_sleep == [5.0, 15.0, 30.0]
+
+
+def test_a_client_error_is_never_retried(no_sleep):
+    import requests
+    from nfl_dfs.ingestion.pff import _get_grade_facet_payload
+    s = _Session(_Resp(401))
+    with pytest.raises(requests.HTTPError):
+        _get_grade_facet_payload("defense/run", {"season": 2026}, api_key="k", session=s)
+    assert s.calls == 1 and no_sleep == []
+
+
+def test_a_read_timeout_is_retried_and_a_restricted_payload_still_raises(no_sleep):
+    import requests
+    from nfl_dfs.ingestion.pff import _get_grade_facet_payload
+    s = _Session(requests.ReadTimeout("slow"), _Resp(200, {"ok": 2}))
+    assert _get_grade_facet_payload("x", {}, api_key="k", session=s) == {"ok": 2} and s.calls == 2
+    with pytest.raises(RuntimeError, match="restricted"):
+        _get_grade_facet_payload("x", {}, api_key="k", session=_Session(_Resp(200, {"restricted": True})))

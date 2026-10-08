@@ -161,3 +161,20 @@ def test_non_dataclass_records_pass_through_as_plain_dicts(tmp_path):
     )
     snapshot = load_latest_slate_snapshot(2026, 2, base_dir=tmp_path)
     assert snapshot["player_pool"] == [{"already": "a dict"}]
+
+
+def test_redesign_block_is_saved_only_when_given_and_availability_reads_back(tmp_path):
+    from nfl_dfs.build.availability import availability_from_snapshot
+    from nfl_dfs.storage.slate_snapshot_store import load_latest_slate_snapshot, save_slate_snapshot
+    save_slate_snapshot(2026, 5, player_details=[], agent_results=[], stack_profiles=[], timestamp="010101", base_dir=tmp_path)
+    old = load_latest_slate_snapshot(2026, 5, base_dir=tmp_path)
+    assert "redesign" not in old
+    decisions, warn = availability_from_snapshot(old)
+    assert decisions == [] and "UNKNOWN" in warn  # never silently "nobody is out"
+    save_slate_snapshot(
+        2026, 5, player_details=[], agent_results=[], stack_profiles=[], timestamp="020202", base_dir=tmp_path,
+        redesign={"availability": [{"name": "A B", "team": "KC", "decision": "excluded", "basis": "DNP Friday", "source": "official_practice"}], "official_injury_pulled_at": "t"},
+    )
+    new = load_latest_slate_snapshot(2026, 5, base_dir=tmp_path)
+    decisions, warn = availability_from_snapshot(new)
+    assert warn is None and decisions[0].name == "A B" and decisions[0].decision == "excluded"

@@ -366,11 +366,17 @@ def test_eligible_pool_excludes_players_on_excluded_injury_statuses():
     assert _eligible_pool(pool) == {}
 
 
-def test_eligible_pool_keeps_players_with_no_designation_or_a_playable_status():
+def test_eligible_pool_keeps_players_with_no_designation_or_a_cleared_questionable_status():
+    healthy = _p("healthy", "WR", "AAA", 3000, 20.0, dk_injury_status=None)
+    cleared = _p("cleared", "WR", "AAA", 3000, 20.0, dk_injury_status="Q_CLEARED")
+    result = _eligible_pool([healthy, cleared])
+    assert set(result.keys()) == {"healthy", "cleared"}
+
+
+def test_eligible_pool_drops_an_uncleared_questionable_player():
     healthy = _p("healthy", "WR", "AAA", 3000, 20.0, dk_injury_status=None)
     questionable = _p("questionable", "WR", "AAA", 3000, 20.0, dk_injury_status="Q")
-    result = _eligible_pool([healthy, questionable])
-    assert set(result.keys()) == {"healthy", "questionable"}
+    assert set(_eligible_pool([healthy, questionable]).keys()) == {"healthy"}
 
 
 def test_eligible_pool_drops_doubtful_players():
@@ -389,11 +395,18 @@ def test_generate_lineups_never_drafts_an_ir_player_even_when_it_is_the_best_val
     assert "ir_star" not in {p.canonical_id for p in lineup.players}
 
 
-def test_generate_lineups_still_drafts_a_questionable_player_when_it_is_the_best_value():
-    # Q is a real DFS strategic decision, not a guaranteed non-play -- must stay eligible.
+def test_generate_lineups_never_drafts_an_uncleared_questionable_player_even_when_best_value():
+    # Q is assumed not to play unless a Friday-practice clearance is on file (2026-10-07).
     pool = _synthetic_pool()
     questionable_star = _p("q_star", "WR", "AAA", 100, 99.0, dk_injury_status="Q")
     lineup = generate_lineups(pool + [questionable_star], n=1)[0]
+    assert "q_star" not in {p.canonical_id for p in lineup.players}
+
+
+def test_generate_lineups_drafts_a_cleared_questionable_player_when_it_is_the_best_value():
+    pool = _synthetic_pool()
+    cleared_star = _p("q_star", "WR", "AAA", 100, 99.0, dk_injury_status="Q_CLEARED")
+    lineup = generate_lineups(pool + [cleared_star], n=1)[0]
     assert "q_star" in {p.canonical_id for p in lineup.players}
 
 
@@ -650,3 +663,70 @@ def test_generate_dup_risk_aware_lineups_threads_objective_delta_by_id_through()
         pool, ownership, table, oversample_size=3, objective_delta_by_id={boosted_id: 1000.0}
     )
     assert boosted_id in {p.canonical_id for p in boosted[0].lineup.players}
+
+
+# --------------------------------------------------------------------------------------------
+# Hard bring-back constraints (2026-10-08) -- opt-in; default behaviour byte-identical
+# --------------------------------------------------------------------------------------------
+
+from nfl_dfs.optimizer.lineup import bring_back_violations  # noqa: E402
+
+_OPP = {"AAA": "BBB", "BBB": "AAA"}
+
+
+def _bring_back_pool(*, rb_bonus: bool = False) -> list[PlayerProjection]:
+    """QB A is clearly the best QB; QB B is hopeless, so the best lineup stacks A -- and B's WR1 (or
+    RB1) projects so high it is a bring-back unless forbidden."""
+    pool = _synthetic_pool()
+    out = []
+    for p in pool:
+        if p.canonical_id == "qb_b":
+            p = _p("qb_b", "QB", "BBB", 7200, 5.0)
+        if p.canonical_id == "wr_b1":
+            p = _p("wr_b1", "WR", "BBB", 6800, 40.0)
+        if p.canonical_id == "rb_b1" and rb_bonus:
+            p = _p("rb_b1", "RB", "BBB", 6200, 40.0)
+        out.append(p)
+    return out
+
+
+def test_without_the_flag_the_best_lineup_takes_the_bring_back():
+    lineup = generate_lineups(_bring_back_pool(), n=1, opponent_of=_OPP)[0]
+    assert {p.team for p in lineup.players if p.position == "QB"} == {"AAA"}
+    assert "wr_b1" in {p.canonical_id for p in lineup.players}
+    assert bring_back_violations(lineup, _OPP, forbid_pass_catcher_bring_back=True, forbid_rb_bring_back=False)
+
+
+def test_forbidding_pass_catcher_bring_back_removes_every_opposing_wr_te():
+    lineup = generate_lineups(_bring_back_pool(), n=1, opponent_of=_OPP, forbid_pass_catcher_bring_back=True)[0]
+    assert bring_back_violations(lineup, _OPP, forbid_pass_catcher_bring_back=True, forbid_rb_bring_back=False) == []
+    qb_team = next(p.team for p in lineup.players if p.position == "QB")
+    assert not [p for p in lineup.players if p.team == _OPP[qb_team] and p.position in ("WR", "TE")]
+
+
+def test_forbidding_rb_bring_back_is_separate_from_pass_catcher_bring_back():
+    pool = _bring_back_pool(rb_bonus=True)
+    default = generate_lineups(pool, n=1, opponent_of=_OPP, forbid_pass_catcher_bring_back=True)[0]
+    assert "rb_b1" in {p.canonical_id for p in default.players}  # RB bring-back still allowed
+    strict = generate_lineups(pool, n=1, opponent_of=_OPP, forbid_pass_catcher_bring_back=True, forbid_rb_bring_back=True)[0]
+    assert bring_back_violations(strict, _OPP, forbid_pass_catcher_bring_back=True, forbid_rb_bring_back=True) == []
+
+
+def test_a_forbidden_bring_back_flag_without_opponent_map_fails_loudly():
+    with pytest.raises(ValueError, match="opponent_of"):
+        generate_lineups(_bring_back_pool(), n=1, forbid_pass_catcher_bring_back=True)
+
+
+def test_flags_off_is_identical_to_the_prior_behaviour():
+    pool = _synthetic_pool()
+    a = generate_lineups(pool, n=2, opponent_of=_OPP)
+    b = generate_lineups(pool, n=2, opponent_of=_OPP, forbid_pass_catcher_bring_back=False, forbid_rb_bring_back=False)
+    assert [[p.canonical_id for p in l.players] for l in a] == [[p.canonical_id for p in l.players] for l in b]
+
+
+def test_bring_back_constraint_still_allows_the_required_stack_and_other_games():
+    lineup = generate_lineups(_synthetic_pool(), n=3, opponent_of=_OPP, forbid_pass_catcher_bring_back=True)
+    assert len(lineup) >= 1
+    for l in lineup:
+        qb = next(p for p in l.players if p.position == "QB")
+        assert any(p.team == qb.team and p.position in ("WR", "TE") for p in l.players)  # §7 stack intact

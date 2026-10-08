@@ -45,10 +45,13 @@ class NflAgentConstructor:
     `stack_conviction` -> the same real stack-candidate players' `StackProfile.
         game_stack_viability` -- a separate lean from `game_script_lean_weight` (overall game-
         environment quality for stacking, not specifically close-game intensity).
-    `bring_back_allowed`/`bring_back_rb_allowed` -- hard on/off gates for whether a bring-back
-        candidate's (WR/TE or RB respectively) boost is included at all for this agent; never a
-        magnitude, since "does this agent build bring-backs at all" is a yes/no construction
-        choice, not something a slider should approximate.
+    `bring_back_allowed`/`bring_back_rb_allowed` -- on/off gates for whether a bring-back
+        candidate's (WR/TE or RB respectively) objective BOOST is included at all for this agent;
+        never a magnitude, since "does this agent build bring-backs at all" is a yes/no construction
+        choice. **These gate the boost only -- they do NOT stop the solver from picking a bring-back
+        on projection alone.** The hard version is `optimizer.lineup.generate_lineups(
+        forbid_pass_catcher_bring_back=..., forbid_rb_bring_back=...)` (2026-10-08), used by the
+        pool pipeline.
     `edge_condition` -- optional, gates `game_script_lean_weight`/`stack_conviction`'s
         contribution to only the games matching this real, named condition (see `scoring.py`'s
         `_game_matches_edge_condition`); `None` applies with no game-level gate.

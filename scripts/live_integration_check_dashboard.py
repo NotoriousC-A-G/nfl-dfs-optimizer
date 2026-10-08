@@ -18,6 +18,9 @@ fallback instead, so those two sections DO populate with real 2024/2025 PFF grad
 
 from __future__ import annotations
 
+import datetime as _dt
+import os
+from dataclasses import asdict
 import warnings
 
 from nfl_dfs.analysis.dup_risk_calibration import DEFAULT_RECENT_WINDOW, build_dup_risk_lookup_table
@@ -54,10 +57,17 @@ from nfl_dfs.ingestion.usage_share import ROLE_RB, ROLE_WR, aggregate_player_tra
 from nfl_dfs.ingestion.weather import WeatherReading, fetch_weather_reading
 from nfl_dfs.matchup.context import MatchupFacetInputs, PlayerMatchupInput, build_matchup_context_pool
 from nfl_dfs.normalization.crosswalk import fetch_crosswalk
-from nfl_dfs.normalization.injury_lookup import overlay_injury_report_exclusions, team_injuries
+from nfl_dfs.normalization.injury_lookup import (
+    overlay_injury_report_exclusions,
+    resolve_questionable_players,
+    team_injuries,
+)
 from nfl_dfs.normalization.matcher import reconcile_week
 from nfl_dfs.normalization.registry import PlayerRegistry
 from nfl_dfs.optimizer.lineup import EXCLUDED_INJURY_STATUSES, LineupGenerationError
+from nfl_dfs.ingestion.official_injury_report import fetch_official_injury_report
+from nfl_dfs.storage.injury_clearance_store import read_overrides
+from nfl_dfs.storage.official_injury_snapshot_store import OfficialInjurySnapshot, write_snapshot
 from nfl_dfs.output.weekly_output import build_weekly_output
 from nfl_dfs.ingestion.footballguys_ownership import fetch_roster_percentages
 from nfl_dfs.ownership.blend import blend_ownership_rows
@@ -76,14 +86,15 @@ from scripts.live_integration_check_output import _build_ges, fetch_dk_raw_for_l
 from scripts.live_integration_check_projection import fetch_footballguys_raw, fetch_rotogrinders_raw
 
 SEASON = 2026
-WEEK = 4
+# NFL_DFS_WEEK is for dry runs of the build scripts against a saved earlier week (e.g. NFL_DFS_WEEK=4); unset in production.
+WEEK = int(os.environ.get("NFL_DFS_WEEK", 5))
 # Set to a specific DK draftGroupId to target that exact slate directly, bypassing auto-detection
 # entirely -- required once DK is serving more than one plausible main-shaped slate at once (a
 # real, live 2026-09-19 case; see ingestion.draftkings.fetch_slate_by_draft_group_id's own
 # docstring). Leave None to auto-detect (works fine when only one real main slate is live) -- if
 # auto-detection hits real ambiguity, it now fails loudly with the real candidate ids to choose
 # from here, rather than silently substituting an unrelated slate.
-DRAFT_GROUP_ID: int | None = 154078  # confirmed live 2026-10-04: the 12-game Sunday main slate (week 4); 154081 is the 4-game late slate
+DRAFT_GROUP_ID: int | None = 154468  # 2026-10-08: the 11-game Sunday main slate (week 5; DET@ARI, SF@SEA, CIN@MIA, ... DEN@LAC). 154469 is the 8-game early-only slate, 154467 the Thu-Mon slate. Confirmed by Chris 2026-10-08.
 
 
 def main() -> None:
@@ -185,6 +196,35 @@ def main() -> None:
     dk_injury_status = overlay_injury_report_exclusions(
         dk_injury_status, identities, early_injury_entries, EXCLUDED_INJURY_STATUSES
     )
+    # Questionable is assumed OUT unless the OFFICIAL practice report shows Full participation (ADR-0045,
+    # Chris 2026-10-07). The system decides every Q player and prints its basis; Chris overrides in
+    # `data/overrides/q_overrides.csv` (`scripts/log_q_override.py`) when he has more information.
+    # Re-check Sunday morning (`scripts/sunday_availability_check.py`) -- inactives land ~90 min pre-kickoff.
+    _fetched_at = _dt.datetime.now(_dt.timezone.utc).isoformat()
+    try:
+        official_entries = [e for e in fetch_official_injury_report(SEASON) if e.week == WEEK]
+        write_snapshot(OfficialInjurySnapshot(_fetched_at, SEASON, WEEK, official_entries))
+    except Exception as exc:  # noqa: BLE001
+        print(f"  Official injury report FAILED ({exc}) -- every Q player is excluded (no practice evidence)")
+        official_entries = []
+    print(f"  Official injury report: {len(official_entries)} week-{WEEK} row(s) across {len({e.team for e in official_entries})} team(s), as of {_fetched_at[:16]}Z")
+    from nfl_dfs.normalization.injury_lookup import practice_history, report_stage
+    from nfl_dfs.storage.official_injury_snapshot_store import read_snapshots
+
+    _stage = report_stage(_dt.datetime.fromisoformat(_fetched_at))
+    _history = practice_history(read_snapshots(SEASON, WEEK))  # includes the capture just written; the trajectory exists only because we archive it
+    print(f"  Report stage: {_stage} ({len({d for h in _history.values() for d, _, _ in h})} capture day(s) archived for week {WEEK})")
+    dk_injury_status, q_decisions, unmatched_overrides = resolve_questionable_players(
+        dk_injury_status, identities, official_entries, read_overrides(season=SEASON, week=WEEK), week=WEEK, as_of=_fetched_at[:16] + "Z",
+        history=_history, stage=_stage,
+    )
+    for o in unmatched_overrides:
+        print(f"  WARNING: override {o.decision} for {o.name} ({o.team}) matched no eligible player -- typo, OUT/IR, or not Q/D; ignored")
+    for label in ("cleared", "unresolved", "barred", "excluded"):
+        rows = [d for d in q_decisions if d.decision == label]
+        print(f"  Q/override decisions -- {label.upper()} ({len(rows)}):")
+        for d in sorted(rows, key=lambda d: (d.team, d.name)):
+            print(f"    {d.name} ({d.team}): {d.basis}")
     rotogrinders_fpts = extract_rotogrinders_fpts(rg_payload) if rg_payload else {}
     footballguys_points = {}
     for html in fbg_html_by_position.values():
@@ -966,7 +1006,10 @@ def main() -> None:
     # "build the persistence layer", after reviewing the sister MLB project's own postmortem
     # system and finding it's all built on top of exactly this kind of snapshot).
     snapshot_path = save_slate_snapshot(
-        SEASON, WEEK, player_details=player_details, agent_results=agent_results, stack_profiles=stack_profiles
+        SEASON, WEEK, player_details=player_details, agent_results=agent_results, stack_profiles=stack_profiles,
+        # What the redesigned build reads (ADR-0046): every Questionable/override decision with its basis, and when the official
+        # injury report it was based on was pulled.
+        redesign={"availability": [asdict(d) for d in q_decisions], "official_injury_pulled_at": _fetched_at},
     )
     print(f"Wrote real slate snapshot to {snapshot_path}")
 
