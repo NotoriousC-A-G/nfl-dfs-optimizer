@@ -280,3 +280,27 @@ def test_a_reused_player_is_worth_less_each_time_reach_more_than_eligible_and_co
 
 def test_the_reuse_discount_is_capped():
     assert ps.REACH_REUSE_DISCOUNT * ps.REACH_REUSE_MAX < 0.5  # a reach player is never made worthless by reuse alone
+
+
+def test_the_qb_catcher_rule_is_optional_a_lineup_without_a_qb_stack_is_legal_when_the_variation_says_so():
+    projs = _projections()
+    # T4's QB is wildly valuable but none of his pass catchers is in the pool: with the rule he cannot be rostered at all
+    no_catchers = tuple(p.canonical_id for p in projs if p.team == "T4" and p.position in ("WR", "TE"))
+    pool = _pool(projs, core=(), exclude=no_catchers, rules=PoolRules(min_core=0))
+    values = _values(projs, {"qb_T4": 60.0})
+    with_rule = _build(pool, projs, n=1, values=values)
+    assert "qb_T4" not in {p.canonical_id for p in with_rule.lineups[0].players}
+    without = _build(pool, projs, n=1, values=values, require_qb_stack=False)
+    assert "qb_T4" in {p.canonical_id for p in without.lineups[0].players}  # a QB with no pass catcher of his own: legal, and now chosen
+
+
+def test_extra_pair_bonuses_pull_optional_correlated_players_in():
+    projs = _projections()
+    pool = _pool(projs, core=(), rules=PoolRules(min_core=0))
+    base = _build(pool, projs, n=1)
+    ids = {p.canonical_id for p in base.lineups[0].players}
+    rb = next(p.canonical_id for p in projs if p.position == "RB" and p.canonical_id not in ids)
+    dst = next(p.canonical_id for p in projs if p.position == "DST" and p.canonical_id not in ids)
+    pulled = _build(pool, projs, n=1, extra_pairs=[(rb, dst, 40.0)])
+    got = {p.canonical_id for p in pulled.lineups[0].players}
+    assert rb in got and dst in got

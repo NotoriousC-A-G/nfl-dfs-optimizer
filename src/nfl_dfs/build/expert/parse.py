@@ -17,7 +17,7 @@ from typing import Any
 
 from nfl_dfs.build.agents import POOL_AGENT_BY_ID, POOL_AGENTS, PoolAgentSpec
 from nfl_dfs.build.common import Violation
-from nfl_dfs.build.pool.contracts import DEFAULT_TIERS, DERIVED, SPEND_VALUES, TIERS, Variation, BuildThesis, ExpertAgentOutput, GroupTier, PlayerRef, PoolEntry
+from nfl_dfs.build.pool.contracts import DEFAULT_TIERS, DERIVED, MECHANISMS, SPEND_VALUES, TIERS, Bet, Variation, BuildThesis, ExpertAgentOutput, GroupTier, PlayerRef, PoolEntry
 from nfl_dfs.build.pool.expand import expand_pool
 from nfl_dfs.build.pool.validate import core_overlap
 from nfl_dfs.build.thesis.parse import _strip_fences
@@ -25,7 +25,8 @@ from nfl_dfs.build.thesis.parse import _strip_fences
 MAX_BROAD_FRACTION = 0.45  # (core + eligible) / slate universe above this is "not narrow"
 MIN_CORE, MAX_CORE = 4, 16
 MAX_AGENTS_PER_GAME = 2
-MAX_SCRIPTS = 3  # script variations (backed branches) per agent
+MAX_SCRIPTS = 3  # variations per agent
+MAX_BETS = 3  # bets (correlated groups) per variation
 POSITIONS = ("QB", "RB", "WR", "TE", "DST")
 
 
@@ -37,8 +38,11 @@ class ExpertResult:
 
 
 def _stack_games(out: ExpertAgentOutput, universe: list[PlayerRef]) -> set[str]:
+    """The games an agent places a pass-volume or shootout bet in (its stacks); a lead-protection or pressure bet is not a stack."""
     game_of = {p.canonical_id: p.game_id for p in universe}
-    return {game_of[c] for var in out.variations for c in var.stack if game_of.get(c)}
+    return {
+        game_of[c] for var in out.variations for b in var.bets if b.mechanism in ("pass_volume", "shootout") for c in b.players if game_of.get(c)
+    } or {game_of[c] for var in out.variations for c in var.stack if game_of.get(c)}
 
 
 def _game_of_ref(ref: str) -> str:
@@ -157,20 +161,32 @@ def _parse_variations(a: dict, bt: dict, spec: PoolAgentSpec, ids: set, by_id: d
     if not (1 <= len(raw) <= MAX_SCRIPTS):
         v.append(Violation("variations_count", f"{aid}: give 1-{MAX_SCRIPTS} variations (one lineup each), got {len(raw)}", aid))
     for i, x in enumerate(raw):
-        var = Variation(tuple(x.get("views", ())), tuple(x.get("stack", ())), x.get("note", ""))
+        # `bets` is the model: a legacy `stack` list becomes one pass-volume bet
+        bets = tuple(Bet(tuple(b.get("players", ())), b.get("mechanism", "other"), b.get("note", "")) for b in x["bets"]) if "bets" in x else (
+            (Bet(tuple(x.get("stack", ())), "pass_volume", ""),) if x.get("stack") else ()
+        )
+        var = Variation(tuple(x.get("views", ())), tuple(dict.fromkeys(c for b in bets for c in b.players)), x.get("note", ""), bets)
         games_seen: dict[str, str] = {}
         for ref in var.views:
             g = _game_of_ref(ref)
             if g in games_seen:
                 v.append(Violation("one_view_per_game", f"{aid}: variation {i + 1} holds two views of {g} ({games_seen[g]!r}, {ref!r}); games are independent and a game has one view", aid))
             games_seen[g] = ref
-        for cid in var.stack:
-            if cid not in ids:
-                v.append(Violation("unknown_player", f"{aid}: variation {i + 1} stack id {cid!r} is not on the slate", aid))
-        members = [by_id[c] for c in var.stack if c in by_id]
-        qbs = [p for p in members if p.position == "QB"]
-        if by_id and not (qbs and any(p.team == qbs[0].team and p.position in ("WR", "TE") for p in members)):
-            v.append(Violation("stack_shape", f"{aid}: variation {i + 1}'s stack needs a QB plus at least one of his pass catchers (WR/TE); got {[p.name for p in members]}", aid))
+        if not (1 <= len(var.bets) <= MAX_BETS):
+            v.append(Violation("bets_count", f"{aid}: variation {i + 1} needs 1-{MAX_BETS} bets (groups of players that move together), got {len(var.bets)}", aid))
+        for j, bet in enumerate(var.bets):
+            if bet.mechanism not in MECHANISMS:
+                v.append(Violation("bet_mechanism", f"{aid}: variation {i + 1} bet {j + 1} mechanism {bet.mechanism!r} must be one of {MECHANISMS}", aid))
+            for cid in bet.players:
+                if cid not in ids:
+                    v.append(Violation("unknown_player", f"{aid}: variation {i + 1} bet {j + 1} player id {cid!r} is not on the slate", aid))
+            members = [by_id[c] for c in bet.players if c in by_id]
+            if len(set(bet.players)) < 2:
+                v.append(Violation("bet_size", f"{aid}: variation {i + 1} bet {j + 1} needs at least two players", aid))
+            elif bet.mechanism == "pass_volume" and by_id:
+                qbs = [p for p in members if p.position == "QB"]
+                if not (qbs and any(p.team == qbs[0].team and p.position in ("WR", "TE") for p in members)):
+                    v.append(Violation("stack_shape", f"{aid}: variation {i + 1} bet {j + 1} (pass_volume) needs a QB plus at least one of his pass catchers (WR/TE); got {[p.name for p in members]}", aid))
         out.append(var)
     return tuple(out)
 

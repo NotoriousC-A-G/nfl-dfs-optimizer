@@ -62,6 +62,20 @@ class BuildThesis:
     reason: str
 
 
+MECHANISMS = ("pass_volume", "shootout", "lead_protect", "pressure", "other")
+
+
+@dataclass(frozen=True)
+class Bet:
+    """A group of players whose outcomes move together because the same thing drives them, with the mechanism that links them and why.
+    A lineup holds one to three bets -- QB + receivers in one game, an RB + defense in another, anything the slate sets up -- and they need
+    not share a game. `pass_volume` bets must be a QB with at least one of his pass catchers; the others only need two players."""
+
+    players: tuple[str, ...]
+    mechanism: str
+    note: str = ""
+
+
 @dataclass(frozen=True)
 class Variation:
     """One way an agent builds a lineup (Chris, 2026-10-09). A lineup is NOT one game's script: it is one set of beliefs across the slate.
@@ -73,8 +87,9 @@ class Variation:
     Players are priced and tiered under their own game's view."""
 
     views: tuple[str, ...]
-    stack: tuple[str, ...]
+    stack: tuple[str, ...]  # every bet player (the union of `bets`); required in the lineup
     note: str = ""
+    bets: tuple[Bet, ...] = ()
 
 
 SPEND_VALUES = ("pay", "value", "neutral")
