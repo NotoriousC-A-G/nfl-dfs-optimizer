@@ -208,12 +208,19 @@ def main() -> None:
         print(f"  Official injury report FAILED ({exc}) -- every Q player is excluded (no practice evidence)")
         official_entries = []
     print(f"  Official injury report: {len(official_entries)} week-{WEEK} row(s) across {len({e.team for e in official_entries})} team(s), as of {_fetched_at[:16]}Z")
+    from nfl_dfs.normalization.injury_lookup import practice_history, report_stage
+    from nfl_dfs.storage.official_injury_snapshot_store import read_snapshots
+
+    _stage = report_stage(_dt.datetime.fromisoformat(_fetched_at))
+    _history = practice_history(read_snapshots(SEASON, WEEK))  # includes the capture just written; the trajectory exists only because we archive it
+    print(f"  Report stage: {_stage} ({len({d for h in _history.values() for d, _, _ in h})} capture day(s) archived for week {WEEK})")
     dk_injury_status, q_decisions, unmatched_overrides = resolve_questionable_players(
-        dk_injury_status, identities, official_entries, read_overrides(season=SEASON, week=WEEK), week=WEEK, as_of=_fetched_at[:16] + "Z"
+        dk_injury_status, identities, official_entries, read_overrides(season=SEASON, week=WEEK), week=WEEK, as_of=_fetched_at[:16] + "Z",
+        history=_history, stage=_stage,
     )
     for o in unmatched_overrides:
         print(f"  WARNING: override {o.decision} for {o.name} ({o.team}) matched no eligible player -- typo, OUT/IR, or not Q/D; ignored")
-    for label in ("cleared", "barred", "excluded"):
+    for label in ("cleared", "unresolved", "barred", "excluded"):
         rows = [d for d in q_decisions if d.decision == label]
         print(f"  Q/override decisions -- {label.upper()} ({len(rows)}):")
         for d in sorted(rows, key=lambda d: (d.team, d.name)):

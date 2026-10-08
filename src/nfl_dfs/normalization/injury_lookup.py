@@ -16,6 +16,7 @@ from __future__ import annotations
 from nfl_dfs.ingestion.rotogrinders_injuries import InjuryReportEntry
 from nfl_dfs.normalization.identity import MatchMethod, PlayerIdentity
 from dataclasses import dataclass
+from datetime import datetime
 
 from nfl_dfs.ingestion.official_injury_report import OfficialInjuryReportEntry
 from nfl_dfs.storage.injury_clearance_store import QuestionableOverride
@@ -27,10 +28,74 @@ from nfl_dfs.tracking.name_matching import normalize_player_name
 CLEARED_QUESTIONABLE_STATUS = "Q_CLEARED"
 # Status a Chris `bar` override writes -- excluded for any player, whatever DK/RotoGrinders say.
 BARRED_STATUS = "BARRED"
+# Time-aware Q handling (Chris, 2026-10-09): a Questionable tag early in the week is weak evidence; the same tag after a week of missed practice is
+# strong. A Q player the evidence cannot yet settle is UNRESOLVED: available and flagged (NOT in EXCLUDED_INJURY_STATUSES), and his vacated work is
+# shown as contingent, not assumed. By Friday's report everything resolves under the original rule (Full clears; otherwise out).
+UNRESOLVED_STATUS = "Q_UNRESOLVED"
 
 _FULL_PRACTICE = "Full Participation in Practice"
 _LIMITED_PRACTICE = "Limited Participation in Practice"
 _DID_NOT_PRACTICE = "Did Not Participate In Practice"
+
+
+STAGES = ("early", "midweek", "final", "gameday")
+_OUT_GAME_STATUSES = ("Out", "Doubtful")
+
+
+def report_stage(when_utc: "datetime") -> str:
+    """Where in the NFL injury-report week `when_utc` falls, in US/Eastern: Mon-Wed = early (first practice reports), Thu = midweek, Fri = final (the
+    Friday report and its game designations), Sat/Sun = gameday."""
+    from zoneinfo import ZoneInfo
+
+    wd = when_utc.astimezone(ZoneInfo("America/New_York")).weekday()  # Mon=0
+    return "early" if wd <= 2 else "midweek" if wd == 3 else "final" if wd == 4 else "gameday"
+
+
+def practice_history(snapshots: list) -> dict[str, list[tuple[str, str | None, str | None]]]:
+    """`{gsis_id: [(date, practice_status, game_status), ...]}` oldest first, one entry per US/Eastern calendar day (the LAST capture of the day)
+    from archived official-report captures (`official_injury_snapshot_store`). The feeds keep only the latest day, so the trajectory exists only
+    because we capture it."""
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+
+    by_day: dict[str, dict[str, tuple[str | None, str | None]]] = {}
+    for snap in sorted(snapshots, key=lambda s: s.fetched_at):
+        day = datetime.fromisoformat(snap.fetched_at).astimezone(ZoneInfo("America/New_York")).date().isoformat()
+        by_day.setdefault(day, {}).update({e.gsis_id: (e.practice_status, e.report_status) for e in snap.entries})
+    out: dict[str, list[tuple[str, str | None, str | None]]] = {}
+    for day in sorted(by_day):
+        for gsis, (practice, game) in by_day[day].items():
+            out.setdefault(gsis, []).append((day, practice, game))
+    return out
+
+
+_SHORT = {_FULL_PRACTICE: "Full", _LIMITED_PRACTICE: "Limited", _DID_NOT_PRACTICE: "DNP", None: "no report"}
+
+
+def time_aware_decision(history: list[tuple[str, str | None, str | None]], stage: str, stamp: str = "") -> tuple[str, str, str]:
+    """`(decision, basis, source)` for a Q player: "cleared" | "excluded" | "unresolved" (see module notes and ADR-0045 amendment).
+
+    - an official game status of Out/Doubtful -> excluded at any stage;
+    - Full on the latest report -> cleared;
+    - early: Limited, a first DNP or no report yet -> unresolved;
+    - midweek: DNP on two different report days -> excluded; otherwise unresolved;
+    - final/gameday: the original rule -- anything but Full is out (Limited needs a positive report, i.e. an override)."""
+    traj = " -> ".join(f"{d[5:]} {_SHORT.get(p, p)}" for d, p, _ in history) or "no official report yet"
+    latest_day, latest, game = history[-1] if history else (None, None, None)
+    if game in _OUT_GAME_STATUSES:
+        return "excluded", f"official game status {game} ({traj}){stamp}", "official_practice"
+    if latest == _FULL_PRACTICE:
+        return "cleared", f"official practice: Full ({traj}){stamp}", "official_practice"
+    if stage in ("final", "gameday"):
+        if latest == _LIMITED_PRACTICE:
+            return "excluded", f"official practice: Limited -- needs a positive report to clear; override to clear ({traj}){stamp}", "official_practice"
+        if latest == _DID_NOT_PRACTICE:
+            return "excluded", f"official practice: Did Not Participate ({traj}){stamp}", "official_practice"
+        return "excluded", f"no official practice evidence ({traj}){stamp}", "default"
+    dnp_days = sum(1 for _, p, _ in history if p == _DID_NOT_PRACTICE)
+    if stage == "midweek" and latest == _DID_NOT_PRACTICE and dnp_days >= 2:
+        return "excluded", f"official practice: Did Not Participate on {dnp_days} report days ({traj}){stamp}", "official_practice"
+    return "unresolved", f"too early to call at the {stage} stage: {traj}{stamp}", "official_practice" if history else "default"
 
 
 def build_injury_lookup(
@@ -118,7 +183,7 @@ class AvailabilityDecision:
 
     name: str
     team: str
-    decision: str  # "cleared" | "excluded" | "barred"
+    decision: str  # "cleared" | "excluded" | "barred" | "unresolved" (time-aware Q handling)
     basis: str
     source: str  # "official_practice" | "override" | "default"
 
@@ -131,6 +196,8 @@ def resolve_questionable_players(
     *,
     week: int,
     as_of: str = "",
+    history: dict | None = None,
+    stage: str | None = None,
 ) -> tuple[dict[str, str], list[AvailabilityDecision], list[QuestionableOverride]]:
     """Applies the Questionable rule (Chris, 2026-10-07) and his overrides.
 
@@ -186,6 +253,14 @@ def resolve_questionable_players(
         entry = official_by_gsis.get(identity.canonical_id)
         practice = entry.practice_status if entry else None
         stamp = f" (as of {as_of})" if as_of else ""
+        if stage is not None:  # time-aware path; without `stage` the original rule below applies unchanged
+            decision, basis, source = time_aware_decision((history or {}).get(identity.canonical_id, []), stage, stamp)
+            if decision == "cleared":
+                merged[key] = CLEARED_QUESTIONABLE_STATUS
+            elif decision == "unresolved":
+                merged[key] = UNRESOLVED_STATUS
+            decisions.append(AvailabilityDecision(identity.display_name, identity.team, decision, basis, source))
+            continue
         if practice == _FULL_PRACTICE:
             merged[key] = CLEARED_QUESTIONABLE_STATUS
             decisions.append(AvailabilityDecision(identity.display_name, identity.team, "cleared", f"official practice: Full{stamp}", "official_practice"))
