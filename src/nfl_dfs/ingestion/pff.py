@@ -32,6 +32,7 @@ prior-season record exists at all (e.g. a rookie).
 
 from __future__ import annotations
 
+import time
 from dataclasses import dataclass, field
 
 import requests
@@ -52,6 +53,11 @@ FACETS: dict[str, str] = {
 }
 
 _TIMEOUT = 30.0
+# PFF's gateway returns intermittent 502/503/504 on the multi-week facet requests (2026-10-08: two live runs in a row failed on
+# different facets, then succeeded on retry or not at all). A bounded retry on SERVER-side errors and timeouts only; a 4xx (bad key,
+# entitlement) is never retried, and after the last attempt the error is raised -- no degraded fallback.
+_RETRY_DELAYS = (5.0, 15.0, 30.0)
+_RETRYABLE_STATUS = (500, 502, 503, 504)
 _REQUIRED_ROW_FIELDS = ("player_id", "player", "team", "position")
 
 
@@ -305,16 +311,27 @@ def _get_grade_facet_payload(
         raise RuntimeError("PFF_API_KEY is not configured (nfl_dfs.config.config.pff_api_key)")
     http = session or requests
     headers = {"Authorization": f"Bearer {key}"}
-    response = http.get(
-        f"{BASE_URL}/v1/facet/{facet}",
-        headers=headers,
-        params={"league": "nfl", **params},
-        timeout=_TIMEOUT,
-    )
-    response.raise_for_status()
-    payload = response.json()
-    _check_entitlement(payload, facet)
-    return payload
+    for attempt in range(len(_RETRY_DELAYS) + 1):
+        try:
+            response = http.get(
+                f"{BASE_URL}/v1/facet/{facet}",
+                headers=headers,
+                params={"league": "nfl", **params},
+                timeout=_TIMEOUT,
+            )
+            if getattr(response, "status_code", 200) in _RETRYABLE_STATUS and attempt < len(_RETRY_DELAYS):
+                time.sleep(_RETRY_DELAYS[attempt])
+                continue
+            response.raise_for_status()
+        except (requests.Timeout, requests.ConnectionError):
+            if attempt < len(_RETRY_DELAYS):
+                time.sleep(_RETRY_DELAYS[attempt])
+                continue
+            raise
+        payload = response.json()
+        _check_entitlement(payload, facet)
+        return payload
+    raise AssertionError("unreachable")  # the loop either returns or raises
 
 
 def fetch_matchup_grades(
