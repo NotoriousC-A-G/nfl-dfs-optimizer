@@ -178,3 +178,20 @@ def redistribute(
             " and ".join(parts) + f" from {names} (baseline: pro rata to current share; draft)",
         )
     return TeamOpportunity(tuple(vacated), expected, tuple(unassigned))
+
+
+def team_volume(pbp: pd.DataFrame, *, season: int, through_week: int, window: int = WINDOW) -> dict[str, tuple[float, float]]:
+    """`{team: (carries per game, targets per game)}` over the team's last `window` regular-season games -- the volume a share is a share OF."""
+    d = pbp[(pbp["season"] == season) & (pbp["week"] <= through_week)]
+    if "season_type" in d.columns:
+        d = d[d["season_type"] == "REG"]
+    out: dict[str, tuple[float, float]] = {}
+    for raw_team, tdf in d.groupby("posteam"):
+        weeks = sorted(tdf["week"].unique())[-window:]
+        if not weeks:
+            continue
+        t = tdf[tdf["week"].isin(weeks)]
+        carries = int(((t["rush_attempt"] == 1) & (t.get("qb_kneel", 0) != 1) & (t.get("qb_scramble", 0) != 1) & t["rusher_player_id"].notna()).sum())
+        targets = int(((t["pass_attempt"] == 1) & t["receiver_player_id"].notna()).sum())
+        out[normalize_team("nflverse_schedule", raw_team) or raw_team] = (carries / len(weeks), targets / len(weeks))
+    return out

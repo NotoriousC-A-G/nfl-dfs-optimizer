@@ -25,7 +25,7 @@ import nfl_data_py as nfl
 from nfl_dfs.build.agents import POOL_AGENT_BY_ID
 from nfl_dfs.build.availability import availability_from_snapshot
 from nfl_dfs.build.evidence.builder import build_evidence_packets
-from nfl_dfs.build.evidence.opportunity import trailing_shares
+from nfl_dfs.build.evidence.opportunity import team_volume, trailing_shares
 from nfl_dfs.build.evidence.metrics import league_values, team_game_metrics
 from nfl_dfs.build.expert.repair import build_with_repair, output_to_json
 from nfl_dfs.build.expert.stage import expert_spec
@@ -34,6 +34,7 @@ from nfl_dfs.build.runner import collect_results, require_all_ok
 from nfl_dfs.build.thesis.contracts import PairSign
 from nfl_dfs.build.thesis.stage import analyst_specs
 from nfl_dfs.build.value.calibration import CalibrationTable
+from nfl_dfs.build.value.opportunity_points import PASS_THROUGH, PointsPerOpportunity, opportunity_adjustments
 from nfl_dfs.optimizer.script_solve import build_agent_by_variation
 from nfl_dfs.projection.blend import PlayerProjection
 from nfl_dfs.storage.build_artifact_store import save_build_artifact
@@ -42,6 +43,7 @@ from scripts.live_integration_check_dashboard import SEASON, WEEK
 from scripts.run_llm_stages import ANALYST_FRESHNESS, MODEL_ID, _freshness
 
 TABLE = Path("data/cache/tail_value_cells.json")
+RATES = Path("data/cache/opportunity_points.json")
 RG_STATUS = {"O": "OUT", "D": "D", "Q": "Q"}
 
 
@@ -51,6 +53,8 @@ def main() -> int:
     args = ap.parse_args()
     if not TABLE.exists():
         raise SystemExit(f"{TABLE} missing -- run scripts/tail_value_calibration_report.py first")
+    if not RATES.exists():
+        raise SystemExit(f"{RATES} missing -- run scripts/opportunity_points_calibration.py first")
 
     snapshot = load_latest_slate_snapshot(SEASON, WEEK)
     with warnings.catch_warnings():
@@ -76,7 +80,16 @@ def main() -> int:
 
     # Projections for exactly the players the expert/analysts saw (statuses use the DK vocabulary after the Q pass)
     status_map = {"cleared": "Q_CLEARED", "barred": "BARRED", "out": "OUT", "unresolved": "Q_UNRESOLVED"}
-    projs = [PlayerProjection(p.canonical_id, p.name, p.position, p.team, p.salary, p.projection, 2, {"x": p.projection},
+    # Opportunity -> points: a player who inherits a vacated role gets the extra carries/targets priced into his projection BEFORE the tail-value
+    # calibration and the analysts' multipliers (vendor projections assume a Questionable player plays; ours treat him as out).
+    rates = PointsPerOpportunity.from_json(RATES.read_text())
+    all_players = [p for pk in packets.values() for p in pk.players]
+    adjustments = opportunity_adjustments(all_players, team_volume(pbp, season=SEASON, through_week=WEEK - 1), rates)
+    print(f"Opportunity -> points ({len(adjustments)} beneficiaries; pass-through {PASS_THROUGH}; {rates.per_carry_rb:.2f} pts/RB carry, "
+          f"{rates.per_target['WR']:.2f}/WR target): " + "; ".join(
+              f"{a.name} {a.vendor_projection:.1f}->{a.adjusted_projection:.1f}" for a in sorted(adjustments.values(), key=lambda a: -a.extra_points)[:12]))
+    adj_proj = lambda p: adjustments[p.canonical_id].adjusted_projection if p.canonical_id in adjustments else p.projection
+    projs = [PlayerProjection(p.canonical_id, p.name, p.position, p.team, p.salary, adj_proj(p), 2, {"x": adj_proj(p)},
                               status_map.get(p.status_after_q_pass) or p.injury_status)
              for pk in packets.values() for p in pk.players if p.salary is not None and p.projection is not None]
     table = CalibrationTable.from_json(TABLE.read_text())
@@ -147,6 +160,7 @@ def main() -> int:
     path = save_build_artifact(SEASON, WEEK, {
         "snapshot_timestamp": snapshot.get("timestamp"), "snapshot_filename": snapshot.get("snapshot_filename"), "model": MODEL_ID,
         "availability_decisions": [asdict(d) for d in availability],
+        "opportunity_adjustments": {k: asdict(a) for k, a in adjustments.items()},
         "theses": {gid: asdict(t) for gid, t in theses.items()},
         "expert": {"unavailable": dict(expert.unavailable), "portfolio_notes": expert.portfolio_notes},
         "agents": agents_record, "exit_code": exit_code,
