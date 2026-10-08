@@ -212,3 +212,15 @@ def test_the_prompt_explains_graded_tiers_and_defaults_the_open_remainder_to_rea
     thesis, _ = parse_analyst_response(json.dumps(_response(packet)), packet, league_fn, prompt_version="p", model="m")
     p = expert_prompt({packet.game_id: thesis}, {packet.game_id: packet})
     assert "GRADED CONFIDENCE, not a fence" in p and 'default_tier "reach"' in p and "SHOT" in p
+
+
+def test_the_universe_marks_beneficiaries_and_the_prompt_forbids_leaving_them_in_the_open_remainder():
+    from dataclasses import replace
+    packet = _packet()
+    thesis, _ = parse_analyst_response(json.dumps(_response(packet)), packet, league_fn, prompt_version="p", model="m")
+    first = packet.players[0]
+    marked = replace(first, target_share_expected=0.31, opportunity_note="+6.0 pts of its targets from X Y (OUT)")
+    packet = replace(packet, players=(marked,) + packet.players[1:])
+    p = expert_prompt({packet.game_id: thesis}, {packet.game_id: packet})
+    assert "BENEFICIARY: +6.0 pts of its targets from X Y (OUT)" in p and "expected carry share" in p
+    assert "do NOT leave a" in p and "open remainder" in p

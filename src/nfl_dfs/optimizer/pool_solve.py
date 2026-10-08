@@ -37,7 +37,11 @@ BRING_BACK_BONUS = 0.8
 MIN_SALARY_USED = 48_000
 # A reach-tier player is allowed anywhere in the lineup but is worth less to the solver (draft, not backtested): he is taken to fit a
 # salary or position need, or because his value still beats the alternatives after the haircut -- not as a default.
-REACH_HAIRCUT = 0.12
+REACH_HAIRCUT = 0.25
+# ...and a reach player already used in an earlier agent's lineup is worth 10% less per prior use (at most 3), so the open remainder cannot
+# quietly become the same few value plays in every agent's lineups (2026-10-09 first look: three players were in 7-8 of 10 lineups).
+REACH_REUSE_DISCOUNT = 0.10
+REACH_REUSE_MAX = 3
 PAIR_TOP_N = 4  # only each team's top-N catchers by value get pair terms (bounds the model size)
 # Failure codes widening can plausibly fix; anything else is an expert/contract error and fails at once.
 _WIDENABLE_PREFIXES = ("feasibility_", "stack_teams", "min_core", "distinct_stacks")
@@ -97,7 +101,14 @@ def _solve(
 ) -> list[Lineup]:
     rules = pool.rules
     reach_ids = {e.canonical_id for e in pool.entries if e.tier == "reach"}
-    values = {i: (v * (1.0 - REACH_HAIRCUT) if i in reach_ids else v) for i, v in values.items()}
+    uses: dict[str, int] = defaultdict(int)
+    for lineup in avoid_lineups or ():
+        for pid in lineup:
+            uses[pid] += 1
+    values = {
+        i: (v * (1.0 - REACH_HAIRCUT) * (1.0 - REACH_REUSE_DISCOUNT * min(uses[i], REACH_REUSE_MAX)) if i in reach_ids else v)
+        for i, v in values.items()
+    }
     pairs = stack_bonus_pairs(
         playable, values, opponent_of,
         allow_bring_back=not rules.forbid_pass_catcher_bring_back,
