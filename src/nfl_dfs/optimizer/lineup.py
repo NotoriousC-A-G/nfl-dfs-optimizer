@@ -428,6 +428,7 @@ def _solve_single_lineup(
     extra_constraints: "Callable[[pulp.LpProblem, dict[str, pulp.LpVariable], list[PlayerProjection]], None] | None" = None,
     exclude_lineups: list[frozenset[str]] | None = None,
     min_difference: int = 1,
+    require_qb_stack: bool = True,
 ) -> Lineup | None:
     """One ILP solve: maximize total blended projection subject to PRD Section 3's roster/salary
     rules, Section 7's QB+pass-catcher stack rule, a no-good cut per already-generated lineup's
@@ -507,7 +508,11 @@ def _solve_single_lineup(
     by_team: dict[str, list[PlayerProjection]] = defaultdict(list)
     for p in players:
         by_team[p.team].append(p)
+    # `require_qb_stack=False` (redesign build, Chris 2026-10-09): the QB + pass-catcher rule is OURS, not DraftKings', and a lineup whose bets
+    # are not a QB stack may legitimately not have one. Default True keeps every existing caller byte-identical.
     for team, team_players in by_team.items():
+        if not require_qb_stack:
+            break
         qb_sum = pulp.lpSum(x[p.canonical_id] for p in team_players if p.position == "QB")
         catcher_sum = pulp.lpSum(
             x[p.canonical_id] for p in team_players if p.position in ("WR", "TE")
@@ -581,6 +586,7 @@ def generate_lineups(
     distinct_core_stacks: bool = True,
     avoid_lineups: list[frozenset[str]] | None = None,
     min_player_difference: int = 1,
+    require_qb_stack: bool = True,
 ) -> list[Lineup]:
     """Generate up to `n` distinct-core-stack lineups from a `build_projection_pool` output.
 
@@ -649,6 +655,7 @@ def generate_lineups(
                 + ([frozenset(p.canonical_id for p in l.players) for l in lineups] if (not distinct_core_stacks or min_player_difference > 1) else [])
             ) or None,
             min_difference=min_player_difference,
+            require_qb_stack=require_qb_stack,
         )
         if lineup is None:
             if i == 0:

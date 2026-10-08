@@ -18,6 +18,7 @@ from dataclasses import dataclass
 
 from nfl_dfs.build.evidence.contracts import EvidencePacket
 from nfl_dfs.build.pool.contracts import ExpertAgentOutput, PlayerRef, Variation
+from nfl_dfs.build.pool.correlation import lead_protect_pairs
 from nfl_dfs.build.pool.derive import derive_tiers, dst_multipliers
 from nfl_dfs.build.pool.expand import expand_pool
 from nfl_dfs.build.thesis.contracts import GameThesis, PairSign
@@ -84,6 +85,9 @@ def build_agent_by_variation(
         res = build_agent_lineups(
             pool, projections, values, n=1, opponent_of=opponent_of, game_id_by_team=game_id_by_team, pair_signs=pair_signs,
             avoid_lineups=avoid, min_player_difference=min_player_difference, required_ids=var.stack,
+            # the QB + catcher rule is ours, not DraftKings': it applies only when the variation's bets include a pass-volume bet
+            require_qb_stack=any(b.mechanism == "pass_volume" for b in var.bets) or not var.bets,
+            extra_pairs=lead_protect_pairs(universe, theses, packets, var.views),
         )
         lu = res.lineups[0]
         lineups.append(lu)

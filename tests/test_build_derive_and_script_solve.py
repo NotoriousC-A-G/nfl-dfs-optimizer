@@ -194,3 +194,14 @@ def test_a_declared_stack_player_who_cannot_play_fails_the_build_loudly():
     with pytest.raises(PoolBuildFailure, match="declared stack player"):
         build_agent_by_variation(out, universe=u, theses=THESES, packets={}, projections=projs, table=TABLE, floor_lean=0.0, n=1,
                                  opponent_of=OPP, game_id_by_team=GAME, pair_signs=[], avoid_lineups=[])
+
+
+def test_a_variation_of_non_qb_bets_builds_a_lineup_without_a_qb_stack_requirement_and_holds_every_bet_player():
+    from nfl_dfs.build.pool.contracts import Bet
+    bets = (Bet(("rb1_T1", "dst_T1"), "lead_protect", "T1 ahead and running"), Bet(("wr2_T3", "te_T3"), "pass_volume", "")) 
+    var = Variation(("g0:b0", "g1:b0"), ("rb1_T1", "dst_T1", "wr2_T3", "te_T3"), "", bets)
+    vb = _build([var], n=1)
+    ids = {p.canonical_id for p in vb.result.lineups[0].players}
+    assert {"rb1_T1", "dst_T1", "wr2_T3", "te_T3"} <= ids  # every bet player is in
+    teams = {p.team for p in vb.result.lineups[0].players}
+    assert any(GAME[t] == "g0" for t in teams) and any(GAME[t] == "g1" for t in teams)  # bets in different games

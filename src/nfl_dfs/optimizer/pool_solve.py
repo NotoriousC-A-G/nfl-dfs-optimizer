@@ -100,6 +100,7 @@ def _solve(
     pool: Pool, playable: list[PlayerProjection], core_ids: set[str], values: dict[str, float],
     *, n: int, opponent_of: dict[str, str], seed_core_stacks, distinct_core_stacks: bool,
     avoid_lineups: list[frozenset[str]] | None = None, min_player_difference: int = 1, required_ids: tuple[str, ...] = (),
+    require_qb_stack: bool = True, extra_pairs: list[tuple[str, str, float]] | None = None,
 ) -> list[Lineup]:
     rules = pool.rules
     reach_ids = {e.canonical_id for e in pool.entries if e.tier == "reach"}
@@ -122,6 +123,8 @@ def _solve(
         allow_bring_back=not rules.forbid_pass_catcher_bring_back,
     )
 
+    pairs = list(pairs) + list(extra_pairs or [])
+
     def core_minimum(prob: pulp.LpProblem, x: dict[str, pulp.LpVariable], _players: list[PlayerProjection]) -> None:
         members = [x[i] for i in core_ids if i in x]
         if members and rules.min_core > 0:
@@ -138,7 +141,7 @@ def _solve(
         pair_bonuses=pairs, extra_constraints=core_minimum,
         seed_core_stacks=list(seed_core_stacks) if seed_core_stacks else None,
         distinct_core_stacks=distinct_core_stacks,
-        avoid_lineups=avoid_lineups, min_player_difference=min_player_difference,
+        avoid_lineups=avoid_lineups, min_player_difference=min_player_difference, require_qb_stack=require_qb_stack,
     )
 
 
@@ -155,7 +158,7 @@ def _supply_summary(players: list[PlayerProjection]) -> str:
     return "; ".join(f"{pos} " + ", ".join(f"{n} ${s:,}" for n, s in top) for pos, top in _supply(players).items())
 
 
-def _verify(lineup: Lineup, pool: Pool, core_ids: set[str], playable_ids: set[str], opponent_of: dict[str, str]) -> list[str]:
+def _verify(lineup: Lineup, pool: Pool, core_ids: set[str], playable_ids: set[str], opponent_of: dict[str, str], require_qb_stack: bool = True) -> list[str]:
     """Independent post-solve checks (do not trust the solver to have honoured its own constraints)."""
     problems = []
     ids = {p.canonical_id for p in lineup.players}
@@ -171,7 +174,7 @@ def _verify(lineup: Lineup, pool: Pool, core_ids: set[str], playable_ids: set[st
         forbid_pass_catcher_bring_back=pool.rules.forbid_pass_catcher_bring_back, forbid_rb_bring_back=pool.rules.forbid_rb_bring_back,
     )
     qb = next((p for p in lineup.players if p.position == "QB"), None)
-    if qb is None or not any(p.team == qb.team and p.position in ("WR", "TE") for p in lineup.players):
+    if require_qb_stack and (qb is None or not any(p.team == qb.team and p.position in ("WR", "TE") for p in lineup.players)):
         problems.append("missing the required QB + same-team pass-catcher stack")
     return problems
 
@@ -190,6 +193,8 @@ def build_agent_lineups(
     avoid_lineups: list[frozenset[str]] | None = None,
     min_player_difference: int = 1,
     required_ids: tuple[str, ...] = (),
+    require_qb_stack: bool = True,
+    extra_pairs: list[tuple[str, str, float]] | None = None,
 ) -> PoolBuildResult:
     refs = player_refs_from_projections(projections, game_id_by_team or {})
     by_id = {p.canonical_id: p for p in projections}
@@ -224,7 +229,8 @@ def build_agent_lineups(
             try:
                 lineups = _solve(current, playable, core_ids, values, n=n, opponent_of=opponent_of,
                                  seed_core_stacks=seed_core_stacks, distinct_core_stacks=distinct_core_stacks,
-                                 avoid_lineups=avoid_lineups, min_player_difference=min_player_difference, required_ids=required_ids)
+                                 avoid_lineups=avoid_lineups, min_player_difference=min_player_difference, required_ids=required_ids,
+                                 require_qb_stack=require_qb_stack, extra_pairs=extra_pairs)
             except LineupGenerationError as exc:
                 attempts[-1]["solve_error"] = str(exc)
                 lineups = []
@@ -232,7 +238,7 @@ def build_agent_lineups(
                 playable_ids = set(report.playable_ids)
                 warnings: list[Violation] = []
                 for i, lu in enumerate(lineups):
-                    problems = _verify(lu, current, core_ids, playable_ids, opponent_of)
+                    problems = _verify(lu, current, core_ids, playable_ids, opponent_of, require_qb_stack)
                     if problems:
                         raise PoolBuildFailure(pool.agent_id, "post_solve_verification", f"lineup {i + 1}: " + "; ".join(problems), {"attempts": attempts, "lineup": [p.display_name for p in lu.players]})
                     if lu.total_salary < MIN_SALARY_USED:

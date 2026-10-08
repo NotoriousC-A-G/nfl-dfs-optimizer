@@ -180,7 +180,7 @@ def test_prompt_carries_agent_briefs_theses_refs_rules_and_retry_errors():
     assert not [e for e in errs if e.severity == "error"]
     theses, packets = {packet.game_id: thesis}, {packet.game_id: packet}
     p = expert_prompt(theses, packets)
-    assert PROMPT_VERSION in p and "THE STAND MUST BE NARROW" in p and "VALID BRANCH REFS" in p
+    assert PROMPT_VERSION in p and "VALID BRANCH REFS" in p and "BUILD ON THE ANALYSTS' CALLS" in p
     for a in POOL_AGENTS:
         assert a.agent_id in p
     assert "NO WR/TE bring-backs" in p  # volume anchor's hard rule is stated
@@ -219,7 +219,7 @@ def test_the_prompt_explains_graded_tiers_scripts_and_derived_defaults():
     packet = _packet()
     thesis, _ = parse_analyst_response(json.dumps(_response(packet)), packet, league_fn, prompt_version="p", model="m")
     p = expert_prompt({packet.game_id: thesis}, {packet.game_id: packet})
-    assert "GRADED CONFIDENCE, not a fence" in p and 'default_tier "derived"' in p and "SHOT" in p and "SCRIPT VARIATIONS" in p
+    assert "GRADED CONFIDENCE, not a fence" in p and 'default_tier "derived"' in p and "SHOT" in p and "VARIATIONS" in p
 
 
 def test_the_universe_marks_beneficiaries_and_the_prompt_forbids_leaving_them_in_the_open_remainder():
@@ -231,7 +231,7 @@ def test_the_universe_marks_beneficiaries_and_the_prompt_forbids_leaving_them_in
     packet = replace(packet, players=(marked,) + packet.players[1:])
     p = expert_prompt({packet.game_id: thesis}, {packet.game_id: packet})
     assert "BENEFICIARY: +6.0 pts of its targets from X Y (OUT)" in p and "expected carry share" in p
-    assert "never" in p and "open remainder" in p and "engine already tiers a beneficiary" in p
+    assert "BENEFICIARY" in p and "the engine already tiers them eligible or core" in p
 
 
 def test_the_analyst_prompt_asks_for_battles_and_the_expert_prompt_shows_their_calls_and_convictions():
@@ -291,3 +291,55 @@ def test_variations_carry_their_own_views_and_stack_and_the_spend_plan_is_valida
     assert out.build_thesis.backs == ("KC@LV:b0", "LAR@PHI:b1", "KC@LV:b2")  # the record of what the agent believes
     d["agents"][0]["spend_plan"] = {"QB": "lots", "K": "pay"}
     assert "spend_plan" in _codes(_parse(d)[1])
+
+
+def test_bets_replace_the_single_stack_a_variation_holds_one_to_three_groups_that_move_together():
+    d = _expert()
+    d["agents"][0]["variations"] = [{
+        "views": ["KC@LV:b0", "LAR@PHI:b1"],
+        "bets": [
+            {"players": ["KC_qb", "KC_wr0", "KC_wr1"], "mechanism": "pass_volume", "note": "KC pass game vs a thin LV rush"},
+            {"players": ["LAR_rb0", "LAR_dst"], "mechanism": "lead_protect", "note": "LAR ahead and running"},
+        ],
+    }]
+    result, v = _parse(d)
+    assert _codes(v) == set(), [x.message for x in v]
+    var = next(o for o in result.outputs if o.agent_id == "shootout_stack").variations[0]
+    assert [b.mechanism for b in var.bets] == ["pass_volume", "lead_protect"]
+    assert var.stack == ("KC_qb", "KC_wr0", "KC_wr1", "LAR_rb0", "LAR_dst")  # the union is what the lineup must contain
+    assert len({p[:2] for p in var.stack}) >= 2  # the bets span games / teams
+
+
+def test_a_non_qb_bet_needs_no_quarterback_but_a_pass_volume_bet_does_and_bets_are_limited():
+    d = _expert()
+    d["agents"][0]["variations"][0]["bets"] = [{"players": ["KC_rb0", "KC_dst"], "mechanism": "lead_protect"}]
+    assert _codes(_parse(d)[1]) == set()  # an RB + defense bet is fine without a QB stack
+    d["agents"][0]["variations"][0]["bets"] = [{"players": ["KC_rb0", "KC_wr0"], "mechanism": "pass_volume"}]
+    assert "stack_shape" in _codes(_parse(d)[1])
+    d["agents"][0]["variations"][0]["bets"] = [{"players": ["KC_qb", "KC_wr0"], "mechanism": "magic"}]
+    assert "bet_mechanism" in _codes(_parse(d)[1])
+    d["agents"][0]["variations"][0]["bets"] = [{"players": ["KC_qb"], "mechanism": "pass_volume"}]
+    assert "bet_size" in _codes(_parse(d)[1])
+    d["agents"][0]["variations"][0]["bets"] = []
+    assert "bets_count" in _codes(_parse(d)[1])
+    d["agents"][0]["variations"][0]["bets"] = [{"players": ["KC_qb", "KC_wr0"], "mechanism": "pass_volume"}] * 4
+    assert "bets_count" in _codes(_parse(d)[1])
+
+
+def test_a_legacy_stack_list_still_parses_as_one_pass_volume_bet():
+    d = _expert()
+    v0 = d["agents"][0]["variations"][0]
+    v0.pop("bets", None)
+    v0["stack"] = ["KC_qb", "KC_wr0"]
+    result, v = _parse(d)
+    assert _codes(v) == set()
+    assert next(o for o in result.outputs if o.agent_id == "shootout_stack").variations[0].bets[0].mechanism == "pass_volume"
+
+
+def test_the_prompt_teaches_bets_views_variations_and_a_spend_plan_with_position_economics():
+    packet = _packet()
+    thesis, _ = parse_analyst_response(json.dumps(_response(packet)), packet, league_fn, prompt_version="p", model="m")
+    p = expert_prompt({packet.game_id: thesis}, {packet.game_id: packet})
+    assert "BETS" in p and "VIEWS" in p and "VARIATIONS" in p and "SPEND PLAN" in p and '"bets": [{"players"' in p
+    assert "POSITION ECONOMICS" in p and "pts/$1K" in p
+    assert "a defense is priced on its merits, never a fill" in p and "$200-500 more" in p
