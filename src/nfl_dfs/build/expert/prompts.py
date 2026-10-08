@@ -106,7 +106,8 @@ RULES (machine-checked; a violation sends your answer back for one retry):
    fit for that agent's angle (the brief says when) -- do NOT stretch an agent over a slate that does not suit it.
 2. THE STAND MUST BE NARROW. Use default_tier "derived" (recommended: the engine tiers everyone you do not name, per script), or "reach" if you
    want to tier the whole slate yourself. Explicit core, if you give it, is at most 16 players (4-16 when you do not use "derived"); explicit
-   core + eligible must be at most 45% of the players listed (reach, exclude and derived tiers do not count toward that). Use group_tiers (team /
+   core + eligible is best kept well under about 45% of the players listed -- a guide, not a limit (past it the stand gets diluted and the agents
+   converge). Use group_tiers (team /
    position / game_id selectors) for broad strokes and overrides (player_id) for named players. Later entries win over earlier ones.
 3. BUILD ON THE ANALYSTS' CALLS. Each game thesis lists BATTLES with a call and a conviction. An agent's stand is a call (or a few) you
    believe in, ranked by conviction; say in the build thesis which battles it rests on. Prefer high-conviction calls, and let the agents

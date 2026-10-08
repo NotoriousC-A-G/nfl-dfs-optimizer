@@ -113,7 +113,8 @@ def test_backs_must_reference_real_branches_and_not_be_empty():
 def test_pools_must_be_narrow_and_core_must_be_a_sensible_size():
     d = _expert()
     d["agents"][0]["default_tier"] = "eligible"  # everything is live -> broad pool
-    assert "pool_too_broad" in _codes(_parse(d)[1])
+    broad = _parse(d)[1]
+    assert "pool_broad" not in _codes(broad) and "pool_broad" in _codes(broad, "warning")  # advisory, never a rejection
     d = _expert()
     d["agents"][0] = _agent("shootout_stack", ["KC@LV:b0"], [("KC", "QB")])  # a single core player
     assert "core_size" in _codes(_parse(d)[1])
@@ -177,7 +178,7 @@ def test_prompt_carries_agent_briefs_theses_refs_rules_and_retry_errors():
         assert a.agent_id in p
     assert "NO WR/TE bring-backs" in p  # volume anchor's hard rule is stated
     assert thesis.headline in p and "LAR@PHI:b0" in p and "hurts" in p
-    assert "PREVIOUS ANSWER WAS REJECTED" in expert_prompt(theses, packets, retry_errors=["pool_too_broad: x"])
+    assert "PREVIOUS ANSWER WAS REJECTED" in expert_prompt(theses, packets, retry_errors=["core_size: x"])
     assert set(branch_refs(theses)) >= {"LAR@PHI:b0", "LAR@PHI:res"}
 
 

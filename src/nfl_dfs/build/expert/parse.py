@@ -158,4 +158,5 @@ def _check_agent(out: ExpertAgentOutput, spec: PoolAgentSpec, universe: list[Pla
     if len(backs) > MAX_SCRIPTS:
         v.append(Violation("too_many_scripts", f"{aid}: backs {len(backs)} branches; each is a script variation with its own lineup, use at most {MAX_SCRIPTS}", aid))
     if n and live / n > MAX_BROAD_FRACTION:
-        v.append(Violation("pool_too_broad", f"{aid}: {live} of {n} players are core/eligible ({live / n:.0%}); above {MAX_BROAD_FRACTION:.0%} the agent's stand stops being a stand and converges on the same plays as every other agent -- move the weaker fits to reach", aid))
+        # An advisory, not a limit (Chris, 2026-10-09): a wide pool is the expert's call. It is surfaced so the build record shows it.
+        v.append(Violation("pool_broad", f"{aid}: {live} of {n} players are core/eligible ({live / n:.0%}); past about {MAX_BROAD_FRACTION:.0%} the stand gets diluted and tends to converge on the same plays as other agents", aid, "warning"))
