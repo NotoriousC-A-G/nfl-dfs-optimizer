@@ -1,7 +1,7 @@
 """Run the pool-built agents end to end for a week: validated game theses -> expert pools -> tail values ->
 pool-constrained lineups, one agent at a time, each failing LOUDLY on its own (nothing is substituted).
 
-    PYTHONPATH=. .venv/bin/python scripts/build_pool_lineups.py [--n 2]
+    PYTHONPATH=. .venv/bin/python scripts/build_pool_lineups.py [--n 1]
 
 Requires the analyst and expert stages to be COMPLETE (`scripts/run_llm_stages.py collect-analysts` /
 `collect-expert`) and the fitted tail-value table (`scripts/tail_value_calibration_report.py`).
@@ -47,7 +47,7 @@ RG_STATUS = {"O": "OUT", "D": "D", "Q": "Q"}
 
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--n", type=int, default=2, help="lineups per agent")
+    ap.add_argument("--n", type=int, default=1, help="lineups per agent: 1 = the agent's FAVORITE variation (the first one the expert listed); the rest are alternates")
     args = ap.parse_args()
     if not TABLE.exists():
         raise SystemExit(f"{TABLE} missing -- run scripts/tail_value_calibration_report.py first")
@@ -132,6 +132,8 @@ def main() -> int:
         agents_record[out.agent_id] = {
             "status": "built", "floor_lean": lean, "repaired": oc.repaired, "first_failure": str(oc.first_failure) if oc.first_failure else None,
             "spend_plan": plan, "build_thesis": asdict(res.pool.build_thesis), "expert_pool": output_to_json(out),
+            "alternates": [{"views": list(x.views), "bets": [{"players": list(b.players), "mechanism": b.mechanism, "note": b.note} for b in x.bets], "note": x.note}
+                           for x in out.variations[len(res.lineups):]],
             "pools_used": [[(e.canonical_id, e.tier, e.reason) for e in p.entries if e.tier != "exclude"] for p in sb.pools],
             "lineups": lineup_records, "warnings": [w.message for w in res.warnings],
         }

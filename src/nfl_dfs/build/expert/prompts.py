@@ -12,7 +12,7 @@ from nfl_dfs.build.evidence.contracts import EvidencePacket
 from nfl_dfs.build.pool.contracts import PlayerRef
 from nfl_dfs.build.thesis.contracts import GameThesis
 
-PROMPT_VERSION = "expert-v9"
+PROMPT_VERSION = "expert-v10"
 
 
 def branch_refs(theses: dict[str, GameThesis]) -> dict[str, float]:
@@ -96,7 +96,9 @@ how it builds lineups. A lineup is NOT one game's script: it is one set of belie
      field expectations the agent grabs pieces of it; where it says a game or a role will fall short, the agent avoids it. A game with no view
      is priced at the full probability-weighted mix.
   3. the FILL: everything else, by value, at the agent's spend plan.
-Each agent has 1-3 VARIATIONS (a variation = its bets + its views); one lineup is built per variation, in the order you give them. The engine
+Each agent has 1-3 VARIATIONS (a variation = its bets + its views). List the agent's FAVORITE variation FIRST: the one lineup the agent
+puts forward is built from it. The others are ALTERNATES, kept in the record (and available to a later selector); give one only when it is a
+genuinely different belief you would stand behind, not to reach a count. The engine
 DERIVES each variation's tiers from its bets and views, so use default_tier "derived" and treat your group_tiers and overrides as ADJUSTMENTS
 with reasons: promote a player the arithmetic misses (a battle call, a role the numbers do not show), demote one it over-credits, exclude one you
 refuse. Tiers are GRADED CONFIDENCE, not a fence:
