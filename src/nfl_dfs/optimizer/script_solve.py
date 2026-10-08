@@ -11,7 +11,7 @@ A failure in any script's build raises `PoolBuildFailure` for the whole agent (t
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 from nfl_dfs.build.evidence.contracts import EvidencePacket
 from nfl_dfs.build.pool.contracts import ExpertAgentOutput, PlayerRef
@@ -31,6 +31,20 @@ class ScriptedBuild:
     result: PoolBuildResult
     scripts: tuple[str, ...]
     pools: dict
+
+
+def script_pool(pool, universe: list[PlayerRef], ref: str):
+    """A script's CORE must come from the scripted game (2026-10-09 first run: the quota was being met by the expert's explicit cores in other
+    games, so a Spears script produced a lineup with one Titans/Texans player). A core entry outside the scripted game is kept but demoted to
+    eligible -- the expert's judgment about him stands as 'a good fit', it just cannot stand in for the script's own core."""
+    game_of = {p.canonical_id: p.game_id for p in universe}
+    scripted_game = ref.partition(":")[0]
+    entries = tuple(
+        replace(e, tier="eligible", reason=f"{e.reason} (core elsewhere; demoted: a script's core comes from the scripted game {scripted_game})")
+        if e.tier == "core" and game_of.get(e.canonical_id) not in (None, scripted_game) else e
+        for e in pool.entries
+    )
+    return replace(pool, entries=entries)
 
 
 def build_agent_by_script(
@@ -61,7 +75,7 @@ def build_agent_by_script(
             derived = derive_tiers(universe, theses, packets, ref)
         except ValueError as exc:
             raise PoolBuildFailure(output.agent_id, "pool_validation", str(exc), {}) from exc
-        pool = expand_pool(output, universe, derived)
+        pool = script_pool(expand_pool(output, universe, derived), universe, ref)
         mult = conditional_multipliers(theses.values(), [ref], output.build_thesis.avoids)
         values = {k: v.tv for k, v in tail_values(inputs, table, multipliers=mult, floor_lean=floor_lean).items()}
         res = build_agent_lineups(

@@ -143,3 +143,33 @@ def test_no_script_or_an_unknown_game_fails_loudly_for_the_expert_loop():
         build_agent_by_script(out, **kw)
     with pytest.raises(PoolBuildFailure, match="no thesis"):
         _build(["zz@yy:b0"])
+
+
+def test_a_scripts_core_comes_from_the_scripted_game_the_experts_core_elsewhere_is_demoted_to_eligible():
+    from nfl_dfs.optimizer.script_solve import script_pool
+    out = ExpertAgentOutput("a1", BuildThesis(("g0:b0",), (), (), (), "r"), "derived", (), (PoolEntry("qb_T3", "core", "volume play in g1"),), PoolRules(min_core=2))
+    pool = expand_pool(out, _universe(), derive_tiers(_universe(), THESES, {}, "g0:b0"))
+    assert {e.canonical_id: e.tier for e in pool.entries}["qb_T3"] == "core"
+    scripted = script_pool(pool, _universe(), "g0:b0")
+    tiers = {e.canonical_id: e for e in scripted.entries}
+    assert tiers["qb_T3"].tier == "eligible" and "demoted" in tiers["qb_T3"].reason
+    assert tiers["qb_T1"].tier == "core"  # the scripted game's own core is untouched
+    assert all(e.tier != "core" or next(p for p in _universe() if p.canonical_id == e.canonical_id).game_id == "g0" for e in scripted.entries)
+
+
+def test_every_lineup_holds_at_least_min_core_players_from_its_scripted_game():
+    sb = _build(["g0:b0", "g1:b0"])
+    for lu, ref in zip(sb.result.lineups, sb.scripts):
+        game = ref.split(":")[0]
+        in_game = [p for p in lu.players if GAME.get(p.team) == game]
+        assert len(in_game) >= 2  # min_core = 2, and core can only come from the scripted game
+
+
+def test_a_defense_follows_what_the_script_does_to_the_opposing_quarterback():
+    th = {"g0": _thesis("g0", ["qb_T2"], ["qb_T1"])}  # b0 lifts T2's QB, b1 hurts T1's QB
+    up = derive_tiers(_universe(), th, {}, "g0:b0")  # T2's QB lifted -> T1's defense (facing him) is hurt; T2's defense (facing T1's QB) neutral
+    assert up["dst_T1"][0] == "reach" and "lifts the opposing quarterback" in up["dst_T1"][1] and up["dst_T2"][0] == "eligible"
+    down = derive_tiers(_universe(), th, {}, "g0:b1")  # T1's QB hurt (x0.8 <= 1/1.15) -> T2's defense is lifted
+    assert down["dst_T2"][0] == "core" and "hurts the opposing quarterback" in down["dst_T2"][1]
+    # a DST in another game stays a fill unless its own game's mix lifts it
+    assert up["dst_T3"][0] == "reach"

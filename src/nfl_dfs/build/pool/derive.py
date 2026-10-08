@@ -51,13 +51,30 @@ def derive_tiers(
     in_script = conditional_multipliers([theses[game_id]], backs=[ref])
     elsewhere = conditional_multipliers([t for g, t in theses.items() if g != game_id])
     evidence = {p.canonical_id: p for pk in packets.values() for p in pk.players}
+    # A defense is lifted by the script when it hurts the OPPOSING quarterback (the analysts rarely price a DST directly), and hurt when it
+    # lifts him. First-pass heuristic, draft.
+    teams_in_game = {p.team for p in universe if p.game_id == game_id}
+    opposing_qb: dict[str, str] = {}
+    for team in teams_in_game:
+        qbs = sorted((p for p in universe if p.position == "QB" and p.game_id == game_id and p.team != team), key=lambda p: -(p.projection or 0.0))
+        if qbs:
+            opposing_qb[team] = qbs[0].canonical_id
     out: dict[str, tuple[str, str]] = {}
     for p in universe:
         if p.status in EXCLUDED_INJURY_STATUSES:
             out[p.canonical_id] = ("exclude", f"unavailable ({p.status})")
             continue
         benef = is_beneficiary(evidence.get(p.canonical_id))
-        if p.game_id == game_id:
+        if p.game_id == game_id and p.position == "DST" and p.canonical_id not in in_script:
+            qb = opposing_qb.get(p.team)
+            qm = in_script.get(qb, (1.0, 1.0))[0] if qb else 1.0
+            if qm <= 1.0 / LIFT:
+                out[p.canonical_id] = ("core", f"script {ref} hurts the opposing quarterback (mean x{qm:.2f})")
+            elif qm >= LIFT:
+                out[p.canonical_id] = ("reach", f"script {ref} lifts the opposing quarterback (mean x{qm:.2f})")
+            else:
+                out[p.canonical_id] = ("eligible", f"neutral under script {ref}")
+        elif p.game_id == game_id:
             m = in_script.get(p.canonical_id, (1.0, 1.0))[0]
             if m >= LIFT:
                 out[p.canonical_id] = ("core", f"script {ref} lifts him (mean x{m:.2f})")
