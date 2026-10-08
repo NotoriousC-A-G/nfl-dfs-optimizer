@@ -12,7 +12,7 @@ from nfl_dfs.build.evidence.contracts import EvidencePacket
 from nfl_dfs.build.pool.contracts import PlayerRef
 from nfl_dfs.build.thesis.contracts import GameThesis
 
-PROMPT_VERSION = "expert-v7"
+PROMPT_VERSION = "expert-v8"
 
 
 def branch_refs(theses: dict[str, GameThesis]) -> dict[str, float]:
@@ -123,6 +123,9 @@ RULES (machine-checked; a violation sends your answer back for one retry):
    reach assignment you mean as a shot carries a reason too. Every bet carries a mechanism (pass_volume | shootout | lead_protect | pressure |
    other) and a note saying why those players move together.
 5. A pass_volume bet must be a QB plus at least one of his WR/TE; other bets need two or more players. Never put an unavailable player in a bet.
+   Bets are REQUIRED in the lineup, so all of a variation's bets together must fit ONE DraftKings roster: one QB (so only ONE bet in a variation
+   may contain a quarterback -- build a second bet from an RB + defense, a second offense's receivers without the QB, or a bring-back), at most
+   one DST, 2-3 RB, 3-4 WR, 1-2 TE, nine players, $50,000. A bet that cannot fit is rejected with the reason.
    Injury BENEFICIARIES (marked BENEFICIARY below) are a core input to every design where they fit -- unless the field already owns them; with
    default_tier "derived" the engine already tiers them eligible or core.
 6. Hard sliders (bring-back rules) are enforced in code from each agent's spec; you cannot and need not set them.
