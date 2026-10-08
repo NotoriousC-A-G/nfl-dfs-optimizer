@@ -16,7 +16,7 @@ from nfl_dfs.build.evidence.anchors import base_rate, lead_anchor
 from nfl_dfs.build.evidence.contracts import EvidencePacket, packet_keys
 from nfl_dfs.build.thesis.contracts import MULTIPLIER_BINS, PHASES, PROXY_METRICS
 
-PROMPT_VERSION = "analyst-v4"
+PROMPT_VERSION = "analyst-v5"
 
 DISTRIBUTION_METRICS = (
     "sack_rate", "qb_hit_rate", "explosive_pass_rate", "pass_epa", "rush_epa", "pass_rate_over_expected",
@@ -153,6 +153,13 @@ RULES (each is machine-checked; a violation sends your answer back for one retry
 9. COUNTER: counter_branch_id = the branch most against your headline. would_change_mind = 1-3 PRE-KICKOFF observables (an
    inactive, the weather, a line move).
 10. Do not double-count the line, and do not treat a public injury as an edge if the beneficiary is already heavily owned.
+11. BATTLES (required, 2-4): football is people beating people, not a simulation. Name the matchups that actually decide this game -- a specific
+   unit or player against a specific unit or player, and who is out and how that changes it (a missing tackle against a top rusher; a
+   defense that takes away the run and dares a thin receiving room to win). For each, TAKE A STAND: who wins and how (`call`), what that does
+   to which players' roles and volume (`consequence`), your own `conviction` (low | medium | high -- real conviction, not hedged to the middle),
+   the branch it points toward (`leans_branch`, a non-residual branch id, or null) and what you would watch for (`watch`). `evidence_keys`
+   must be citeable packet keys. The pivotal questions above are only the MEASURABLE form of these battles (so the call can be graded and the
+   game's branches get probabilities); the battles are where your football judgment goes. Do not restate a statistic as a battle.
 
 OUTPUT: a single JSON object, no markdown fences, no commentary, exactly this shape:
 {{
@@ -164,6 +171,7 @@ OUTPUT: a single JSON object, no markdown fences, no commentary, exactly this sh
  "branches": [{{"id":"b0","answers":{{"q1":true,"q2":false}},"description":"...","chain":["...","..."],"margin_shift":0.0,"total_shift":0.0,
                "player_outcomes":[{{"player_id":"<canonical_id>","mean_mult":1.0,"q90_mult":1.0,"reason":"..."}}]}},
               {{"id":"res","residual":true,"description":"...","chain":[]}}],
+ "battles": [{{"title":"...","matchup":"...","evidence_keys":["units.XXX.metric"],"call":"...","consequence":"...","conviction":"medium","leans_branch":"b0","watch":"..."}}],
  "counter_branch_id": "b0",
  "claims": [{{"text":"...","cite_keys":["units.XXX.metric"],"kind":"general","status":null,"as_of":null}}],
  "would_change_mind": ["..."],

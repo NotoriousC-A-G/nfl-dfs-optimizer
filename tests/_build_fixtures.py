@@ -58,6 +58,13 @@ def _response(packet, *, extra=None, drop=None):
             {"id": f"b{i}", "answers": {"q1": a, "q2": b}, "description": f"branch {i}", "chain": ["link one", "link two"], "player_outcomes": outs}
             for i, (a, b) in enumerate([(True, True), (True, False), (False, True), (False, False)])
         ] + [{"id": "res", "residual": True, "description": "neither resolves as framed", "chain": []}],
+        "battles": [
+            {"title": "LAR front vs a PHI line missing its RT", "matchup": "LAR edge rushers vs PHI's replacement tackle", "evidence_keys": ["units.PHI.sack_rate"],
+             "call": "LAR wins it: Hurts is pressured on early downs", "consequence": "PHI's pass game stalls and Barkley's role grows",
+             "conviction": "high", "leans_branch": "b0", "watch": "the RT's status Sunday morning"},
+            {"title": "LAR run game vs PHI's box when PHI is behind", "matchup": "LAR backs vs PHI run defense", "evidence_keys": ["units.LAR.rush_attempts_leading"],
+             "call": "LAR leans on the run once ahead", "consequence": "volume concentrates in LAR's lead back", "conviction": "medium", "leans_branch": None, "watch": ""},
+        ],
         "counter_branch_id": "res",
         "claims": [{"text": "PHI sack rate is elevated", "cite_keys": ["units.PHI.sack_rate"], "kind": "general", "status": None, "as_of": None}],
         "would_change_mind": ["PHI RT inactive status Sunday morning"],

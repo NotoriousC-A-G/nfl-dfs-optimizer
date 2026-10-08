@@ -16,12 +16,13 @@ from typing import Callable
 
 from nfl_dfs.build.common import Violation
 from nfl_dfs.build.thesis.contracts import (
-    CLAIM_KINDS, DIRECTIONS, MULTIPLIER_BINS, PHASES, PROXY_METRICS, SCHEMA_VERSION, SIGNS, STRENGTHS, GameThesis,
+    CLAIM_KINDS, CONVICTIONS, DIRECTIONS, MULTIPLIER_BINS, PHASES, PROXY_METRICS, SCHEMA_VERSION, SIGNS, STRENGTHS, GameThesis,
 )
 from nfl_dfs.build.thesis.joint import expected_branch_probs, logit
 
 # --- disclosed draft magnitudes (not backtested) ---------------------------------------------------
 MAX_INDEPENDENT_QUESTIONS = 2
+MIN_BATTLES, MAX_BATTLES = 2, 4
 MAX_TOTAL_QUESTIONS = 3  # independent + at most one child
 MIN_SAMPLE_N_FOR_RATE = 25
 MIN_RESIDUAL_PROB = 0.10
@@ -65,6 +66,7 @@ def validate_game_thesis(
     packet_keys: set[str],
     slate_player_ids: set[str],
     percentile_of: PercentileFn | None = None,
+    require_battles: bool = False,
 ) -> list[Violation]:
     v: list[Violation] = []
 
@@ -211,6 +213,23 @@ def validate_game_thesis(
             err("claim_kind", f"kind must be one of {CLAIM_KINDS}", path)
         if c.kind == "availability" and not (c.status and c.as_of):
             err("availability_basis", "an availability claim must state the status and its timestamp", path)
+    branch_ids = {b.branch_id for b in thesis.branches if not b.is_residual}
+    if (require_battles or thesis.battles) and not (MIN_BATTLES <= len(thesis.battles) <= MAX_BATTLES):
+        err("battles_count", f"name {MIN_BATTLES}-{MAX_BATTLES} battles (the matchups that decide this game), got {len(thesis.battles)}", "battles")
+    for i, bt in enumerate(thesis.battles):
+        path = f"battles[{i}]"
+        for field_name in ("title", "call", "consequence"):
+            if not getattr(bt, field_name).strip():
+                err("battle_field", f"a battle needs a {field_name}", path)
+        if bt.conviction not in CONVICTIONS:
+            err("battle_conviction", f"conviction must be one of {CONVICTIONS}", path)
+        if not bt.evidence_keys:
+            err("battle_uncited", f"battle {bt.title[:50]!r} cites nothing -- UNVERIFIED", path)
+        for key in bt.evidence_keys:
+            if key not in packet_keys:
+                err("cite_unresolved", f"battle cite key {key!r} is not in the evidence packet -- UNVERIFIED", path)
+        if bt.leans_branch is not None and bt.leans_branch not in branch_ids:
+            err("battle_branch", f"leans_branch {bt.leans_branch!r} is not a (non-residual) branch of this thesis: {sorted(branch_ids)}", path)
     for i, s in enumerate(thesis.pair_signs):
         path = f"pair_signs[{i}]"
         if s.sign not in SIGNS or s.strength not in STRENGTHS:

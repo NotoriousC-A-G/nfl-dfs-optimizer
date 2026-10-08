@@ -23,7 +23,7 @@ from nfl_dfs.build.common import Violation
 from nfl_dfs.build.evidence.anchors import make_percentile_fn, question_anchor
 from nfl_dfs.build.evidence.contracts import EvidencePacket, packet_keys
 from nfl_dfs.build.thesis.contracts import (
-    SCHEMA_VERSION, Branch, Claim, Dependency, GameThesis, PairSign, PivotalQuestion, PlayerBranchOutcome, QuestionMarginal,
+    SCHEMA_VERSION, Battle, Branch, Claim, Dependency, GameThesis, PairSign, PivotalQuestion, PlayerBranchOutcome, QuestionMarginal,
 )
 from nfl_dfs.build.thesis.joint import expected_branch_probs
 from nfl_dfs.build.thesis.validate import validate_game_thesis
@@ -67,7 +67,7 @@ def parse_analyst_response(
         return None, [Violation("parse", f"response does not match the schema: {type(exc).__name__}: {exc}")]
     violations = extra + validate_game_thesis(
         thesis, packet_keys=packet_keys(packet), slate_player_ids={p.canonical_id for p in packet.players},
-        percentile_of=make_percentile_fn(league_value_fn),
+        percentile_of=make_percentile_fn(league_value_fn), require_battles=True,
     )
     return thesis, violations
 
@@ -134,5 +134,9 @@ def _build(d: dict, packet: EvidencePacket, league_value_fn: LeagueValueFn, prom
         counter_branch_id=d["counter_branch_id"], claims=claims, would_change_mind=tuple(d.get("would_change_mind", ())),
         pair_signs=signs, declared_margin_disagreement=float(d.get("declared_margin_disagreement", 0.0)),
         declared_total_disagreement=float(d.get("declared_total_disagreement", 0.0)),
+        battles=tuple(
+            Battle(b["title"], b.get("matchup", ""), tuple(b.get("evidence_keys", ())), b["call"], b["consequence"], b["conviction"], b.get("leans_branch"), b.get("watch", ""))
+            for b in d.get("battles", ())
+        ),
     )
     return thesis, extra

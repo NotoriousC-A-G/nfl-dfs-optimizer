@@ -140,3 +140,54 @@ def test_expert_player_universe_is_labelled_lines_too():
     from nfl_dfs.build.expert.prompts import render_universe
     lines = render_universe({"LAR@PHI": _packet()}).splitlines()
     assert len(lines) == 4 and all("game LAR@PHI" in l and "status " in l and "None" not in l for l in lines)
+
+
+# ---------------------------------------------------------------------------------------------
+# battles: the analyst's calls on the matchups that decide the game
+# ---------------------------------------------------------------------------------------------
+def _parse_battles(battles):
+    from tests._build_fixtures import _packet, _response, league_fn
+    import json
+    packet = _packet()
+    d = _response(packet)
+    d["battles"] = battles
+    thesis, v = parse_analyst_response(json.dumps(d), packet, league_fn, prompt_version="p", model="m")
+    return thesis, {x.code for x in v if x.severity == "error"}
+
+
+def _battle(**over):
+    b = {"title": "t", "matchup": "m", "evidence_keys": ["units.PHI.sack_rate"], "call": "LAR wins", "consequence": "PHI stalls", "conviction": "high", "leans_branch": "b0", "watch": "w"}
+    b.update(over)
+    return b
+
+
+def test_a_valid_thesis_carries_its_battles_with_calls_and_convictions():
+    thesis, errors = _parse_battles([_battle(), _battle(title="t2", conviction="low", leans_branch=None)])
+    assert errors == set() and len(thesis.battles) == 2
+    assert thesis.battles[0].conviction == "high" and thesis.battles[0].leans_branch == "b0" and thesis.battles[1].leans_branch is None
+
+
+def test_battles_are_required_two_to_four():
+    assert "battles_count" in _parse_battles([])[1]
+    assert "battles_count" in _parse_battles([_battle()])[1]
+    assert "battles_count" in _parse_battles([_battle(title=str(i)) for i in range(5)])[1]
+
+
+def test_battle_problems_are_named_uncited_unresolved_bad_conviction_unknown_or_residual_branch_blank_call():
+    _, errs = _parse_battles([_battle(evidence_keys=[]), _battle(evidence_keys=["units.NOPE.metric"])])
+    assert {"battle_uncited", "cite_unresolved"} <= errs
+    _, errs = _parse_battles([_battle(conviction="certain"), _battle(leans_branch="res")])
+    assert {"battle_conviction", "battle_branch"} <= errs
+    _, errs = _parse_battles([_battle(leans_branch="b99"), _battle(call=" ")])
+    assert {"battle_branch", "battle_field"} <= errs
+
+
+def test_battles_survive_the_thesis_json_round_trip_and_older_theses_without_battles_still_load():
+    from nfl_dfs.build.thesis.serialize import thesis_from_dict, thesis_from_json, thesis_to_json
+    import json
+    thesis, _ = _parse_battles([_battle(), _battle(title="t2")])
+    back = thesis_from_json(thesis_to_json(thesis))
+    assert back.battles == thesis.battles and isinstance(back.battles[0].evidence_keys, tuple)
+    old = json.loads(thesis_to_json(thesis))
+    old.pop("battles")
+    assert thesis_from_dict(old).battles == ()

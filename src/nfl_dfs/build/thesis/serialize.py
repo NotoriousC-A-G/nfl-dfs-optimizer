@@ -7,7 +7,7 @@ from dataclasses import asdict
 from typing import Any
 
 from nfl_dfs.build.thesis.contracts import (
-    Branch, Claim, Dependency, GameThesis, PairSign, PivotalQuestion, PlayerBranchOutcome, QuestionMarginal,
+    Battle, Branch, Claim, Dependency, GameThesis, PairSign, PivotalQuestion, PlayerBranchOutcome, QuestionMarginal,
 )
 
 
@@ -37,6 +37,7 @@ def thesis_from_dict(d: dict[str, Any]) -> GameThesis:
         pair_signs=tuple(PairSign(**p) for p in d["pair_signs"]),
         declared_margin_disagreement=d["declared_margin_disagreement"],
         declared_total_disagreement=d["declared_total_disagreement"],
+        battles=tuple(Battle(**{**b, "evidence_keys": tuple(b["evidence_keys"])}) for b in d.get("battles", ())),
     )
 
 
