@@ -99,7 +99,7 @@ def stack_bonus_pairs(
 def _solve(
     pool: Pool, playable: list[PlayerProjection], core_ids: set[str], values: dict[str, float],
     *, n: int, opponent_of: dict[str, str], seed_core_stacks, distinct_core_stacks: bool,
-    avoid_lineups: list[frozenset[str]] | None = None, min_player_difference: int = 1,
+    avoid_lineups: list[frozenset[str]] | None = None, min_player_difference: int = 1, required_ids: tuple[str, ...] = (),
 ) -> list[Lineup]:
     rules = pool.rules
     reach_ids = {e.canonical_id for e in pool.entries if e.tier == "reach"}
@@ -126,6 +126,9 @@ def _solve(
         members = [x[i] for i in core_ids if i in x]
         if members and rules.min_core > 0:
             prob += pulp.lpSum(members) >= rules.min_core, "core_minimum"
+        for k, rid in enumerate(required_ids):  # the variation's declared core stack is the lineup's thesis: it is in, or the build fails loudly
+            if rid in x:
+                prob += x[rid] == 1, f"required_{k}"
 
     return generate_lineups(
         playable, n=n, opponent_of=opponent_of,
@@ -186,6 +189,7 @@ def build_agent_lineups(
     distinct_core_stacks: bool = True,
     avoid_lineups: list[frozenset[str]] | None = None,
     min_player_difference: int = 1,
+    required_ids: tuple[str, ...] = (),
 ) -> PoolBuildResult:
     refs = player_refs_from_projections(projections, game_id_by_team or {})
     by_id = {p.canonical_id: p for p in projections}
@@ -209,6 +213,9 @@ def build_agent_lineups(
         if fatal:
             raise PoolBuildFailure(pool.agent_id, "pool_validation", "; ".join(v.message for v in fatal[:3]), {"attempts": attempts})
         if report.ok:
+            not_playable = [i for i in required_ids if i not in report.playable_ids]
+            if not_playable:
+                raise PoolBuildFailure(pool.agent_id, "pool_validation", f"declared stack player(s) cannot be rostered (excluded, unavailable or missing salary/projection): {not_playable}", {"attempts": attempts, "required": list(required_ids)})
             missing = [i for i in report.playable_ids if i in by_id and i not in values]
             if missing:
                 raise PoolBuildFailure(pool.agent_id, "values", f"no tail value for {len(missing)} playable player(s), e.g. {missing[:3]}", {"attempts": attempts, "missing_values": missing})
@@ -217,7 +224,7 @@ def build_agent_lineups(
             try:
                 lineups = _solve(current, playable, core_ids, values, n=n, opponent_of=opponent_of,
                                  seed_core_stacks=seed_core_stacks, distinct_core_stacks=distinct_core_stacks,
-                                 avoid_lineups=avoid_lineups, min_player_difference=min_player_difference)
+                                 avoid_lineups=avoid_lineups, min_player_difference=min_player_difference, required_ids=required_ids)
             except LineupGenerationError as exc:
                 attempts[-1]["solve_error"] = str(exc)
                 lineups = []

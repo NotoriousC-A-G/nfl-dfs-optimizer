@@ -63,6 +63,24 @@ class BuildThesis:
 
 
 @dataclass(frozen=True)
+class Variation:
+    """One way an agent builds a lineup (Chris, 2026-10-09). A lineup is NOT one game's script: it is one set of beliefs across the slate.
+
+    - `stack`: the core stack(s) the agent believes in -- canonical ids, a QB plus at least one same-team pass catcher (and optionally a
+      bring-back or a second stack's players);
+    - `views`: the agent's view of each game it has an opinion on, as `"GAME:branch_id"` refs, AT MOST ONE PER GAME (games are independent:
+      one going a way says nothing about another). A game with no view is priced at the full probability-weighted mix.
+    Players are priced and tiered under their own game's view."""
+
+    views: tuple[str, ...]
+    stack: tuple[str, ...]
+    note: str = ""
+
+
+SPEND_VALUES = ("pay", "value", "neutral")
+
+
+@dataclass(frozen=True)
 class PoolRules:
     min_core: int = 4  # a lineup must hold at least this many core-tier players
     forbid_pass_catcher_bring_back: bool = False  # hard slider -> solver constraint (never the expert's call)
@@ -77,6 +95,9 @@ class ExpertAgentOutput:
     group_tiers: tuple[GroupTier, ...] = ()
     overrides: tuple[PoolEntry, ...] = ()
     rules: PoolRules = PoolRules()
+    variations: tuple[Variation, ...] = ()  # 1-3; one lineup per variation (cycled when there are more lineups than variations)
+    # Where to spend by position, from the slate's value economics (e.g. RB deep with value -> RB "value", WR/TE "pay"): (position, pay|value|neutral)
+    spend_plan: tuple[tuple[str, str], ...] = ()
 
 
 @dataclass(frozen=True)
