@@ -100,7 +100,7 @@ def _player_rows(p: EvidencePacket) -> str:
             f"<td class='num'>{'&mdash;' if pl.salary is None else f'${pl.salary:,}'}</td><td class='num'>{_fmt(pl.projection)}</td>"
             f"<td class='num'>{_fmt(pl.ownership_pct)}</td><td class='num'>{_fmt(pl.ownership_vs_baseline)}</td>"
             f"<td class='num'>{_fmt(pl.carry_share_trailing, 0, pct=True)}</td><td class='num'>{_fmt(pl.target_share_trailing, 0, pct=True)}</td>"
-            f"<td class='num'>{_fmt(pl.ceiling_multiplier, 2)}</td><td>{_e(pl.circumstance_note or '')}</td></tr>"
+            f"<td class='num'>{_fmt(pl.ceiling_multiplier, 2)}</td><td>{_e(' '.join(x for x in (pl.circumstance_note, pl.opportunity_note) if x))}</td></tr>"
         )
     return "".join(out)
 
@@ -117,6 +117,10 @@ def _game_card(p: EvidencePacket) -> str:
         f"<tr><td>{_e(a.name)}</td><td>{_e(a.team)}</td><td>{_e(a.decision)}</td><td>{_e(a.basis)}</td><td>{_e(a.source)}</td></tr>"
         for a in p.availability
     ) or "<tr><td colspan='5' class='muted'>none listed</td></tr>"
+    vac = "".join(
+        f"<tr><td>{_e(v.name)}</td><td>{_e(v.team)}</td><td>{_e(v.status)}</td><td class='num'>{v.carry_share:.1%}</td><td class='num'>{v.target_share:.1%}</td></tr>"
+        for v in p.vacated
+    ) or "<tr><td colspan='5' class='muted'>nobody with a meaningful role is out</td></tr>"
     weather = ", ".join(f"{_e(k)}: {_e(v)}" for k, v in (p.weather or {}).items()) or "no reading"
     keys = sorted(packet_keys(p))
     return (
@@ -125,8 +129,9 @@ def _game_card(p: EvidencePacket) -> str:
         f"<h3>Teams</h3><div class='grid2'>{_team_block(p, p.away)}{_team_block(p, p.home)}</div>"
         f"<h3>Players listed (top by projection, plus DST)</h3>"
         "<table><tr><th>Player</th><th>Team</th><th>Pos</th><th class='num'>Salary</th><th class='num'>Proj</th><th class='num'>Own %</th>"
-        "<th class='num'>Own vs baseline</th><th class='num'>Carry sh.</th><th class='num'>Target sh.</th><th class='num'>Ceil mult</th><th>Note</th></tr>"
+        "<th class='num'>Own vs baseline</th><th class='num'>RZ carry sh.</th><th class='num'>RZ target sh.</th><th class='num'>Ceil mult</th><th>Note</th></tr>"
         f"{_player_rows(p)}</table>"
+        f"<h3>Roles vacated (share of the team's last-4-game carries / targets)</h3><table><tr><th>Player</th><th>Team</th><th>Status</th><th class='num'>Carries</th><th class='num'>Targets</th></tr>{vac}</table>"
         f"<h3>Availability</h3><table><tr><th>Player</th><th>Team</th><th>Decision</th><th>Basis</th><th>Source</th></tr>{avail}</table>"
         f"<h3>Weather</h3><div class='muted'>{weather}</div>"
         f"<h3>Citeable keys ({len(keys)})</h3><details><summary class='muted'>show</summary><code>{_e(' · '.join(keys))}</code></details>"

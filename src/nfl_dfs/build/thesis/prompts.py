@@ -16,7 +16,7 @@ from nfl_dfs.build.evidence.anchors import base_rate, lead_anchor
 from nfl_dfs.build.evidence.contracts import EvidencePacket, packet_keys
 from nfl_dfs.build.thesis.contracts import MULTIPLIER_BINS, PHASES, PROXY_METRICS
 
-PROMPT_VERSION = "analyst-v3"
+PROMPT_VERSION = "analyst-v4"
 
 DISTRIBUTION_METRICS = (
     "sack_rate", "qb_hit_rate", "explosive_pass_rate", "pass_epa", "rush_epa", "pass_rate_over_expected",
@@ -88,9 +88,15 @@ def render_packet(packet: EvidencePacket) -> str:
         out.append(
             f"- {p.canonical_id} | {p.name} | {p.team} {p.position} | salary {_v(p.salary)} | proj {_v(p.projection)} | own% {_v(p.ownership_pct)} "
             f"(vs baseline {_v(p.ownership_vs_baseline)}) | chalk {'yes' if p.is_chalk else 'no'} | leverage {'yes' if p.is_leverage else 'no'} | "
-            f"ceiling mult {_v(p.ceiling_multiplier)} | carry share {_v(p.carry_share_trailing)} | target share {_v(p.target_share_trailing)} | "
+            f"ceiling mult {_v(p.ceiling_multiplier)} | red-zone carry share {_v(p.carry_share_trailing)} | red-zone target share {_v(p.target_share_trailing)} | "
+            f"last-4 carry share {_v(p.carry_share_l4)} | last-4 target share {_v(p.target_share_l4)} | last-4 touch share {_v(p.touch_share_l4)} "
+            f"(lowest single game {_v(p.touch_share_min_l4)}) | expected carry share {_v(p.carry_share_expected)} | expected target share {_v(p.target_share_expected)} | "
+            f"opportunity note {_v(p.opportunity_note)} | "
             f"status {_v(p.status_after_q_pass or p.injury_status)} | note {_v(p.circumstance_note)}"
         )
+    if packet.vacated:
+        out += ["", "## Roles vacated by players who will not play (share of the team's last-4-game carries / targets they leave; code-computed baseline you may override with a reason)"]
+        out += [f"- vacated.{v.team}: {v.name} ({v.status}) leaves {v.carry_share:.1%} of carries and {v.target_share:.1%} of targets" for v in packet.vacated]
     out += ["", "## Availability"]
     out += [f"- {a.name} ({a.team}): {a.decision} -- {a.basis} [{a.source}, as of {a.as_of or 'unknown'}]" for a in packet.availability] or ["- none listed"]
     out += ["", f"## Weather: {packet.weather or 'no reading'}"]
@@ -136,7 +142,8 @@ RULES (each is machine-checked; a violation sends your answer back for one retry
    disagreement with the line via declared_margin_disagreement / declared_total_disagreement, each |d| <= 2).
 6. PLAYER OUTCOMES per branch (<= 10 players per team, only listed canonical_ids): mean_mult and q90_mult from {list(MULTIPLIER_BINS)}
    (1.0 = no change vs his normal outlook). Justify with OPPORTUNITY (targets, carries, red-zone touches, snaps), never with
-   fantasy points or touchdown luck.
+   fantasy points or touchdown luck. Opportunity, not depth-chart rank, decides who matters: use the last-4 shares, the lowest single-game
+   touch share (a stable role) and, for a player whose teammate will not play, the expected shares and the vacated-roles list.
 7. SIGNS: for any pair of players whose outcomes you expect to move TOGETHER or AGAINST each other in this game, state it in
    pair_signs (sign positive|negative|neutral, strength mild|strong, reason). A QB and the opposing defense, and a favorite's RB
    against its own pass catchers in a blowout, are the usual negatives. Do not force correlation; say where there is none.

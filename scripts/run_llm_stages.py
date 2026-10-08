@@ -24,6 +24,7 @@ from pathlib import Path
 import nfl_data_py as nfl
 
 from nfl_dfs.build.evidence.builder import build_evidence_packets
+from nfl_dfs.build.evidence.opportunity import trailing_shares
 from nfl_dfs.build.evidence.metrics import league_values, team_game_metrics
 from nfl_dfs.build.expert.stage import expert_spec
 from nfl_dfs.build.pool.contracts import PlayerRef
@@ -57,7 +58,7 @@ def _load(games: set[str] | None):
     # The data's own capture time, NOT the wall clock: a clock-derived stamp changes the packet hash every minute and
     # silently invalidates cached analyst answers (found in the 2026-10-07 rehearsal).
     as_of = str(snapshot.get("timestamp", "unknown"))[:16] + "Z"
-    packets = build_evidence_packets(snapshot["player_pool"], snapshot["stack_profiles"], tg_current, season=SEASON, week=WEEK, as_of=as_of)
+    packets = build_evidence_packets(snapshot["player_pool"], snapshot["stack_profiles"], tg_current, season=SEASON, week=WEEK, as_of=as_of, opportunity=trailing_shares(pbp, season=SEASON, through_week=WEEK - 1))
     if games:
         unknown = games - set(packets)
         if unknown:

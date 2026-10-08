@@ -289,3 +289,54 @@ def test_pbp_team_codes_are_normalized_so_the_rams_join_the_rest_of_the_pipeline
     pool = [_rec("LAR_qb", "QB LAR", "LAR", "QB", 6000, 20.0), _rec("AWY_qb", "QB AWY", "AWY", "QB", 6000, 19.0)]
     p = build_evidence_packets(pool, [{"home_team": "LAR", "away_team": "AWY", "spread": -2.0}], tg, season=2026, week=2)["AWY@LAR"]
     assert p.teams["LAR"].metrics  # the Rams have metrics
+
+
+# ---------------------------------------------------------------------------------------------
+# opportunity: who inherits an unavailable player's work
+# ---------------------------------------------------------------------------------------------
+def _opp_table():
+    from nfl_dfs.build.evidence.opportunity import PlayerShares
+    def ps(pid, c, t, tm=0.1, games=4):
+        return PlayerShares(pid, pid, c, t, c * 0.6 + t * 0.4, tm, games)
+    return {"AAA": {"AAA_p13": ps("AAA_p13", 0.0, 0.30), "AAA_p11": ps("AAA_p11", 0.0, 0.20), "AAA_p9": ps("AAA_p9", 0.0, 0.10), "AAA_p12": ps("AAA_p12", 0.7, 0.05)},
+            "BBB": {"BBB_p13": ps("BBB_p13", 0.0, 0.25)}}
+
+
+def test_without_opportunity_data_the_packet_says_so_and_invents_nothing():
+    pk = build_evidence_packets(_pool(), _sp(), None, season=2026, week=5)["BBB@AAA"]
+    assert any("opportunity shares" in g for g in pk.data_gaps)
+    assert all(p.touch_share_l4 is None and p.target_share_expected is None for p in pk.players) and pk.vacated == ()
+
+
+def test_an_out_receiver_leaves_a_vacated_role_and_teammates_get_expected_shares_with_citeable_keys():
+    pool = _pool()
+    for r in pool:
+        if r["identity"]["canonical_id"] == "AAA_p13":
+            r["injury"] = {"status": "O", "body_part": "knee", "impact_rating": 3}
+    pk = build_evidence_packets(pool, _sp(), None, season=2026, week=5, opportunity=_opp_table())["BBB@AAA"]
+    assert [v.name for v in pk.vacated] == ["Skill13 AAA"] and pk.vacated[0].target_share == pytest.approx(0.30)
+    by = {p.canonical_id: p for p in pk.players}
+    assert by["AAA_p11"].target_share_expected > by["AAA_p11"].target_share_l4 == pytest.approx(0.20)
+    assert "Skill13 AAA" in by["AAA_p11"].opportunity_note and "pro rata" in by["AAA_p11"].opportunity_note
+    assert by["BBB_p13"].target_share_expected is None  # nobody out on BBB
+    keys = packet_keys(pk)
+    assert "players.AAA_p11.target_share_expected" in keys and "vacated.AAA.0.target_share" in keys
+    assert any("snap share and routes run" in g for g in pk.data_gaps)
+
+
+def test_a_q_player_counts_as_out_unless_a_decision_cleared_him():
+    from nfl_dfs.normalization.injury_lookup import AvailabilityDecision
+    pool = _pool()
+    for r in pool:
+        if r["identity"]["canonical_id"] == "AAA_p13":
+            r["injury"] = {"status": "Q", "body_part": "knee", "impact_rating": 2}
+    out = build_evidence_packets(pool, _sp(), None, season=2026, week=5, opportunity=_opp_table())["BBB@AAA"]
+    assert len(out.vacated) == 1
+    cleared = AvailabilityDecision("Skill13 AAA", "AAA", "cleared", "full practice Friday", "official_practice")
+    ok = build_evidence_packets(pool, _sp(), None, season=2026, week=5, opportunity=_opp_table(), availability=[cleared])["BBB@AAA"]
+    assert ok.vacated == () and all(p.target_share_expected is None for p in ok.players)
+
+
+def test_a_team_missing_from_the_shares_is_named_not_skipped_silently():
+    pk = build_evidence_packets(_pool(), _sp(), None, season=2026, week=5, opportunity={"AAA": _opp_table()["AAA"]})["BBB@AAA"]
+    assert any("BBB: no play-by-play shares" in g for g in pk.data_gaps)
