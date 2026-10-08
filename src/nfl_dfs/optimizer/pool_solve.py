@@ -42,6 +42,8 @@ REACH_HAIRCUT = 0.25
 # quietly become the same few value plays in every agent's lineups (2026-10-09 first look: three players were in 7-8 of 10 lineups).
 REACH_REUSE_DISCOUNT = 0.10
 REACH_REUSE_MAX = 3
+# A milder version for eligible players (Chris, 2026-10-09: some overlap is fine, a bit more spread in how often a player appears is wanted).
+ELIGIBLE_REUSE_DISCOUNT = 0.05
 PAIR_TOP_N = 4  # only each team's top-N catchers by value get pair terms (bounds the model size)
 # Failure codes widening can plausibly fix; anything else is an expert/contract error and fails at once.
 _WIDENABLE_PREFIXES = ("feasibility_", "stack_teams", "min_core", "distinct_stacks")
@@ -105,10 +107,16 @@ def _solve(
     for lineup in avoid_lineups or ():
         for pid in lineup:
             uses[pid] += 1
-    values = {
-        i: (v * (1.0 - REACH_HAIRCUT) * (1.0 - REACH_REUSE_DISCOUNT * min(uses[i], REACH_REUSE_MAX)) if i in reach_ids else v)
-        for i, v in values.items()
-    }
+    eligible_ids = {e.canonical_id for e in pool.entries if e.tier == "eligible"}
+
+    def priced(i: str, v: float) -> float:
+        if i in reach_ids:
+            return v * (1.0 - REACH_HAIRCUT) * (1.0 - REACH_REUSE_DISCOUNT * min(uses[i], REACH_REUSE_MAX))
+        if i in eligible_ids:
+            return v * (1.0 - ELIGIBLE_REUSE_DISCOUNT * min(uses[i], REACH_REUSE_MAX))
+        return v
+
+    values = {i: priced(i, v) for i, v in values.items()}
     pairs = stack_bonus_pairs(
         playable, values, opponent_of,
         allow_bring_back=not rules.forbid_pass_catcher_bring_back,

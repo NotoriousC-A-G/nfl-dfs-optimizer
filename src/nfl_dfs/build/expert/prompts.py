@@ -12,7 +12,7 @@ from nfl_dfs.build.evidence.contracts import EvidencePacket
 from nfl_dfs.build.pool.contracts import PlayerRef
 from nfl_dfs.build.thesis.contracts import GameThesis
 
-PROMPT_VERSION = "expert-v5"
+PROMPT_VERSION = "expert-v6"
 
 
 def branch_refs(theses: dict[str, GameThesis]) -> dict[str, float]:
@@ -88,7 +88,12 @@ def _brief(a: PoolAgentSpec) -> str:
 _RULES = """\
 You are the lineup-construction EXPERT. You have the game theses (each game's pivotal questions, scenarios and player outcomes) and the
 field layer (ownership, leverage). For each pool agent below, build a POOL: every player on the slate arranged by how much confidence the
-agent's stand gives him, plus a build thesis saying which angles it backs. The tiers are GRADED CONFIDENCE, not a fence:
+agent's stand gives him, plus a build thesis saying which angles it backs. Each agent has ONE core thesis and 1-3 SCRIPT VARIATIONS: `backs` lists the branches ("GAME:branch_id") it will build a lineup for, one lineup
+per script, in the order you want them built. The tiers are GRADED CONFIDENCE, not a fence, and they depend on the script -- a back is core
+in a lead-protecting script and reach in a shootout where his team trails. The engine DERIVES each script's tiers from the thesis (core =
+players the script lifts, or beneficiaries it does not hurt; eligible = neutral; reach = hurt, or outside the scripted game), so use
+default_tier "derived" and treat your group_tiers and overrides as ADJUSTMENTS with reasons: promote a player the arithmetic misses (a battle
+call, a role the numbers do not show), demote one it over-credits, exclude one you refuse. Tiers:
   core     -- the players the stand is built on; you want them used (4-16 players).
   eligible -- good fits for the stand, used freely.
   reach    -- allowed at a value haircut: a salary or position fill, or a deliberate SHOT (for example a player in a game the market expects to
@@ -99,19 +104,22 @@ agent's stand gives him, plus a build thesis saying which angles it backs. The t
 RULES (machine-checked; a violation sends your answer back for one retry):
 1. Give each agent EITHER a pool OR {"agent_id": ..., "unavailable": true, "reason": "..."}. Unavailable is legitimate when the slate has no
    fit for that agent's angle (the brief says when) -- do NOT stretch an agent over a slate that does not suit it.
-2. THE STAND MUST BE NARROW. Use default_tier "reach" for the open remainder of the slate, then rank the players the stand is about: core 4-16
-   players; core + eligible must be at most 45% of the players listed (reach and exclude do not count toward that). Use group_tiers (team /
+2. THE STAND MUST BE NARROW. Use default_tier "derived" (recommended: the engine tiers everyone you do not name, per script), or "reach" if you
+   want to tier the whole slate yourself. Explicit core, if you give it, is at most 16 players (4-16 when you do not use "derived"); explicit
+   core + eligible is best kept well under about 45% of the players listed -- a guide, not a limit (past it the stand gets diluted and the agents
+   converge). Use group_tiers (team /
    position / game_id selectors) for broad strokes and overrides (player_id) for named players. Later entries win over earlier ones.
 3. BUILD ON THE ANALYSTS' CALLS. Each game thesis lists BATTLES with a call and a conviction. An agent's stand is a call (or a few) you
    believe in, ranked by conviction; say in the build thesis which battles it rests on. Prefer high-conviction calls, and let the agents
    rest on different ones. POOLS MUST DIFFER. At most TWO agents may back the same game; the agents' core tiers should not be near-duplicates; each agent backs
-   different branches. backs/avoids/hedges are refs of the form "GAME:branch_id" copied from the BRANCH lines below.
+   different branches. At most 3 scripts per agent, and give them in build order. backs/avoids/hedges are refs of the form "GAME:branch_id" copied from the BRANCH lines below.
 4. Every core and every exclude assignment (group tier or override) carries a one-line reason citing a thesis branch or the field layer. A reach
    assignment you mean as a shot carries a reason too.
 5. Never put a player with an injury status in core; the engine strips them and rejects an unavailable core player. Injury BENEFICIARIES
    (every player marked BENEFICIARY below, and any the theses name as inheriting a vacated role) are a core input to EVERY pool where they fit
-   -- unless the field already owns them. Tier each one core or eligible in the pools where he fits and give a reason; do NOT leave a
-   beneficiary in the open remainder (reach), which is only for shots and fills.
+   -- unless the field already owns them. With default_tier "derived" the engine already tiers a beneficiary core or eligible in the scripts
+   that do not hurt him; if you use "reach" as the default you must tier every beneficiary core or eligible yourself (with a reason), never
+   leave one in the open remainder, which is only for shots and fills.
 6. Hard sliders (bring-back rules) are enforced in code from each agent's spec; you cannot and need not set them.
 7. Do not build pools out of projection alone: "tail value" is just a calibrated scaling of the projection. The edge is in the theses, role,
    game state and ownership. A game with no thesis is backed by nobody but its players stay eligible if they fit.
@@ -123,7 +131,7 @@ OUTPUT: one JSON object, no markdown fences:
  "agents": [
   {"agent_id": "shootout_stack",
    "build_thesis": {"backs": ["GAME:b0"], "avoids": [], "hedges": [], "stack_anchor": ["<canonical_id>"], "reason": "..."},
-   "default_tier": "reach",
+   "default_tier": "derived",
    "group_tiers": [{"tier": "core", "reason": "...", "team": "XXX", "position": "QB", "game_id": null}],
    "overrides": [{"player_id": "<canonical_id>", "tier": "core", "reason": "..."}],
    "min_core": 4},

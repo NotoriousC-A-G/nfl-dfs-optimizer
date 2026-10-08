@@ -17,7 +17,7 @@ from typing import Any
 
 from nfl_dfs.build.agents import POOL_AGENT_BY_ID, POOL_AGENTS, PoolAgentSpec
 from nfl_dfs.build.common import Violation
-from nfl_dfs.build.pool.contracts import TIERS, BuildThesis, ExpertAgentOutput, GroupTier, PlayerRef, PoolEntry
+from nfl_dfs.build.pool.contracts import DEFAULT_TIERS, DERIVED, TIERS, BuildThesis, ExpertAgentOutput, GroupTier, PlayerRef, PoolEntry
 from nfl_dfs.build.pool.expand import expand_pool
 from nfl_dfs.build.pool.validate import core_overlap
 from nfl_dfs.build.thesis.parse import _strip_fences
@@ -25,6 +25,7 @@ from nfl_dfs.build.thesis.parse import _strip_fences
 MAX_BROAD_FRACTION = 0.45  # (core + eligible) / slate universe above this is "not narrow"
 MIN_CORE, MAX_CORE = 4, 16
 MAX_AGENTS_PER_GAME = 2
+MAX_SCRIPTS = 3  # script variations (backed branches) per agent
 POSITIONS = ("QB", "RB", "WR", "TE", "DST")
 
 
@@ -104,8 +105,8 @@ def _parse_agent(a: dict, spec: PoolAgentSpec, ids: set, teams: set, games: set,
     if not thesis.reason.strip():
         v.append(Violation("build_thesis_reason", f"{spec.agent_id}: the build thesis needs a reason", spec.agent_id))
     default_tier = a["default_tier"]
-    if default_tier not in TIERS:
-        v.append(Violation("tier", f"{spec.agent_id}: default_tier must be one of {TIERS}", spec.agent_id))
+    if default_tier not in DEFAULT_TIERS:
+        v.append(Violation("tier", f"{spec.agent_id}: default_tier must be one of {DEFAULT_TIERS}", spec.agent_id))
     groups = []
     for g in a.get("group_tiers", ()):
         gt = GroupTier(g["tier"], g.get("reason", ""), g.get("team"), g.get("position"), g.get("game_id"))
@@ -150,7 +151,12 @@ def _check_agent(out: ExpertAgentOutput, spec: PoolAgentSpec, universe: list[Pla
     n = len(universe)
     core = sum(1 for e in pool.entries if e.tier == "core")
     live = sum(1 for e in pool.entries if e.tier in ("core", "eligible"))  # reach is the open remainder, not part of the narrow shape
-    if not (MIN_CORE <= core <= MAX_CORE):
-        v.append(Violation("core_size", f"{aid}: {core} core players; use between {MIN_CORE} and {MAX_CORE}", aid))
+    # With default_tier "derived" the engine supplies each script's core from the script itself; the expert's explicit core is then optional.
+    low = 0 if out.default_tier == DERIVED else MIN_CORE
+    if not (low <= core <= MAX_CORE):
+        v.append(Violation("core_size", f"{aid}: {core} explicit core players; use between {low} and {MAX_CORE}", aid))
+    if len(backs) > MAX_SCRIPTS:
+        v.append(Violation("too_many_scripts", f"{aid}: backs {len(backs)} branches; each is a script variation with its own lineup, use at most {MAX_SCRIPTS}", aid))
     if n and live / n > MAX_BROAD_FRACTION:
-        v.append(Violation("pool_too_broad", f"{aid}: {live} of {n} players are core/eligible ({live / n:.0%}); above {MAX_BROAD_FRACTION:.0%} the agent's stand stops being a stand and converges on the same plays as every other agent -- move the weaker fits to reach", aid))
+        # An advisory, not a limit (Chris, 2026-10-09): a wide pool is the expert's call. It is surfaced so the build record shows it.
+        v.append(Violation("pool_broad", f"{aid}: {live} of {n} players are core/eligible ({live / n:.0%}); past about {MAX_BROAD_FRACTION:.0%} the stand gets diluted and tends to converge on the same plays as other agents", aid, "warning"))
