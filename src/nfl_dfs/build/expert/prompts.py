@@ -12,7 +12,7 @@ from nfl_dfs.build.evidence.contracts import EvidencePacket
 from nfl_dfs.build.pool.contracts import PlayerRef
 from nfl_dfs.build.thesis.contracts import GameThesis
 
-PROMPT_VERSION = "expert-v4"
+PROMPT_VERSION = "expert-v5"
 
 
 def branch_refs(theses: dict[str, GameThesis]) -> dict[str, float]:
@@ -30,6 +30,9 @@ def render_theses(theses: dict[str, GameThesis]) -> str:
         for b in t.branches:
             who = "; ".join(f"{o.canonical_id} x{o.mean_mult}/{o.q90_mult}" for o in b.player_outcomes[:8])
             out.append(f"- BRANCH {gid}:{b.branch_id}  p={b.prob:.2f}  {b.description}  chain: {' -> '.join(b.chain)}  outcomes: {who or 'none named'}")
+        for bt in t.battles:
+            lean = f" -> leans {gid}:{bt.leans_branch}" if bt.leans_branch else ""
+            out.append(f"- BATTLE ({bt.conviction} conviction){lean}: {bt.title} -- CALL: {bt.call} -- CONSEQUENCE: {bt.consequence}")
         out.append(f"- counter-branch: {gid}:{t.counter_branch_id}; would change my mind: {' | '.join(t.would_change_mind)}")
         for c in t.claims[:6]:
             out.append(f"- claim: {c.text}")
@@ -99,7 +102,9 @@ RULES (machine-checked; a violation sends your answer back for one retry):
 2. THE STAND MUST BE NARROW. Use default_tier "reach" for the open remainder of the slate, then rank the players the stand is about: core 4-16
    players; core + eligible must be at most 45% of the players listed (reach and exclude do not count toward that). Use group_tiers (team /
    position / game_id selectors) for broad strokes and overrides (player_id) for named players. Later entries win over earlier ones.
-3. POOLS MUST DIFFER. At most TWO agents may back the same game; the agents' core tiers should not be near-duplicates; each agent backs
+3. BUILD ON THE ANALYSTS' CALLS. Each game thesis lists BATTLES with a call and a conviction. An agent's stand is a call (or a few) you
+   believe in, ranked by conviction; say in the build thesis which battles it rests on. Prefer high-conviction calls, and let the agents
+   rest on different ones. POOLS MUST DIFFER. At most TWO agents may back the same game; the agents' core tiers should not be near-duplicates; each agent backs
    different branches. backs/avoids/hedges are refs of the form "GAME:branch_id" copied from the BRANCH lines below.
 4. Every core and every exclude assignment (group tier or override) carries a one-line reason citing a thesis branch or the field layer. A reach
    assignment you mean as a shot carries a reason too.

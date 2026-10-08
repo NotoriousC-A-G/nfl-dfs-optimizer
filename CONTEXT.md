@@ -87,3 +87,7 @@ _Avoid_: Replacement, injury beneficiary (a beneficiary is a teammate who absorb
 **Floor lean**:
 An agent's tilt, from -1 to 1, between valuing a player's downside and his upside when the solver values him. Zero is neutral; positive prefers steady opportunity, negative prefers ceiling.
 _Avoid_: Risk setting, variance weight
+
+**Battle**:
+One of the matchups that decide a game — a specific unit or player against another, with who is out and what that changes — together with the analyst's call on who wins it, what that does to which players, and how convinced the analyst is. The pivotal questions are only the measurable form of the battles.
+_Avoid_: Question (that is the measurable proxy, not the football judgment), narrative

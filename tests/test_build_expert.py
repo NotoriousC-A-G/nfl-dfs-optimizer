@@ -224,3 +224,15 @@ def test_the_universe_marks_beneficiaries_and_the_prompt_forbids_leaving_them_in
     p = expert_prompt({packet.game_id: thesis}, {packet.game_id: packet})
     assert "BENEFICIARY: +6.0 pts of its targets from X Y (OUT)" in p and "expected carry share" in p
     assert "do NOT leave a" in p and "open remainder" in p
+
+
+def test_the_analyst_prompt_asks_for_battles_and_the_expert_prompt_shows_their_calls_and_convictions():
+    from nfl_dfs.build.thesis.prompts import analyst_prompt
+    packet = _packet()
+    ap = analyst_prompt(packet, league_fn)
+    assert "BATTLES (required, 2-4)" in ap and '"battles": [' in ap and "TAKE A STAND" in ap
+    thesis, errs = parse_analyst_response(json.dumps(_response(packet)), packet, league_fn, prompt_version="p", model="m")
+    assert not [e for e in errs if e.severity == "error"]
+    ep = expert_prompt({packet.game_id: thesis}, {packet.game_id: packet})
+    assert "BATTLE (high conviction) -> leans LAR@PHI:b0: LAR front vs a PHI line missing its RT" in ep
+    assert "CALL: LAR wins it" in ep and "BUILD ON THE ANALYSTS' CALLS" in ep

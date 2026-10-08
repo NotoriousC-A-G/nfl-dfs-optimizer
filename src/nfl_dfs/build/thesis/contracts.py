@@ -141,6 +141,26 @@ class Claim:
     as_of: str | None = None
 
 
+CONVICTIONS = ("low", "medium", "high")
+
+
+@dataclass(frozen=True)
+class Battle:
+    """One of the matchups that decides the game, and the analyst's CALL on it (Chris, 2026-10-09: the analyst is not a statistician
+    filling a template -- it reads how the human matchups go and takes a stand). Free narrative, but anchored: `evidence_keys` must
+    resolve in the packet, `leans_branch` must be a real non-residual branch (or None when the call does not map to one), and the
+    conviction is the analyst's own and is graded forward, not calibrated against the line."""
+
+    title: str  # "SEA front vs SF's protection with Evans and Black out"
+    matchup: str  # who is up against whom
+    evidence_keys: tuple[str, ...]
+    call: str  # who wins this matchup, and how
+    consequence: str  # what that does to which players / roles
+    conviction: str  # "low" | "medium" | "high"
+    leans_branch: str | None  # the branch id this call points toward
+    watch: str = ""  # what would show it is (or is not) happening
+
+
 @dataclass(frozen=True)
 class PairSign:
     """The analyst's stated correlation sign for a pair of players in this game (a code lint rejects a
@@ -172,3 +192,4 @@ class GameThesis:
     # Declared, bounded disagreement with the closing line (points). Graded separately; |d| <= 2.
     declared_margin_disagreement: float = 0.0
     declared_total_disagreement: float = 0.0
+    battles: tuple[Battle, ...] = ()  # the deciding matchups with calls; required from analyst-v5 on (the validator enforces it)
