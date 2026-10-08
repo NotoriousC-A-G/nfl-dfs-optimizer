@@ -18,6 +18,7 @@ from dataclasses import dataclass
 
 from nfl_dfs.build.evidence.contracts import EvidencePacket
 from nfl_dfs.build.pool.contracts import ExpertAgentOutput, PlayerRef, Variation
+from nfl_dfs.build.pool.bets import roster_shape_problems
 from nfl_dfs.build.pool.correlation import lead_protect_pairs
 from nfl_dfs.build.pool.derive import derive_tiers, dst_multipliers
 from nfl_dfs.build.pool.expand import expand_pool
@@ -77,6 +78,10 @@ def build_agent_by_variation(
             derived = derive_tiers(universe, theses, packets, var.views, var.stack)
         except ValueError as exc:
             raise PoolBuildFailure(output.agent_id, "pool_validation", str(exc), {}) from exc
+        refs = {p.canonical_id: p for p in universe}
+        shape = roster_shape_problems([refs[c] for c in var.stack if c in refs])
+        if shape:
+            raise PoolBuildFailure(output.agent_id, "pool_validation", f"variation {i % len(output.variations) + 1}'s declared bets cannot all be in one lineup: " + "; ".join(shape), {"required": list(var.stack)})
         pool = expand_pool(output, universe, derived)
         mult = conditional_multipliers(theses.values(), var.views, output.build_thesis.avoids)
         mult = {**mult, **dst_multipliers(universe, mult)}  # a defense moves opposite to the QB it faces

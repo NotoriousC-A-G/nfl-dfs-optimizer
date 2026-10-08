@@ -205,3 +205,25 @@ def test_a_variation_of_non_qb_bets_builds_a_lineup_without_a_qb_stack_requireme
     assert {"rb1_T1", "dst_T1", "wr2_T3", "te_T3"} <= ids  # every bet player is in
     teams = {p.team for p in vb.result.lineups[0].players}
     assert any(GAME[t] == "g0" for t in teams) and any(GAME[t] == "g1" for t in teams)  # bets in different games
+
+
+def test_bets_that_cannot_share_one_roster_are_named_exactly():
+    from nfl_dfs.build.pool.bets import roster_shape_problems
+    u = {p.canonical_id: p for p in _universe()}
+    two_qbs = [u["qb_T1"], u["wr2_T1"], u["qb_T3"], u["wr2_T3"]]
+    assert any("2 QB declared" in x and "at most 1" in x for x in roster_shape_problems(two_qbs))
+    two_dst = [u["dst_T1"], u["dst_T3"]]
+    assert any("2 DST" in x for x in roster_shape_problems(two_dst))
+    too_many = [u[f"{pos}{k}_{t}"] for pos in ("wr",) for k in range(3) for t in ("T1", "T2")]  # 6 WR
+    assert any("6 WR" in x for x in roster_shape_problems(too_many))
+    broke = [replace(u["qb_T1"], salary=20_000), replace(u["rb1_T1"], salary=20_000), replace(u["wr2_T1"], salary=9_000)]
+    assert any("over the $50,000 cap" in x for x in roster_shape_problems(broke))
+    assert roster_shape_problems([u["qb_T1"], u["wr2_T1"], u["rb1_T3"], u["dst_T3"]]) == []  # a QB stack plus an RB + defense bet fits
+
+
+def test_the_build_fails_with_the_exact_shape_problem_not_a_vague_infeasibility():
+    from nfl_dfs.build.pool.contracts import Bet
+    bets = (Bet(("qb_T1", "wr2_T1"), "pass_volume"), Bet(("qb_T3", "wr2_T3"), "pass_volume"))
+    var = Variation(("g0:b0", "g1:b0"), ("qb_T1", "wr2_T1", "qb_T3", "wr2_T3"), "", bets)
+    with pytest.raises(PoolBuildFailure, match=r"2 QB declared but a lineup holds at most 1"):
+        _build([var], n=1)

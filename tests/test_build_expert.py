@@ -343,3 +343,13 @@ def test_the_prompt_teaches_bets_views_variations_and_a_spend_plan_with_position
     assert "BETS" in p and "VIEWS" in p and "VARIATIONS" in p and "SPEND PLAN" in p and '"bets": [{"players"' in p
     assert "POSITION ECONOMICS" in p and "pts/$1K" in p
     assert "a defense is priced on its merits, never a fill" in p and "$200-500 more" in p
+
+
+def test_two_bets_that_each_need_a_quarterback_are_rejected_with_the_exact_reason():
+    d = _expert()
+    d["agents"][0]["variations"][0]["bets"] = [
+        {"players": ["KC_qb", "KC_wr0"], "mechanism": "pass_volume"},
+        {"players": ["LAR_qb", "LAR_wr0"], "mechanism": "pass_volume"},
+    ]
+    errors = [x for x in _parse(d)[1] if x.code == "bets_roster"]
+    assert errors and "2 QB declared but a lineup holds at most 1" in errors[0].message and "only one bet may contain a QB" in errors[0].message

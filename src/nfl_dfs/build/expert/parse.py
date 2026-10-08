@@ -18,6 +18,7 @@ from typing import Any
 from nfl_dfs.build.agents import POOL_AGENT_BY_ID, POOL_AGENTS, PoolAgentSpec
 from nfl_dfs.build.common import Violation
 from nfl_dfs.build.pool.contracts import DEFAULT_TIERS, DERIVED, MECHANISMS, SPEND_VALUES, TIERS, Bet, Variation, BuildThesis, ExpertAgentOutput, GroupTier, PlayerRef, PoolEntry
+from nfl_dfs.build.pool.bets import roster_shape_problems
 from nfl_dfs.build.pool.expand import expand_pool
 from nfl_dfs.build.pool.validate import core_overlap
 from nfl_dfs.build.thesis.parse import _strip_fences
@@ -187,6 +188,10 @@ def _parse_variations(a: dict, bt: dict, spec: PoolAgentSpec, ids: set, by_id: d
                 qbs = [p for p in members if p.position == "QB"]
                 if not (qbs and any(p.team == qbs[0].team and p.position in ("WR", "TE") for p in members)):
                     v.append(Violation("stack_shape", f"{aid}: variation {i + 1} bet {j + 1} (pass_volume) needs a QB plus at least one of his pass catchers (WR/TE); got {[p.name for p in members]}", aid))
+        union = [by_id[c] for c in var.stack if c in by_id]
+        if union:
+            for problem in roster_shape_problems(union):
+                v.append(Violation("bets_roster", f"{aid}: variation {i + 1}'s bets cannot all be in one lineup -- {problem}. Bets are required in the lineup: drop or shrink a bet (a lineup has ONE quarterback, so only one bet may contain a QB)", aid))
         out.append(var)
     return tuple(out)
 
