@@ -12,7 +12,7 @@ from nfl_dfs.build.evidence.contracts import EvidencePacket
 from nfl_dfs.build.pool.contracts import PlayerRef
 from nfl_dfs.build.thesis.contracts import GameThesis
 
-PROMPT_VERSION = "expert-v3"
+PROMPT_VERSION = "expert-v4"
 
 
 def branch_refs(theses: dict[str, GameThesis]) -> dict[str, float]:
@@ -66,7 +66,9 @@ def render_universe(packets: dict[str, EvidencePacket]) -> str:
             out.append(
                 f"- {p.canonical_id} | {p.name} | {p.team} {p.position} | game {gid} | salary {_v(p.salary)} | proj {_v(p.projection)} | "
                 f"own% {_v(p.ownership_pct)} | chalk {'yes' if p.is_chalk else 'no'} | leverage {'yes' if p.is_leverage else 'no'} | "
-                f"status {_v(p.status_after_q_pass or p.injury_status)}"
+                f"status {_v(p.status_after_q_pass or p.injury_status)} | last-4 touch share {_v(p.touch_share_l4)} | "
+                f"expected carry share {_v(p.carry_share_expected)} / target share {_v(p.target_share_expected)}"
+                + (f" | BENEFICIARY: {p.opportunity_note}" if p.opportunity_note else "")
             )
     return "\n".join(out)
 
@@ -102,7 +104,9 @@ RULES (machine-checked; a violation sends your answer back for one retry):
 4. Every core and every exclude assignment (group tier or override) carries a one-line reason citing a thesis branch or the field layer. A reach
    assignment you mean as a shot carries a reason too.
 5. Never put a player with an injury status in core; the engine strips them and rejects an unavailable core player. Injury BENEFICIARIES
-   named in the theses (who inherits a vacated role) are a core input to EVERY pool where they fit -- unless the field already owns them.
+   (every player marked BENEFICIARY below, and any the theses name as inheriting a vacated role) are a core input to EVERY pool where they fit
+   -- unless the field already owns them. Tier each one core or eligible in the pools where he fits and give a reason; do NOT leave a
+   beneficiary in the open remainder (reach), which is only for shots and fills.
 6. Hard sliders (bring-back rules) are enforced in code from each agent's spec; you cannot and need not set them.
 7. Do not build pools out of projection alone: "tail value" is just a calibrated scaling of the projection. The edge is in the theses, role,
    game state and ownership. A game with no thesis is backed by nobody but its players stay eligible if they fit.

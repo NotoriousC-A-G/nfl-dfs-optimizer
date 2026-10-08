@@ -253,3 +253,28 @@ def test_a_reach_player_still_counts_as_playable_for_the_feasibility_checks():
     entries = tuple(PoolEntry(p.canonical_id, "core" if p.canonical_id in ("qb_T1", "wr2_T1", "wr2_T2", "rb1_T2") else "reach", "r" if p.canonical_id in ("qb_T1", "wr2_T1", "wr2_T2", "rb1_T2") else "") for p in projs)
     res = _build(Pool(1, "a1", THESIS, entries, PoolRules(min_core=2)), projs, n=2)
     assert len(res.lineups) == 2 and not res.pool.widened_steps  # the open remainder removes the need to widen at all
+
+
+def test_a_reach_player_already_used_by_earlier_agents_is_worth_less_each_time_and_other_tiers_are_untouched(monkeypatch):
+    projs = _projections()
+    seen = []
+    real = ps.generate_lineups
+
+    def spy(*a, **k):
+        seen.append(k["base_value_by_id"])
+        return real(*a, **k)
+    monkeypatch.setattr(ps, "generate_lineups", spy)
+    entries = tuple(PoolEntry(p.canonical_id, "reach" if p.canonical_id in ("wr0_T4", "wr1_T4") else "eligible", "") for p in projs)
+    pool = Pool(1, "a1", THESIS, entries, PoolRules(min_core=0))
+    raw = _values(projs)
+    prior = [frozenset({"wr0_T4", "qb_T1"}), frozenset({"wr0_T4", "qb_T2"}), frozenset({"qb_T3"})]
+    _build(pool, projs, n=1, avoid_lineups=prior, min_player_difference=1)
+    v = seen[-1]  # the real solve (the first call is the pool validator's dry run, which has no avoid list)
+    base = 1.0 - ps.REACH_HAIRCUT
+    assert v["wr0_T4"] == pytest.approx(raw["wr0_T4"] * base * (1.0 - 2 * ps.REACH_REUSE_DISCOUNT))  # used twice
+    assert v["wr1_T4"] == pytest.approx(raw["wr1_T4"] * base)  # reach but unused: haircut only
+    assert v["qb_T1"] == pytest.approx(raw["qb_T1"]) and v["qb_T3"] == pytest.approx(raw["qb_T3"])  # eligible players are never discounted for reuse
+
+
+def test_the_reuse_discount_is_capped():
+    assert ps.REACH_REUSE_DISCOUNT * ps.REACH_REUSE_MAX < 0.5  # a reach player is never made worthless by reuse alone
