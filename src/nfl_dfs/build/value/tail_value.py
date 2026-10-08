@@ -26,6 +26,7 @@ class TailValue:
     mu: float
     q90: float
     tv: float
+    q25: float | None = None
 
 
 def expected_multipliers(theses: Iterable[GameThesis]) -> dict[str, tuple[float, float]]:
@@ -52,10 +53,18 @@ def tail_values(
     *,
     c: float = C_DEFAULT,
     multipliers: dict[str, tuple[float, float]] | None = None,
+    floor_lean: float = 0.0,
 ) -> dict[str, TailValue]:
     """`players`: `(canonical_id, position, projection)`. A player whose position/projection falls in
     no calibrated cell is OMITTED (never given an invented value) -- the caller must treat a missing
-    value as 'cannot value this player'."""
+    value as 'cannot value this player'.
+
+    `floor_lean` in [-1, 1] is the agent's floor dial (draft, not backtested): 0 is the neutral value above; > 0 shrinks the
+    upside weight to `c*(1-f)` and subtracts `c*f*(mu-q25)`, so a volatile player is worth less to a floor-leaning agent;
+    < 0 raises the upside weight to `c*(1+|f|)` (a ceiling lean) and leaves the downside alone. A floor lean needs the table's
+    `q25_ratio`; without it this raises instead of silently running neutral."""
+    if not -1.0 <= floor_lean <= 1.0:
+        raise ValueError(f"floor_lean must be in [-1, 1], got {floor_lean}")
     out: dict[str, TailValue] = {}
     for cid, position, projection in players:
         cell = table.lookup(position, projection)
@@ -64,5 +73,12 @@ def tail_values(
         mean_m, q90_m = (multipliers or {}).get(cid, (1.0, 1.0))
         mu = projection * cell.mean_ratio * mean_m
         q90 = max(mu, projection * cell.q90_ratio * q90_m)
-        out[cid] = TailValue(mu, q90, mu + c * (q90 - mu))
+        q25 = None
+        tv = mu + c * (1.0 - floor_lean) * (q90 - mu)
+        if floor_lean > 0:
+            if cell.q25_ratio is None:
+                raise ValueError("this calibration table has no q25_ratio; refit it (scripts/tail_value_calibration_report.py) before using a floor lean")
+            q25 = min(mu, projection * cell.q25_ratio * mean_m)
+            tv -= c * floor_lean * (mu - q25)
+        out[cid] = TailValue(mu, q90, tv, q25)
     return out

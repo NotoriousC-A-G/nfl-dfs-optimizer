@@ -21,6 +21,7 @@ from pathlib import Path
 
 import nfl_data_py as nfl
 
+from nfl_dfs.build.agents import POOL_AGENT_BY_ID
 from nfl_dfs.build.evidence.builder import build_evidence_packets
 from nfl_dfs.build.evidence.metrics import league_values, team_game_metrics
 from nfl_dfs.build.expert.repair import build_with_repair
@@ -74,8 +75,8 @@ def main() -> int:
                               status_map.get(p.status_after_q_pass) or p.injury_status)
              for pk in packets.values() for p in pk.players if p.salary is not None and p.projection is not None]
     table = CalibrationTable.from_json(TABLE.read_text())
-    tv = tail_values([(p.canonical_id, p.position, p.blended_projection) for p in projs], table, multipliers=expected_multipliers(theses.values()))
-    values = {i: v.tv for i, v in tv.items()}
+    mult = expected_multipliers(theses.values())
+    inputs = [(p.canonical_id, p.position, p.blended_projection) for p in projs]
     opp, game_of = {}, {}
     for gid, pk in packets.items():
         opp[pk.home], opp[pk.away] = pk.away, pk.home
@@ -86,7 +87,10 @@ def main() -> int:
     avoid: list[frozenset[str]] = []
     exit_code = 0
     for out in expert.outputs:
-        def build(o, _avoid=list(avoid)):
+        lean = POOL_AGENT_BY_ID[out.agent_id].floor_lean  # each agent maximizes its own tilt of the tail value
+        values = {i: v.tv for i, v in tail_values(inputs, table, multipliers=mult, floor_lean=lean).items()}
+
+        def build(o, _avoid=list(avoid), values=values):
             return build_agent_lineups(expand_pool(o, universe), projs, values, n=args.n, opponent_of=opp, game_id_by_team=game_of, pair_signs=signs,
                                        avoid_lineups=_avoid, min_player_difference=3)
         oc = build_with_repair(out, build, theses, packets, universe, model=MODEL_ID, freshness=fresh, season=SEASON, week=WEEK)
@@ -99,7 +103,7 @@ def main() -> int:
             continue
         res = oc.result
         o = res.pool
-        print(f"\n[{out.agent_id}]{' REPAIRED by the expert after: ' + str(oc.first_failure) if oc.repaired else ''} | widened: {list(o.widened_steps) or 'no'} | "
+        print(f"\n[{out.agent_id}] (floor lean {lean:+.1f}){' REPAIRED by the expert after: ' + str(oc.first_failure) if oc.repaired else ''} | widened: {list(o.widened_steps) or 'no'} | "
               f"backs {list(o.build_thesis.backs)} | {o.build_thesis.reason[:140]}")
         for i, lu in enumerate(res.lineups, 1):
             avoid.append(frozenset(p.canonical_id for p in lu.players))
