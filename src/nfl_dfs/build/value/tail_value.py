@@ -47,6 +47,43 @@ def expected_multipliers(theses: Iterable[GameThesis]) -> dict[str, tuple[float,
     return out
 
 
+def conditional_multipliers(
+    theses: Iterable[GameThesis], backs: Iterable[str] = (), avoids: Iterable[str] = (),
+) -> dict[str, tuple[float, float]]:
+    """`{canonical_id: (mean_mult, q90_mult)}` for ONE agent, conditioned on the stand it takes (Chris, 2026-10-08: the analysts' calls
+    must not be averaged away).
+
+    `backs` / `avoids` are refs `"GAME:branch_id"`. In a game where the agent backs one or more branches, every player is priced under
+    THOSE branches only (several backed branches are weighted by their own probabilities; a branch that does not name a player leaves him
+    at 1.0). In a game where the agent only avoids branches, the avoided ones are dropped and the rest -- the residual included -- are
+    renormalized. In a game the agent says nothing about, the full probability-weighted mix applies (`expected_multipliers`): a stand is
+    taken where there is one, not manufactured everywhere. The full multipliers apply, with no pull toward 1.0 from branches the agent
+    is not betting on."""
+    backs, avoids = set(backs), set(avoids)
+    out: dict[str, tuple[float, float]] = {}
+    for thesis in theses:
+        gid = thesis.game_id
+        backed = [b for b in thesis.branches if f"{gid}:{b.branch_id}" in backs]
+        if backed:
+            chosen = backed
+        else:
+            chosen = [b for b in thesis.branches if f"{gid}:{b.branch_id}" not in avoids] or list(thesis.branches)
+        total = sum(b.prob for b in chosen)
+        if total <= 0:
+            continue
+        named: dict[str, list[tuple[float, float, float]]] = {}
+        for b in chosen:
+            for o in b.player_outcomes:
+                named.setdefault(o.canonical_id, []).append((b.prob / total, o.mean_mult, o.q90_mult))
+        for cid, items in named.items():
+            covered = sum(w for w, _, _ in items)
+            out[cid] = (
+                sum(w * m for w, m, _ in items) + (1.0 - covered),
+                sum(w * q for w, _, q in items) + (1.0 - covered),
+            )
+    return out
+
+
 def tail_values(
     players: Iterable[tuple[str, str, float]],
     table: CalibrationTable,

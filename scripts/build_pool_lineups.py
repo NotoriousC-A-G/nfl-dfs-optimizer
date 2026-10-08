@@ -35,7 +35,7 @@ from nfl_dfs.build.runner import collect_results, require_all_ok
 from nfl_dfs.build.thesis.contracts import PairSign
 from nfl_dfs.build.thesis.stage import analyst_specs
 from nfl_dfs.build.value.calibration import CalibrationTable
-from nfl_dfs.build.value.tail_value import expected_multipliers, tail_values
+from nfl_dfs.build.value.tail_value import conditional_multipliers, tail_values
 from nfl_dfs.optimizer.pool_solve import build_agent_lineups
 from nfl_dfs.projection.blend import PlayerProjection
 from nfl_dfs.storage.build_artifact_store import save_build_artifact
@@ -82,7 +82,6 @@ def main() -> int:
                               status_map.get(p.status_after_q_pass) or p.injury_status)
              for pk in packets.values() for p in pk.players if p.salary is not None and p.projection is not None]
     table = CalibrationTable.from_json(TABLE.read_text())
-    mult = expected_multipliers(theses.values())
     inputs = [(p.canonical_id, p.position, p.blended_projection) for p in projs]
     opp, game_of = {}, {}
     for gid, pk in packets.items():
@@ -96,9 +95,11 @@ def main() -> int:
     agents_record: dict[str, dict] = {a: {"status": "unavailable_by_expert", "detail": r} for a, r in expert.unavailable.items()}
     for out in expert.outputs:
         lean = POOL_AGENT_BY_ID[out.agent_id].floor_lean  # each agent maximizes its own tilt of the tail value
-        values = {i: v.tv for i, v in tail_values(inputs, table, multipliers=mult, floor_lean=lean).items()}
 
-        def build(o, _avoid=list(avoid), values=values):
+        def build(o, _avoid=list(avoid)):
+            # Priced under the stand THIS pool takes (a repaired pool may back different branches than the first one)
+            mult = conditional_multipliers(theses.values(), o.build_thesis.backs, o.build_thesis.avoids)
+            values = {i: v.tv for i, v in tail_values(inputs, table, multipliers=mult, floor_lean=lean).items()}
             return build_agent_lineups(expand_pool(o, universe), projs, values, n=args.n, opponent_of=opp, game_id_by_team=game_of, pair_signs=signs,
                                        avoid_lineups=_avoid, min_player_difference=3)
         oc = build_with_repair(out, build, theses, packets, universe, model=MODEL_ID, freshness=fresh, season=SEASON, week=WEEK)
@@ -115,16 +116,19 @@ def main() -> int:
         o = res.pool
         print(f"\n[{out.agent_id}] (floor lean {lean:+.1f}){' REPAIRED by the expert after: ' + str(oc.first_failure) if oc.repaired else ''} | widened: {list(o.widened_steps) or 'no'} | "
               f"backs {list(o.build_thesis.backs)} | {o.build_thesis.reason[:140]}")
+        tier_of = {e.canonical_id: e.tier for e in o.entries}
+        tiers = lambda lu: {t: sum(1 for p in lu.players if tier_of.get(p.canonical_id) == t) for t in ("core", "eligible", "reach")}
         for i, lu in enumerate(res.lineups, 1):
             avoid.append(frozenset(p.canonical_id for p in lu.players))
-            print(f"  L{i} ${lu.total_salary:,} proj {lu.total_projected_points:.1f} | " + ", ".join(f"{p.position} {p.display_name}" for p in lu.players))
+            tc = tiers(lu)
+            print(f"  L{i} ${lu.total_salary:,} proj {lu.total_projected_points:.1f} [core {tc['core']} / eligible {tc['eligible']} / reach {tc['reach']}] | " + ", ".join(f"{p.position} {p.display_name}" + ("*" if tier_of.get(p.canonical_id) == "reach" else "") for p in lu.players))
         for w in res.warnings:
             print(f"  warning: {w.message}")
         agents_record[out.agent_id] = {
             "status": "built", "floor_lean": lean, "repaired": oc.repaired, "first_failure": str(oc.first_failure) if oc.first_failure else None,
             "widened_steps": list(o.widened_steps), "build_thesis": asdict(o.build_thesis), "expert_pool": output_to_json(out),
             "pool_used": [(e.canonical_id, e.tier, e.reason) for e in o.entries if e.tier != "exclude"],
-            "lineups": [{"player_ids": [p.canonical_id for p in lu.players], "salary": lu.total_salary, "projected": lu.total_projected_points} for lu in res.lineups],
+            "lineups": [{"player_ids": [p.canonical_id for p in lu.players], "salary": lu.total_salary, "projected": lu.total_projected_points, "tiers": tiers(lu)} for lu in res.lineups],
             "warnings": [w.message for w in res.warnings],
         }
     path = save_build_artifact(SEASON, WEEK, {

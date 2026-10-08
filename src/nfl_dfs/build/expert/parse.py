@@ -149,8 +149,8 @@ def _check_agent(out: ExpertAgentOutput, spec: PoolAgentSpec, universe: list[Pla
     pool = expand_pool(out, universe)
     n = len(universe)
     core = sum(1 for e in pool.entries if e.tier == "core")
-    live = sum(1 for e in pool.entries if e.tier != "exclude")
+    live = sum(1 for e in pool.entries if e.tier in ("core", "eligible"))  # reach is the open remainder, not part of the narrow shape
     if not (MIN_CORE <= core <= MAX_CORE):
         v.append(Violation("core_size", f"{aid}: {core} core players; use between {MIN_CORE} and {MAX_CORE}", aid))
     if n and live / n > MAX_BROAD_FRACTION:
-        v.append(Violation("pool_too_broad", f"{aid}: {live} of {n} players are core/eligible ({live / n:.0%}); a pool above {MAX_BROAD_FRACTION:.0%} converges on the same value plays as every other agent -- exclude more", aid))
+        v.append(Violation("pool_too_broad", f"{aid}: {live} of {n} players are core/eligible ({live / n:.0%}); above {MAX_BROAD_FRACTION:.0%} the agent's stand stops being a stand and converges on the same plays as every other agent -- move the weaker fits to reach", aid))

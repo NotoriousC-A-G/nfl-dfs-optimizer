@@ -4,7 +4,7 @@ import pytest
 
 from nfl_dfs.build.thesis.contracts import Branch, GameThesis, PlayerBranchOutcome
 from nfl_dfs.build.value.calibration import CalibrationTable, CellStat, fit_cells, holdout_check, load_resultsdb_player_rows
-from nfl_dfs.build.value.tail_value import C_DEFAULT, expected_multipliers, tail_values
+from nfl_dfs.build.value.tail_value import C_DEFAULT, conditional_multipliers, expected_multipliers, tail_values
 
 
 def _df(seed=0, seasons=(2022, 2023, 2024, 2025), n_per=500):
@@ -143,3 +143,41 @@ def test_the_pool_agents_carry_a_floor_dial_in_range_with_anchors_leaning_floor_
     assert all(-1.0 <= a.floor_lean <= 1.0 for a in POOL_AGENTS)
     assert POOL_AGENT_BY_ID["volume_anchor"].floor_lean > 0
     assert POOL_AGENT_BY_ID["shootout_stack"].floor_lean < 0 and POOL_AGENT_BY_ID["contrarian_game"].floor_lean < 0
+
+
+def _game(gid="A@B", x="x", z="z"):
+    b1 = Branch("b1", (("q1", True),), False, 0.30, "d", player_outcomes=(PlayerBranchOutcome(x, 1.3, 1.3), PlayerBranchOutcome(z, 1.15, 1.15)))
+    b2 = Branch("b2", (("q1", False),), False, 0.50, "d", player_outcomes=(PlayerBranchOutcome(x, 0.9, 0.8),))
+    res = Branch("res", (), True, 0.20, "d")
+    return GameThesis(1, gid, "sha", "p", "m", "h", (), (), (), (b1, b2, res), "res", (), ())
+
+
+def test_a_backed_branch_is_priced_in_full_with_no_pull_from_branches_the_agent_is_not_betting_on():
+    m = conditional_multipliers([_game()], backs=["A@B:b1"])
+    assert m["x"] == (pytest.approx(1.3), pytest.approx(1.3))  # not the 0.3*1.3 + ... average
+    assert m["z"] == (pytest.approx(1.15), pytest.approx(1.15))
+    assert expected_multipliers([_game()])["x"][0] < 1.3  # the averaged value is what used to wash the stand out
+
+
+def test_several_backed_branches_are_weighted_by_their_own_probabilities():
+    m = conditional_multipliers([_game()], backs=["A@B:b1", "A@B:b2"])
+    assert m["x"][0] == pytest.approx((0.30 * 1.3 + 0.50 * 0.9) / 0.80)
+    assert m["z"][0] == pytest.approx((0.30 * 1.15 + 0.50 * 1.0) / 0.80)  # b2 does not name z -> 1.0
+
+
+def test_avoiding_a_branch_drops_and_renormalizes_the_rest_including_the_residual():
+    m = conditional_multipliers([_game()], avoids=["A@B:b2"])
+    assert m["x"][0] == pytest.approx((0.30 * 1.3 + 0.20 * 1.0) / 0.50)
+
+
+def test_a_game_the_agent_says_nothing_about_gets_the_full_probability_weighted_mix_and_other_games_stay_independent():
+    two = [_game("A@B"), _game("C@D", x="x2", z="z2")]
+    m = conditional_multipliers(two, backs=["A@B:b1"])
+    assert m["x"][0] == pytest.approx(1.3)  # the backed game is priced under its stand
+    assert m["x2"][0] == pytest.approx(expected_multipliers([_game("C@D", x="x2", z="z2")])["x2"][0])  # the other keeps the full mix
+    assert m["x2"][0] == pytest.approx(1.04) and m["x"][0] > m["x2"][0]
+
+
+def test_no_stand_at_all_equals_the_expected_multipliers():
+    a, b = conditional_multipliers([_game()]), expected_multipliers([_game()])
+    assert a.keys() == b.keys() and all(a[k] == pytest.approx(b[k]) for k in a)
