@@ -255,7 +255,7 @@ def test_a_reach_player_still_counts_as_playable_for_the_feasibility_checks():
     assert len(res.lineups) == 2 and not res.pool.widened_steps  # the open remainder removes the need to widen at all
 
 
-def test_a_reach_player_already_used_by_earlier_agents_is_worth_less_each_time_and_other_tiers_are_untouched(monkeypatch):
+def test_a_reused_player_is_worth_less_each_time_reach_more_than_eligible_and_core_not_at_all(monkeypatch):
     projs = _projections()
     seen = []
     real = ps.generate_lineups
@@ -273,7 +273,9 @@ def test_a_reach_player_already_used_by_earlier_agents_is_worth_less_each_time_a
     base = 1.0 - ps.REACH_HAIRCUT
     assert v["wr0_T4"] == pytest.approx(raw["wr0_T4"] * base * (1.0 - 2 * ps.REACH_REUSE_DISCOUNT))  # used twice
     assert v["wr1_T4"] == pytest.approx(raw["wr1_T4"] * base)  # reach but unused: haircut only
-    assert v["qb_T1"] == pytest.approx(raw["qb_T1"]) and v["qb_T3"] == pytest.approx(raw["qb_T3"])  # eligible players are never discounted for reuse
+    # eligible players get the milder discount (5% per prior use); a player used by nobody is untouched
+    assert v["qb_T1"] == pytest.approx(raw["qb_T1"] * (1.0 - ps.ELIGIBLE_REUSE_DISCOUNT)) and v["qb_T3"] == pytest.approx(raw["qb_T3"] * (1.0 - ps.ELIGIBLE_REUSE_DISCOUNT))
+    assert v["qb_T4"] == pytest.approx(raw["qb_T4"])
 
 
 def test_the_reuse_discount_is_capped():

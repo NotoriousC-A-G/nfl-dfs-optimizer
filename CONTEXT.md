@@ -91,3 +91,11 @@ _Avoid_: Risk setting, variance weight
 **Battle**:
 One of the matchups that decide a game — a specific unit or player against another, with who is out and what that changes — together with the analyst's call on who wins it, what that does to which players, and how convinced the analyst is. The pivotal questions are only the measurable form of the battles.
 _Avoid_: Question (that is the measurable proxy, not the football judgment), narrative
+
+**Script**:
+One concrete version of how a game goes — a single branch of that game's thesis. A lineup is built for one script, and a player's tier and value depend on it: a back is core in a lead-protecting script and reach in a shootout where his team trails.
+_Avoid_: Scenario (the older word for the whole set of branches), angle (a bet on a script across lineups)
+
+**Script variation**:
+One of the (at most three) scripts an agent builds a lineup for under its single core thesis.
+_Avoid_: Sub-agent, alternate pool

@@ -13,6 +13,9 @@ SCHEMA_VERSION = 1
 # reach = usable at a value haircut (a salary/position fill, or a deliberate shot such as a quiet game with a real chance of a
 # shootout); exclude = barred, only for a stated reason. Unnamed players default to reach.
 TIERS = ("core", "eligible", "reach", "exclude")
+# An agent's default tier may also be "derived": each unnamed player gets the tier the SCRIPT gives him (`pool/derive.py`).
+DERIVED = "derived"
+DEFAULT_TIERS = TIERS + (DERIVED,)
 
 
 @dataclass(frozen=True)

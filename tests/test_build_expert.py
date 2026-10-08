@@ -207,11 +207,11 @@ def test_reach_is_a_valid_default_and_group_tier_and_does_not_count_toward_narro
     assert _codes(_parse(d2)[1]) == set()
 
 
-def test_the_prompt_explains_graded_tiers_and_defaults_the_open_remainder_to_reach():
+def test_the_prompt_explains_graded_tiers_scripts_and_derived_defaults():
     packet = _packet()
     thesis, _ = parse_analyst_response(json.dumps(_response(packet)), packet, league_fn, prompt_version="p", model="m")
     p = expert_prompt({packet.game_id: thesis}, {packet.game_id: packet})
-    assert "GRADED CONFIDENCE, not a fence" in p and 'default_tier "reach"' in p and "SHOT" in p
+    assert "GRADED CONFIDENCE, not a fence" in p and 'default_tier "derived"' in p and "SHOT" in p and "SCRIPT VARIATIONS" in p
 
 
 def test_the_universe_marks_beneficiaries_and_the_prompt_forbids_leaving_them_in_the_open_remainder():
@@ -223,7 +223,7 @@ def test_the_universe_marks_beneficiaries_and_the_prompt_forbids_leaving_them_in
     packet = replace(packet, players=(marked,) + packet.players[1:])
     p = expert_prompt({packet.game_id: thesis}, {packet.game_id: packet})
     assert "BENEFICIARY: +6.0 pts of its targets from X Y (OUT)" in p and "expected carry share" in p
-    assert "do NOT leave a" in p and "open remainder" in p
+    assert "never" in p and "open remainder" in p and "engine already tiers a beneficiary" in p
 
 
 def test_the_analyst_prompt_asks_for_battles_and_the_expert_prompt_shows_their_calls_and_convictions():
@@ -236,3 +236,22 @@ def test_the_analyst_prompt_asks_for_battles_and_the_expert_prompt_shows_their_c
     ep = expert_prompt({packet.game_id: thesis}, {packet.game_id: packet})
     assert "BATTLE (high conviction) -> leans LAR@PHI:b0: LAR front vs a PHI line missing its RT" in ep
     assert "CALL: LAR wins it" in ep and "BUILD ON THE ANALYSTS' CALLS" in ep
+
+
+def test_derived_is_a_valid_default_with_optional_explicit_core_and_at_most_three_scripts():
+    d = _expert()
+    for a in d["agents"]:
+        if "build_thesis" in a:
+            a["default_tier"] = "derived"
+            a["group_tiers"] = []  # no explicit core at all: the engine supplies it per script
+    result, v = _parse(d)
+    assert _codes(v) == set(), [x.message for x in v]
+    assert {o.default_tier for o in result.outputs} == {"derived"}
+    d2 = _expert()
+    d2["agents"][0]["default_tier"] = "derived"
+    d2["agents"][0]["build_thesis"]["backs"] = ["KC@LV:b0", "KC@LV:b1", "KC@LV:b2", "KC@LV:b3"]
+    assert "too_many_scripts" in _codes(_parse(d2)[1])
+    d3 = _expert()
+    d3["agents"][0]["default_tier"] = "reach"
+    d3["agents"][0]["group_tiers"] = []
+    assert "core_size" in _codes(_parse(d3)[1])  # without "derived" the explicit core minimum still applies
