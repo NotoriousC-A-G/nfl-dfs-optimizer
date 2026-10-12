@@ -59,7 +59,8 @@ def main() -> None:
         weekly = fetch_weekly_player_stats(SEASON)
         pbp = nfl.import_pbp_data([SEASON], include_participation=False)
 
-    report = run_postmortem(SEASON, WEEK, weekly=weekly, pbp=pbp)
+    artifact = load_latest_build_artifact(SEASON, WEEK)
+    report = run_postmortem(SEASON, WEEK, weekly=weekly, pbp=pbp, build_artifact=artifact)
     if report is None:
         print(f"No slate snapshot found for season={SEASON} week={WEEK} -- run live_integration_check_dashboard.py first.")
         return
@@ -84,7 +85,6 @@ def main() -> None:
     print(f"{len(contest_results)} real contest entries this week; {len(season_records)} season-to-date records.")
 
     redesign_outcomes: tuple = ()
-    artifact = load_latest_build_artifact(SEASON, WEEK)
     snapshot = load_latest_slate_snapshot(SEASON, WEEK)
     if artifact is not None and snapshot is not None:
         pool = snapshot["player_pool"]

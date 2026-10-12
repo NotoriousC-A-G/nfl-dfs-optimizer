@@ -270,3 +270,46 @@ def test_name_match_miss_with_id_present_is_not_treated_as_dnp(tmp_path, monkeyp
     back = next(p for p in outcome.players if p.display_name == "Inactive Back")
     assert back.actual is None and back.did_not_play is False
     assert outcome.actual_total is None
+
+
+def test_redesign_lineups_become_lineup_outcomes_with_build_projections():
+    from nfl_dfs.tracking.postmortem.replay import _redesign_lineup_outcomes
+
+    pool = [
+        _pool_row("00-1", "A Player", "GB", "WR", 5000, projection=10.0),
+        _pool_row("00-2", "B Player", "GB", "QB", 6000, projection=15.0),
+    ]
+    artifact = {
+        "opportunity_adjustments": {"00-1": {"adjusted_projection": 12.0}},
+        "agents": {
+            "contrarian_game": {"lineups": [{"player_ids": ["00-1", "00-2"], "projected": 27.0, "stack": ["00-1", "00-2"]}]},
+            "short_field": {"lineups": []},
+        },
+    }
+    (lo,) = _redesign_lineup_outcomes(artifact, pool, {"00-1": 20.0, "00-2": 10.0}, {}, set(), set())
+
+    assert lo.agent_id == "redesign:contrarian_game"
+    assert lo.label == "Contrarian Game (redesign)"
+    assert [p.projected for p in lo.players] == [12.0, 15.0]  # adjusted where present, else pool
+    assert lo.projected_total == 27.0
+    assert lo.actual_total == 30.0
+    assert lo.delta == 3.0
+    assert lo.core_stack_team == "GB"
+
+
+def test_run_postmortem_includes_redesign_lineups_only_when_artifact_given(tmp_path, monkeypatch):
+    import nfl_dfs.storage.slate_snapshot_store as store
+
+    snapshot = {"player_pool": [_pool_row("00-1", "A Player", "GB", "WR", 5000)], "agent_lineups": []}
+    monkeypatch.setattr("nfl_dfs.tracking.postmortem.replay.load_latest_slate_snapshot", lambda s, w: snapshot)
+    monkeypatch.setattr("nfl_dfs.tracking.postmortem.replay.read_agent_results", lambda **k: [])
+    weekly = pd.DataFrame([_weekly_row("A Player", "GB", receptions=5, receiving_yards=50.0, week=5)])
+    weekly["player_id"] = "00-1"
+    pbp = pd.DataFrame([_pbp_row("GB", week=5), _pbp_row("SEA", week=5)])
+    artifact = {"agents": {"chalk_pivot": {"lineups": [{"player_ids": ["00-1"], "projected": 10.0, "stack": []}]}}}
+
+    without = run_postmortem(2026, 5, weekly=weekly, pbp=pbp)
+    with_artifact = run_postmortem(2026, 5, weekly=weekly, pbp=pbp, build_artifact=artifact)
+
+    assert not any(lo.agent_id.startswith("redesign:") for lo in without.lineup_outcomes)
+    assert [lo.agent_id for lo in with_artifact.lineup_outcomes if lo.agent_id.startswith("redesign:")] == ["redesign:chalk_pivot"]

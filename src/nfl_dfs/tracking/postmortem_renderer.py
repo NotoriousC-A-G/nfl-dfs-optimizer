@@ -168,7 +168,7 @@ def _render_lineup_table(lineup_outcomes: tuple[LineupOutcome, ...]) -> str:
             f"<tr{css}><td>{html.escape(lo.label)}</td>"
             f"<td class=\"num\">{_fmt(lo.actual_total)}</td>"
             f"<td class=\"num\">{_fmt(lo.projected_total)}</td>"
-            f"<td class=\"num\">{_fmt(lo.delta, decimals=1) if lo.delta is not None else '--'}</td></tr>"
+            f"<td class=\"num\">{f'{lo.delta:+,.1f}' if lo.delta is not None else '--'}</td></tr>"
         )
         rows.append(
             '<tr class="detail-row"><td colspan="4"><details>'
