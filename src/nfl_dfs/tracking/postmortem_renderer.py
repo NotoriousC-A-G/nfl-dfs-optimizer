@@ -21,6 +21,7 @@ from __future__ import annotations
 import html
 
 from nfl_dfs.storage.contest_results_store import ContestResult
+from nfl_dfs.tracking.postmortem.redesign_outcomes import RedesignLineupOutcome
 from nfl_dfs.tracking.postmortem.models import LineupOutcome, PlayerContext, PlayerOutcome, PostMortemReport
 from nfl_dfs.tracking.season_record import SeasonRecord
 
@@ -374,11 +375,34 @@ def _render_stack_thesis(report: PostMortemReport) -> str:
     )
 
 
+def _render_redesign_outcomes(outcomes: tuple[RedesignLineupOutcome, ...]) -> str:
+    if not outcomes:
+        return ""
+    rows = []
+    for o in sorted(outcomes, key=lambda o: -(o.actual_total if o.actual_total is not None else float("-inf"))):
+        roster = ", ".join(
+            f"{html.escape(p.display_name)} {_fmt(p.actual) if p.actual is not None else 'n/a'}" for p in o.players
+        )
+        detail = roster or html.escape(o.note)
+        rows.append(
+            f"<tr><td>{html.escape(o.agent_id)}</td><td class=\"num\">{_fmt(o.projected_total)}</td>"
+            f"<td class=\"num\">{_fmt(o.actual_total)}</td><td class=\"num\">{_fmt(o.delta)}</td>"
+            f"<td>{html.escape(', '.join(o.views))}</td><td>{detail}</td></tr>"
+        )
+    return (
+        "<h2>Redesign Pipeline Lineups (not entered -- graded against real scores)</h2>"
+        '<div class="card"><table><thead><tr><th>Agent</th><th>Proj</th><th>Actual</th><th>Delta</th>'
+        "<th>Views</th><th>Players (actual)</th></tr></thead>"
+        f"<tbody>{''.join(rows)}</tbody></table></div>"
+    )
+
+
 def render_postmortem_html(
     report: PostMortemReport,
     *,
     contest_results: tuple[ContestResult, ...] = (),
     season_records: tuple[SeasonRecord, ...] = (),
+    redesign_outcomes: tuple[RedesignLineupOutcome, ...] = (),
 ) -> str:
     return f"""<!doctype html>
 <html>
@@ -389,6 +413,7 @@ def render_postmortem_html(
 {_render_lineup_table(report.lineup_outcomes)}
 {_render_season_records(season_records)}
 {_render_contest_results(contest_results)}
+{_render_redesign_outcomes(redesign_outcomes)}
 {_render_process_grade(report)}
 {_render_chalk_comparison(report)}
 {_render_player_table("Top Performers", report.top_performers, "No real settled scores yet.")}

@@ -36,8 +36,12 @@ import warnings
 import nfl_data_py as nfl
 
 from nfl_dfs.ingestion.offense_actual_scoring import fetch_weekly_player_stats
+from nfl_dfs.storage.build_artifact_store import load_latest_build_artifact
 from nfl_dfs.storage.contest_results_store import read_contest_results
+from nfl_dfs.storage.slate_snapshot_store import load_latest_slate_snapshot
 from nfl_dfs.tracking.agent_results_collector import score_and_backfill_agent_results
+from nfl_dfs.tracking.postmortem.actual_points import actual_points_by_canonical_id
+from nfl_dfs.tracking.postmortem.redesign_outcomes import score_redesign_lineups
 from nfl_dfs.tracking.postmortem.replay import run_postmortem
 from nfl_dfs.tracking.postmortem_renderer import render_postmortem_html
 from nfl_dfs.tracking.season_record import compute_season_records
@@ -79,7 +83,20 @@ def main() -> None:
     season_records = tuple(compute_season_records(SEASON))
     print(f"{len(contest_results)} real contest entries this week; {len(season_records)} season-to-date records.")
 
-    html_out = render_postmortem_html(report, contest_results=contest_results, season_records=season_records)
+    redesign_outcomes: tuple = ()
+    artifact = load_latest_build_artifact(SEASON, WEEK)
+    snapshot = load_latest_slate_snapshot(SEASON, WEEK)
+    if artifact is not None and snapshot is not None:
+        pool = snapshot["player_pool"]
+        actual_by_id = actual_points_by_canonical_id(pool, season=SEASON, week=WEEK, weekly=weekly, pbp=pbp)
+        redesign_outcomes = tuple(score_redesign_lineups(artifact, pool, actual_by_id))
+        print(f"{len(redesign_outcomes)} redesign pipeline lineup(s) graded.")
+    else:
+        print("No redesign build artifact for this week -- skipping the redesign section.")
+
+    html_out = render_postmortem_html(
+        report, contest_results=contest_results, season_records=season_records, redesign_outcomes=redesign_outcomes
+    )
     with open(OUTPUT_PATH, "w") as f:
         f.write(html_out)
     print(f"Wrote {OUTPUT_PATH}")
