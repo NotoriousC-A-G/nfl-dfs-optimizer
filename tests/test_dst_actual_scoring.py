@@ -23,6 +23,7 @@ def _row(**kwargs) -> dict:
         "sack": 0,
         "interception": 0,
         "fumble": 0,
+        "fumble_lost": 0,
         "fumble_recovery_1_team": None,
         "fumble_recovery_1_player_id": None,
         "touchdown": 0,
@@ -284,3 +285,48 @@ def test_points_allowed_excludes_safety_scored_by_opponent_defense():
     assert away.points_allowed == 0
     assert away.dk_points == pytest.approx(10.0)
     assert _dst_for(results, "HOME").safeties == 1
+
+
+def test_kicking_team_recovering_a_kickoff_fumble_earns_the_fumble_recovery_points():
+    # Caught live (2026 wk 5 MIN@NO): the kicking team (HOME here) recovers the returner's kickoff
+    # fumble. A special-teams play, not a TD -- DK still gives the recovering DST +2.
+    results = aggregate_team_week_dst_points(
+        pd.DataFrame(
+            [
+                _row(
+                    play_id=1,
+                    special_teams_play=1,
+                    posteam="AWAY",
+                    defteam="HOME",
+                    fumble=1,
+                    fumble_lost=1,
+                    fumble_recovery_1_team="HOME",
+                ),
+                _final_row(99, home_score=20, away_score=17),
+            ]
+        )
+    )
+    home = _dst_for(results, "HOME")
+    assert home.fumble_recoveries == 1
+    assert home.dk_points == 2.0 + 1.0  # recovery + 17 points allowed (14-20 band is +1)
+
+
+def test_returner_recovering_his_own_kickoff_fumble_is_not_a_dst_recovery():
+    results = aggregate_team_week_dst_points(
+        pd.DataFrame(
+            [
+                _row(
+                    play_id=1,
+                    special_teams_play=1,
+                    posteam="AWAY",
+                    defteam="HOME",
+                    fumble=1,
+                    fumble_lost=0,
+                    fumble_recovery_1_team="AWAY",
+                ),
+                _final_row(99, home_score=20, away_score=17),
+            ]
+        )
+    )
+    assert _dst_for(results, "HOME").fumble_recoveries == 0
+    assert _dst_for(results, "AWAY").fumble_recoveries == 0
