@@ -19,6 +19,9 @@ when `scripts/run_postmortem.py` runs. Nothing here needs to duplicate that join
 Run by hand once a week's rosters/results are known (not part of pytest -- writes real files):
     PYTHONPATH=. .venv/bin/python scripts/log_operator_contest_results.py
 
+Entry fees are not transcribed here: after running this, run `scripts/backfill_contest_entry_fees.py`
+against a fresh DK contest-entry-history export to fill `entry_fee` on the new rows.
+
 SEASON/WEEK, OPERATOR_LINEUPS, and CONTEST_RESULTS below must be kept current by hand each week,
 same convention as every other live script in this project.
 """

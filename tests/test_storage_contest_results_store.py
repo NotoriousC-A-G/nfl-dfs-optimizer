@@ -92,3 +92,34 @@ def test_read_contest_results_filters_by_season_and_week(tmp_path):
 
 def test_read_contest_results_empty_when_file_does_not_exist(tmp_path):
     assert read_contest_results(path=tmp_path / "does_not_exist.csv") == []
+
+
+def test_entry_fee_round_trips_and_net(tmp_path):
+    path = tmp_path / "contest_results.csv"
+    row = _row("L1", "$7.5K Huddle", 1640, entry_fee=5.0, winnings=20.0)
+    save_contest_results([row], path=path)
+
+    (result,) = read_contest_results(path=path)
+    assert result.entry_fee == 5.0
+    assert result.net == 15.0
+
+
+def test_missing_entry_fee_is_none_not_zero(tmp_path):
+    path = tmp_path / "contest_results.csv"
+    save_contest_results([_row("L1", "$7.5K Huddle", 1640)], path=path)
+
+    (result,) = read_contest_results(path=path)
+    assert result.entry_fee is None
+    assert result.net is None
+
+
+def test_old_header_file_is_upgraded_before_append(tmp_path):
+    path = tmp_path / "contest_results.csv"
+    path.write_text(
+        "season,week,lineup_label,contest_name,entries,positions_paid,total_prizes,rank,fpts,winnings\n"
+        "2026,2,L1,$7.5K Huddle,1783,390,7500,1640,80.22,0.0\n"
+    )
+    save_contest_results([_row("L2", "$40K Pylon", 99, entry_fee=3.0)], path=path)
+
+    results = read_contest_results(path=path)
+    assert [(r.lineup_label, r.entry_fee) for r in results] == [("L1", None), ("L2", 3.0)]
