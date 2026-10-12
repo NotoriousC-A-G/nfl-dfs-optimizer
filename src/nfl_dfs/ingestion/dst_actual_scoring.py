@@ -156,6 +156,19 @@ def aggregate_team_week_dst_points(pbp: pd.DataFrame, *, season_type: str | None
     ]
     fumble_recoveries = defensive_fumble_recoveries.groupby(["defteam", "week"]).size()
 
+    # The exclusion above is only to avoid double-counting a return TD; an ordinary special-teams
+    # recovery (e.g. the kicking team recovering a returner's kickoff fumble -- caught live, 2026 wk
+    # 5 MIN@NO, DK gave MIN the +2) still earns the +2. On special-teams plays `posteam`/`defteam`
+    # are not a reliable "who recovered" signal, so credit `fumble_recovery_1_team` when the
+    # fumbling team actually lost possession (`fumble_lost == 1`).
+    fumble_lost = df["fumble_lost"] if "fumble_lost" in df.columns else pd.Series(0, index=df.index)  # trimmed frames may lack it
+    st_recoveries = df[
+        (df["fumble"] == 1) & (df["special_teams_play"] == 1) & (fumble_lost == 1) & df["fumble_recovery_1_team"].notna()
+    ]
+    st_recovery_counts = st_recoveries.groupby(["fumble_recovery_1_team", "week"]).size()
+    st_recovery_counts.index.names = ["defteam", "week"]
+    fumble_recoveries = fumble_recoveries.add(st_recovery_counts, fill_value=0).astype(int)
+
     # Interception return TDs -- `td_team` (confirmed live) is the team that actually scored,
     # independent of `posteam`/`defteam`'s own play-direction labels.
     int_return_tds = df[(df["interception"] == 1) & (df["touchdown"] == 1) & (df["td_team"] == df["defteam"])]
