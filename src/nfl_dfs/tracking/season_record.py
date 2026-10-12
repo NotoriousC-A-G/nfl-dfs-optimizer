@@ -34,13 +34,14 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from nfl_dfs.tracking.agent_roster import ALL_AGENT_IDS
 from nfl_dfs.storage.agent_results_store import AgentResultRow, read_agent_results
 from nfl_dfs.storage.contest_results_store import read_contest_results
 from nfl_dfs.tracking.contest_placement_estimate import estimate_agent_placements
 
-REAL_AGENT_IDS = frozenset(
-    {"chalk_anchor", "game_script_architect", "matchup_purist", "arbitrageur", "explosion_shootout", "volatility_engine"}
-)
+# Every agent that has ever been logged: the retired legacy five keep their records, and the pool
+# agents (ADR-0046 redesign) start tracking from the week they first ran.
+REAL_AGENT_IDS = ALL_AGENT_IDS
 
 
 @dataclass(frozen=True)

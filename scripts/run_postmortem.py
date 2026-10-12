@@ -36,10 +36,12 @@ import warnings
 import nfl_data_py as nfl
 
 from nfl_dfs.ingestion.offense_actual_scoring import fetch_weekly_player_stats
+from nfl_dfs.storage.agent_results_store import save_agent_results
 from nfl_dfs.storage.build_artifact_store import load_latest_build_artifact
 from nfl_dfs.storage.contest_results_store import read_contest_results
 from nfl_dfs.storage.slate_snapshot_store import load_latest_slate_snapshot
 from nfl_dfs.tracking.agent_results_collector import score_and_backfill_agent_results
+from nfl_dfs.tracking.redesign_agent_log import build_redesign_agent_rows
 from nfl_dfs.tracking.postmortem.actual_points import actual_points_by_canonical_id
 from nfl_dfs.tracking.postmortem.redesign_outcomes import score_redesign_lineups
 from nfl_dfs.tracking.postmortem.replay import run_postmortem
@@ -73,6 +75,14 @@ def main() -> None:
         print(f"Chalk comparison: our best {report.chalk_comparison.our_actual}, chalk {report.chalk_comparison.chalk_actual}")
     elif report.chalk_comparison:
         print(f"Chalk comparison unavailable: {report.chalk_comparison.reason}")
+
+    # Start (idempotently) tracking the redesign pool agents from the week they first ran, before the
+    # backfill below scores every logged row for this week.
+    snapshot_for_log = load_latest_slate_snapshot(SEASON, WEEK)
+    if artifact is not None and snapshot_for_log is not None:
+        new_rows = build_redesign_agent_rows(artifact, snapshot_for_log["player_pool"], SEASON, WEEK)
+        save_agent_results(new_rows)
+        print(f"Logged {len(new_rows)} redesign agent row(s) to agent_results.csv (idempotent).")
 
     backfill = score_and_backfill_agent_results(SEASON, WEEK, weekly=weekly, pbp=pbp)
     backfilled_count = sum(1 for r in backfill.scored if r.total_dk_score is not None)

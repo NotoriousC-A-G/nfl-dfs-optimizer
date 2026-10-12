@@ -23,6 +23,7 @@ import html
 from nfl_dfs.storage.contest_results_store import ContestResult
 from nfl_dfs.tracking.postmortem.redesign_outcomes import RedesignLineupOutcome
 from nfl_dfs.tracking.postmortem.models import LineupOutcome, PlayerContext, PlayerOutcome, PostMortemReport
+from nfl_dfs.tracking.agent_roster import agent_display_name, is_active_agent
 from nfl_dfs.tracking.season_record import SeasonRecord
 
 _STYLE = """
@@ -158,7 +159,7 @@ def _render_roster_table(players: tuple[PlayerOutcome, ...]) -> str:
     )
 
 
-def _render_lineup_table(lineup_outcomes: tuple[LineupOutcome, ...]) -> str:
+def _lineup_rows(lineup_outcomes: tuple[LineupOutcome, ...]) -> tuple[list[str], int]:
     scored = sorted((lo for lo in lineup_outcomes if lo.actual_total is not None), key=lambda lo: -lo.actual_total)
     unscored = [lo for lo in lineup_outcomes if lo.actual_total is None]
     rows = []
@@ -176,16 +177,34 @@ def _render_lineup_table(lineup_outcomes: tuple[LineupOutcome, ...]) -> str:
             f"{_render_roster_table(lo.players)}"
             "</details></td></tr>"
         )
+    return rows, len(unscored)
+
+
+_LINEUP_THEAD = "<thead><tr><th>Lineup</th><th>Actual</th><th>Proj</th><th>Delta</th></tr></thead>"
+
+
+def _render_lineup_table(
+    lineup_outcomes: tuple[LineupOutcome, ...], archived_outcomes: tuple[LineupOutcome, ...] = ()
+) -> str:
+    rows, n_unscored = _lineup_rows(lineup_outcomes)
     note = (
-        f'<p class="note">{len(unscored)} lineup(s) not fully scored yet '
+        f'<p class="note">{n_unscored} lineup(s) not fully scored yet '
         f"(games not settled, or a name-match miss).</p>"
-        if unscored
+        if n_unscored
         else ""
     )
+    archive = ""
+    if archived_outcomes:
+        archived_rows, _ = _lineup_rows(archived_outcomes)
+        archive = (
+            "<details><summary>"
+            f"Archived agents ({len(archived_outcomes)}) -- retired or superseded, kept for historical comparison"
+            f"</summary><table>{_LINEUP_THEAD}<tbody>{''.join(archived_rows)}</tbody></table></details>"
+        )
     return (
         "<h2>Lineup Outcomes</h2><div class=\"card\"><table>"
-        "<thead><tr><th>Lineup</th><th>Actual</th><th>Proj</th><th>Delta</th></tr></thead>"
-        f"<tbody>{''.join(rows)}</tbody></table>{note}</div>"
+        f"{_LINEUP_THEAD}"
+        f"<tbody>{''.join(rows)}</tbody></table>{note}{archive}</div>"
     )
 
 
@@ -276,15 +295,10 @@ def _render_contest_results(contest_results: tuple[ContestResult, ...]) -> str:
     )
 
 
-def _render_season_records(season_records: tuple[SeasonRecord, ...]) -> str:
-    if not season_records:
-        return ""
-    from nfl_dfs.agents.registry import NFL_AGENTS
-
-    agent_display_names = {a.agent_id: a.display_name for a in NFL_AGENTS}
+def _season_record_rows(season_records: tuple[SeasonRecord, ...]) -> str:
     rows = []
     for r in season_records:
-        label = r.agent_id if r.is_operator_lineup else agent_display_names.get(r.agent_id, r.agent_id)
+        label = r.agent_id if r.is_operator_lineup else agent_display_name(r.agent_id)
         basis_cls = "real" if r.basis == "real" else "est"
         basis_title = "Real DK contest entries" if r.basis == "real" else "Interpolated against the real contests you entered"
         cash_record = f"{r.contest_cashes}/{r.contest_entries}" if r.contest_entries else "--"
@@ -297,14 +311,34 @@ def _render_season_records(season_records: tuple[SeasonRecord, ...]) -> str:
             f"<td class=\"num {delta_cls}\">{'' if r.avg_delta is None else f'{r.avg_delta:+.1f}'}</td>"
             f"<td class=\"num\">{best}</td></tr>"
         )
+    return "".join(rows)
+
+
+_SEASON_THEAD = (
+    "<thead><tr><th>Lineup / Agent</th><th>W-L (would-cash)</th>"
+    "<th>Cashed</th><th>Avg Delta</th><th>Best Week</th></tr></thead>"
+)
+
+
+def _render_season_records(season_records: tuple[SeasonRecord, ...]) -> str:
+    if not season_records:
+        return ""
+    active = tuple(r for r in season_records if r.is_operator_lineup or is_active_agent(r.agent_id))
+    archived = tuple(r for r in season_records if not (r.is_operator_lineup or is_active_agent(r.agent_id)))
+    archive = ""
+    if archived:
+        archive = (
+            "<details><summary>"
+            f"Archived agents ({len(archived)}) -- retired or superseded, records kept"
+            f"</summary><table>{_SEASON_THEAD}<tbody>{_season_record_rows(archived)}</tbody></table></details>"
+        )
     return (
         "<h2>Season Record (L1/L2/L3 individually + the 6 agents)</h2>"
-        '<div class="card"><table><thead><tr><th>Lineup / Agent</th><th>W-L (would-cash)</th>'
-        "<th>Cashed</th><th>Avg Delta</th><th>Best Week</th></tr></thead>"
-        f"<tbody>{''.join(rows)}</tbody></table>"
+        f'<div class="card"><table>{_SEASON_THEAD}<tbody>{_season_record_rows(active)}</tbody></table>{archive}'
         '<p class="note">"real" = your own DK contest entries. "est" = an agent never actually '
         "entered -- cash outcome is interpolated against the same real contests you played that "
-        "week.</p></div>"
+        "week. The five pool agents track from week 5 (the redesign); the retired agents keep "
+        "their earlier records.</p></div>"
     )
 
 
@@ -410,7 +444,7 @@ def render_postmortem_html(
 <body>
 <h1>Postmortem -- Season {report.season}, Week {report.week}</h1>
 <p class="meta">{len(report.lineup_outcomes)} lineup(s) tracked.</p>
-{_render_lineup_table(report.lineup_outcomes)}
+{_render_lineup_table(report.lineup_outcomes, report.archived_lineup_outcomes)}
 {_render_season_records(season_records)}
 {_render_contest_results(contest_results)}
 {_render_redesign_outcomes(redesign_outcomes)}

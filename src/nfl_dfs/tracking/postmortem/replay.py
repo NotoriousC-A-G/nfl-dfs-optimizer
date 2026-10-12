@@ -16,6 +16,7 @@ from nfl_dfs.normalization.team_aliases import normalize_team
 from nfl_dfs.storage.agent_results_store import read_agent_results
 from nfl_dfs.storage.slate_snapshot_store import load_latest_slate_snapshot
 from nfl_dfs.tracking.name_matching import normalize_player_name, parse_player_token
+from nfl_dfs.tracking.agent_roster import agent_display_name, is_active_agent
 from nfl_dfs.tracking.postmortem.actual_points import actual_points_by_canonical_id
 from nfl_dfs.tracking.postmortem.chalk import build_chalk_lineup
 from nfl_dfs.tracking.postmortem.exposure import (
@@ -155,8 +156,8 @@ def _redesign_lineup_outcomes(
             stack_teams = {p.team for p in players if p.canonical_id in stack}
             outcomes.append(
                 LineupOutcome(
-                    agent_id=f"redesign:{agent_id}",
-                    label=f"{agent_id.replace('_', ' ').title()} (redesign)",
+                    agent_id=agent_id,
+                    label=agent_display_name(agent_id),
                     players=tuple(players),
                     projected_total=round(projected_total, 2),
                     actual_total=round(actual_total, 2) if actual_total is not None else None,
@@ -268,6 +269,12 @@ def run_postmortem(
             build_artifact, player_pool, actual_by_id, context_by_id, settled_teams, settled_ids
         )
 
+    # Retired agents (see `tracking/agent_roster.py`) stay on the page, in an archive drawer, but the
+    # week's analytics -- best lineup/chalk comparison, missed players, exposure, positional bias,
+    # stack reviews -- describe the live roster only.
+    archived_outcomes = tuple(lo for lo in lineup_outcomes if not is_active_agent(lo.agent_id))
+    lineup_outcomes = [lo for lo in lineup_outcomes if is_active_agent(lo.agent_id)]
+
     scored_lineups = [lo for lo in lineup_outcomes if lo.actual_total is not None]
     our_best = max(scored_lineups, key=lambda lo: lo.actual_total) if scored_lineups else None
     chalk_comparison = build_chalk_lineup(player_pool, actual_by_id, our_best=our_best)
@@ -310,6 +317,7 @@ def run_postmortem(
         season=season,
         week=week,
         lineup_outcomes=lineup_outcomes_t,
+        archived_lineup_outcomes=archived_outcomes,
         top_performers=top_performers,
         missed_players=missed_players,
         chalk_comparison=chalk_comparison,

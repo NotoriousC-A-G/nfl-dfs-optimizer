@@ -288,8 +288,8 @@ def test_redesign_lineups_become_lineup_outcomes_with_build_projections():
     }
     (lo,) = _redesign_lineup_outcomes(artifact, pool, {"00-1": 20.0, "00-2": 10.0}, {}, set(), set())
 
-    assert lo.agent_id == "redesign:contrarian_game"
-    assert lo.label == "Contrarian Game (redesign)"
+    assert lo.agent_id == "contrarian_game"
+    assert lo.label == "Contrarian Game"
     assert [p.projected for p in lo.players] == [12.0, 15.0]  # adjusted where present, else pool
     assert lo.projected_total == 27.0
     assert lo.actual_total == 30.0
@@ -311,5 +311,30 @@ def test_run_postmortem_includes_redesign_lineups_only_when_artifact_given(tmp_p
     without = run_postmortem(2026, 5, weekly=weekly, pbp=pbp)
     with_artifact = run_postmortem(2026, 5, weekly=weekly, pbp=pbp, build_artifact=artifact)
 
-    assert not any(lo.agent_id.startswith("redesign:") for lo in without.lineup_outcomes)
-    assert [lo.agent_id for lo in with_artifact.lineup_outcomes if lo.agent_id.startswith("redesign:")] == ["redesign:chalk_pivot"]
+    assert "chalk_pivot" not in [lo.agent_id for lo in without.lineup_outcomes]
+    assert "chalk_pivot" in [lo.agent_id for lo in with_artifact.lineup_outcomes]
+
+
+def test_retired_agents_go_to_archive_and_out_of_analytics(monkeypatch):
+    pool = [_pool_row("00-1", "A Player", "GB", "WR", 5000), _pool_row("00-2", "B Player", "GB", "WR", 5000)]
+    snapshot = {
+        "player_pool": pool,
+        "agent_lineups": [
+            _agent_lineup_entry("chalk_anchor", [("00-1", "A Player", "GB", "WR", 5000, 10.0)]),
+            _agent_lineup_entry("arbitrageur", [("00-2", "B Player", "GB", "WR", 5000, 10.0)]),
+        ],
+    }
+    monkeypatch.setattr("nfl_dfs.tracking.postmortem.replay.load_latest_slate_snapshot", lambda s, w: snapshot)
+    monkeypatch.setattr("nfl_dfs.tracking.postmortem.replay.read_agent_results", lambda **k: [])
+    weekly = pd.DataFrame(
+        [_weekly_row("A Player", "GB", receptions=5, receiving_yards=50.0, week=5), _weekly_row("B Player", "GB", receptions=4, receiving_yards=40.0, week=5)]
+    )
+    weekly["player_id"] = ["00-1", "00-2"]
+    pbp = pd.DataFrame([_pbp_row("GB", week=5), _pbp_row("SEA", week=5)])
+
+    report = run_postmortem(2026, 5, weekly=weekly, pbp=pbp)
+
+    assert [lo.agent_id for lo in report.lineup_outcomes] == ["chalk_anchor"]
+    assert [lo.agent_id for lo in report.archived_lineup_outcomes] == ["arbitrageur"]
+    # the retired agent's player isn't counted as "rostered" -> still a missed player if he scored
+    assert "B Player" not in {p.display_name for p in report.player_exposure}
