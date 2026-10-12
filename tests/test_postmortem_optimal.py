@@ -78,3 +78,34 @@ def test_renderer_shows_total_and_handles_missing():
     report = PostMortemReport(season=2026, week=5, lineup_outcomes=(), top_performers=(), missed_players=(), optimal=compute_optimal_lineup(_pool(), ACTUAL))
     html = _render_optimal(report)
     assert "Optimal Lineup" in html and "perfect hindsight" in html
+
+
+def _po(cid, pos, salary):
+    from nfl_dfs.tracking.postmortem.models import PlayerOutcome
+
+    return PlayerOutcome(cid, cid, "AAA", pos, salary, 10.0, 10.0, 0.0)
+
+
+def _nine(extra_pos):
+    base = {"QB": ["q"], "RB": ["r1", "r2"], "WR": ["w1", "w2", "w3"], "TE": ["t1"], "DST": ["d"]}
+    base[extra_pos] = base[extra_pos] + ["extra"]
+    sal = {"extra": 3500}
+    return tuple(_po(c, pos, sal.get(c, 5000)) for pos, ids in base.items() for c in ids)
+
+
+def test_flex_slot_is_labeled_for_the_lowest_salary_player_at_the_extra_position():
+    from nfl_dfs.tracking.postmortem_renderer import _in_roster_order
+
+    for extra_pos in ("RB", "WR", "TE"):
+        order = _in_roster_order(_nine(extra_pos))
+        flex = [p.canonical_id for slot, p in order if slot == "FLEX"]
+        assert flex == ["extra"]
+        assert [slot for slot, _ in order].count("FLEX") == 1
+        assert order[-2][0] == "FLEX" and order[-1][0] == "DST"  # FLEX sits just before DST
+
+
+def test_existing_flex_labels_are_left_alone():
+    from nfl_dfs.tracking.postmortem_renderer import _in_roster_order
+
+    players = tuple(_po(f"p{i}", pos, 5000) for i, pos in enumerate(["QB", "RB", "RB", "WR", "WR", "WR", "TE", "FLEX", "DST"]))
+    assert [slot for slot, _ in _in_roster_order(players)] == ["QB", "RB", "RB", "WR", "WR", "WR", "TE", "FLEX", "DST"]
