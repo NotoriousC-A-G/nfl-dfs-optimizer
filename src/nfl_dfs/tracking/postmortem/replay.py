@@ -16,6 +16,7 @@ from nfl_dfs.normalization.team_aliases import normalize_team
 from nfl_dfs.storage.agent_results_store import read_agent_results
 from nfl_dfs.storage.slate_snapshot_store import load_latest_slate_snapshot
 from nfl_dfs.tracking.name_matching import normalize_player_name, parse_player_token
+from nfl_dfs.tracking.agent_roster import agent_display_name, is_active_agent
 from nfl_dfs.tracking.postmortem.actual_points import actual_points_by_canonical_id
 from nfl_dfs.tracking.postmortem.chalk import build_chalk_lineup
 from nfl_dfs.tracking.postmortem.exposure import (
@@ -107,6 +108,68 @@ def _agent_lineup_outcomes(
     return outcomes
 
 
+def _redesign_lineup_outcomes(
+    artifact: dict,
+    player_pool: list[dict],
+    actual_by_id: dict[str, float],
+    context_by_id: dict,
+    settled_teams: set[str],
+    settled_ids: set[str],
+) -> list[LineupOutcome]:
+    """The redesigned pipeline's lineups (saved build artifact, ADR-0046) as `LineupOutcome`s, so
+    they sit in the same tables as the legacy agents and Chris's own lineups. These are never
+    entered -- like the legacy agents they're graded, not logged. Per-player `projected` is the
+    build's own number: the opportunity-adjusted projection where one exists, else the pool's
+    (these sum exactly to the lineup's saved `projected`)."""
+    pool_by_id = {(row.get("identity") or {}).get("canonical_id"): row for row in player_pool}
+    adjusted = artifact.get("opportunity_adjustments") or {}
+    outcomes = []
+    for agent_id, agent in (artifact.get("agents") or {}).items():
+        for lineup in agent.get("lineups") or []:
+            players = []
+            for cid in lineup.get("player_ids", []):
+                row = pool_by_id.get(cid) or {}
+                team, position = row.get("team", ""), row.get("position", "")
+                actual, did_not_play = _resolve_actual(
+                    actual_by_id.get(cid), canonical_id=cid, position=position, team=team,
+                    settled_teams=settled_teams, settled_ids=settled_ids,
+                )
+                projected = (adjusted.get(cid) or {}).get("adjusted_projection", row.get("projection") or 0.0)
+                players.append(
+                    PlayerOutcome(
+                        canonical_id=cid,
+                        display_name=(row.get("identity") or {}).get("display_name", cid),
+                        team=team,
+                        position=position,
+                        salary=row.get("salary"),
+                        projected=projected,
+                        actual=actual,
+                        delta=(actual - projected) if actual is not None else None,
+                        did_not_play=did_not_play,
+                        context=context_by_id.get(cid),
+                    )
+                )
+            unresolved = tuple(p.display_name for p in players if p.actual is None)
+            actual_total = None if unresolved else sum(p.actual for p in players)
+            projected_total = lineup.get("projected") or sum(p.projected for p in players)
+            stack = tuple(lineup.get("stack") or ())
+            stack_teams = {p.team for p in players if p.canonical_id in stack}
+            outcomes.append(
+                LineupOutcome(
+                    agent_id=agent_id,
+                    label=agent_display_name(agent_id),
+                    players=tuple(players),
+                    projected_total=round(projected_total, 2),
+                    actual_total=round(actual_total, 2) if actual_total is not None else None,
+                    delta=round(actual_total - projected_total, 2) if actual_total is not None else None,
+                    unresolved_players=unresolved,
+                    core_stack=stack,
+                    core_stack_team=next(iter(stack_teams)) if len(stack_teams) == 1 else None,
+                )
+            )
+    return outcomes
+
+
 def _operator_lineup_outcomes(
     season: int,
     week: int,
@@ -175,7 +238,9 @@ def _operator_lineup_outcomes(
     return outcomes
 
 
-def run_postmortem(season: int, week: int, *, weekly: pd.DataFrame, pbp: pd.DataFrame) -> PostMortemReport | None:
+def run_postmortem(
+    season: int, week: int, *, weekly: pd.DataFrame, pbp: pd.DataFrame, build_artifact: dict | None = None
+) -> PostMortemReport | None:
     """Returns `None` when no slate snapshot exists for `(season, week)` -- nothing to build a
     postmortem from (the live script hasn't been run with the snapshot-persistence commit, or
     hasn't been run at all for this week)."""
@@ -199,6 +264,16 @@ def run_postmortem(season: int, week: int, *, weekly: pd.DataFrame, pbp: pd.Data
         snapshot, actual_by_id, context_by_id, settled_teams, settled_ids
     ) + _operator_lineup_outcomes(season, week, player_pool, offensive_points, dst_points, context_by_id, settled_teams, settled_ids
     )
+    if build_artifact is not None:
+        lineup_outcomes += _redesign_lineup_outcomes(
+            build_artifact, player_pool, actual_by_id, context_by_id, settled_teams, settled_ids
+        )
+
+    # Retired agents (see `tracking/agent_roster.py`) stay on the page, in an archive drawer, but the
+    # week's analytics -- best lineup/chalk comparison, missed players, exposure, positional bias,
+    # stack reviews -- describe the live roster only.
+    archived_outcomes = tuple(lo for lo in lineup_outcomes if not is_active_agent(lo.agent_id))
+    lineup_outcomes = [lo for lo in lineup_outcomes if is_active_agent(lo.agent_id)]
 
     scored_lineups = [lo for lo in lineup_outcomes if lo.actual_total is not None]
     our_best = max(scored_lineups, key=lambda lo: lo.actual_total) if scored_lineups else None
@@ -242,6 +317,7 @@ def run_postmortem(season: int, week: int, *, weekly: pd.DataFrame, pbp: pd.Data
         season=season,
         week=week,
         lineup_outcomes=lineup_outcomes_t,
+        archived_lineup_outcomes=archived_outcomes,
         top_performers=top_performers,
         missed_players=missed_players,
         chalk_comparison=chalk_comparison,

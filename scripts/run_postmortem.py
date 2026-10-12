@@ -36,10 +36,12 @@ import warnings
 import nfl_data_py as nfl
 
 from nfl_dfs.ingestion.offense_actual_scoring import fetch_weekly_player_stats
+from nfl_dfs.storage.agent_results_store import save_agent_results
 from nfl_dfs.storage.build_artifact_store import load_latest_build_artifact
 from nfl_dfs.storage.contest_results_store import read_contest_results
 from nfl_dfs.storage.slate_snapshot_store import load_latest_slate_snapshot
 from nfl_dfs.tracking.agent_results_collector import score_and_backfill_agent_results
+from nfl_dfs.tracking.redesign_agent_log import build_chalk_anchor_row, build_redesign_agent_rows
 from nfl_dfs.tracking.postmortem.actual_points import actual_points_by_canonical_id
 from nfl_dfs.tracking.postmortem.redesign_outcomes import score_redesign_lineups
 from nfl_dfs.tracking.postmortem.replay import run_postmortem
@@ -59,7 +61,8 @@ def main() -> None:
         weekly = fetch_weekly_player_stats(SEASON)
         pbp = nfl.import_pbp_data([SEASON], include_participation=False)
 
-    report = run_postmortem(SEASON, WEEK, weekly=weekly, pbp=pbp)
+    artifact = load_latest_build_artifact(SEASON, WEEK)
+    report = run_postmortem(SEASON, WEEK, weekly=weekly, pbp=pbp, build_artifact=artifact)
     if report is None:
         print(f"No slate snapshot found for season={SEASON} week={WEEK} -- run live_integration_check_dashboard.py first.")
         return
@@ -73,6 +76,19 @@ def main() -> None:
     elif report.chalk_comparison:
         print(f"Chalk comparison unavailable: {report.chalk_comparison.reason}")
 
+    # Start (idempotently) tracking the redesign pool agents from the week they first ran, before the
+    # backfill below scores every logged row for this week.
+    snapshot_for_log = load_latest_slate_snapshot(SEASON, WEEK)
+    if artifact is not None and snapshot_for_log is not None:
+        new_rows = build_redesign_agent_rows(artifact, snapshot_for_log["player_pool"], SEASON, WEEK)
+        save_agent_results(new_rows)
+        print(f"Logged {len(new_rows)} redesign agent row(s) to agent_results.csv (idempotent).")
+    if snapshot_for_log is not None:
+        chalk_anchor_row = build_chalk_anchor_row(snapshot_for_log, SEASON, WEEK)
+        if chalk_anchor_row is not None:
+            save_agent_results([chalk_anchor_row])
+            print("Logged Chalk Anchor to agent_results.csv (idempotent).")
+
     backfill = score_and_backfill_agent_results(SEASON, WEEK, weekly=weekly, pbp=pbp)
     backfilled_count = sum(1 for r in backfill.scored if r.total_dk_score is not None)
     print(f"Backfilled agent_results.csv: {backfilled_count}/{len(backfill.scored)} row(s) scored for season={SEASON} week={WEEK}.")
@@ -84,7 +100,6 @@ def main() -> None:
     print(f"{len(contest_results)} real contest entries this week; {len(season_records)} season-to-date records.")
 
     redesign_outcomes: tuple = ()
-    artifact = load_latest_build_artifact(SEASON, WEEK)
     snapshot = load_latest_slate_snapshot(SEASON, WEEK)
     if artifact is not None and snapshot is not None:
         pool = snapshot["player_pool"]

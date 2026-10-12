@@ -197,3 +197,6 @@ class PostMortemReport:
     player_exposure: tuple[PlayerExposure, ...] = field(default_factory=tuple)
     positional_deltas: tuple[PositionalDelta, ...] = field(default_factory=tuple)
     stack_thesis_reviews: tuple[StackThesisReview, ...] = field(default_factory=tuple)
+    # Retired agents' lineups for this week (kept for historical comparison, shown in a drawer;
+    # excluded from every analytic above).
+    archived_lineup_outcomes: tuple[LineupOutcome, ...] = field(default_factory=tuple)

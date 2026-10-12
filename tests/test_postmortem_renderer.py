@@ -258,3 +258,16 @@ def test_roster_table_labels_a_did_not_play_zero_so_it_is_not_read_as_a_bust():
     assert 'class="tag dnp"' in inactive_cell
     active_cell = roster_html.split("Active Guy")[1].split("</td>")[0]
     assert "DNP" not in active_cell
+
+
+def test_season_record_puts_retired_agents_in_an_archive_drawer():
+    from nfl_dfs.tracking.postmortem_renderer import _render_season_records
+    from nfl_dfs.tracking.season_record import SeasonRecord
+
+    def rec(agent_id, operator=False):
+        return SeasonRecord(agent_id, operator, 1, 0.0, (5, 100.0), (5, 100.0), 0, 1, 0, "real" if operator else "estimated")
+
+    html = _render_season_records((rec("L1", True), rec("chalk_pivot"), rec("arbitrageur")))
+    main, _, drawer = html.partition("<details>")
+    assert "Chalk Pivot" in main and "L1" in main and "Arbitrageur" not in main
+    assert "Archived agents (1)" in drawer and "Arbitrageur" in drawer
