@@ -41,3 +41,23 @@ def build_redesign_agent_rows(artifact: dict, player_pool: list[dict], season: i
                 )
             )
     return rows
+
+
+def build_chalk_anchor_row(snapshot: dict, season: int, week: int) -> AgentResultRow | None:
+    """Chalk Anchor -- still live after the redesign, but not part of the pool build artifact: it's
+    the legacy projection-max baseline, emitted in the slate snapshot's `agent_lineups`. Logged the
+    same way (idempotent via `save_agent_results`). None when the snapshot has no Chalk Anchor lineup."""
+    for entry in snapshot.get("agent_lineups") or []:
+        if (entry.get("agent") or {}).get("agent_id") != "chalk_anchor":
+            continue
+        lineup = entry["lineup"]
+        return AgentResultRow(
+            season=season,
+            week=week,
+            agent_id="chalk_anchor",
+            strategy_name="Chalk Anchor",
+            proj_total=round(lineup["total_projected_points"], 2),
+            salary=int(lineup["total_salary"]),
+            players=tuple(f"{p['display_name']} ({p['position']}-{p['team']})" for p in lineup["players"]),
+        )
+    return None

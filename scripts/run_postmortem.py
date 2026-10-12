@@ -41,7 +41,7 @@ from nfl_dfs.storage.build_artifact_store import load_latest_build_artifact
 from nfl_dfs.storage.contest_results_store import read_contest_results
 from nfl_dfs.storage.slate_snapshot_store import load_latest_slate_snapshot
 from nfl_dfs.tracking.agent_results_collector import score_and_backfill_agent_results
-from nfl_dfs.tracking.redesign_agent_log import build_redesign_agent_rows
+from nfl_dfs.tracking.redesign_agent_log import build_chalk_anchor_row, build_redesign_agent_rows
 from nfl_dfs.tracking.postmortem.actual_points import actual_points_by_canonical_id
 from nfl_dfs.tracking.postmortem.redesign_outcomes import score_redesign_lineups
 from nfl_dfs.tracking.postmortem.replay import run_postmortem
@@ -83,6 +83,11 @@ def main() -> None:
         new_rows = build_redesign_agent_rows(artifact, snapshot_for_log["player_pool"], SEASON, WEEK)
         save_agent_results(new_rows)
         print(f"Logged {len(new_rows)} redesign agent row(s) to agent_results.csv (idempotent).")
+    if snapshot_for_log is not None:
+        chalk_anchor_row = build_chalk_anchor_row(snapshot_for_log, SEASON, WEEK)
+        if chalk_anchor_row is not None:
+            save_agent_results([chalk_anchor_row])
+            print("Logged Chalk Anchor to agent_results.csv (idempotent).")
 
     backfill = score_and_backfill_agent_results(SEASON, WEEK, weekly=weekly, pbp=pbp)
     backfilled_count = sum(1 for r in backfill.scored if r.total_dk_score is not None)

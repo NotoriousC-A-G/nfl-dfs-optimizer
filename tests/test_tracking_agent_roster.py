@@ -36,3 +36,24 @@ def test_build_redesign_agent_rows_logs_first_lineup_with_tokens():
     assert (row.agent_id, row.strategy_name, row.proj_total, row.salary) == ("chalk_pivot", "Chalk Pivot", 20.12, 49900)
     assert row.players == ("A Player (WR-GB)", "Packers (DST-GB)")
     assert row.total_dk_score is None
+
+
+def test_build_chalk_anchor_row_reads_the_snapshot_agent_lineup():
+    from nfl_dfs.tracking.redesign_agent_log import build_chalk_anchor_row
+
+    snapshot = {
+        "agent_lineups": [
+            {"agent": {"agent_id": "arbitrageur"}, "lineup": {"total_projected_points": 1.0, "total_salary": 1, "players": []}},
+            {
+                "agent": {"agent_id": "chalk_anchor"},
+                "lineup": {
+                    "total_projected_points": 161.666,
+                    "total_salary": 50000,
+                    "players": [{"display_name": "A Player", "position": "WR", "team": "GB"}],
+                },
+            },
+        ]
+    }
+    row = build_chalk_anchor_row(snapshot, 2026, 5)
+    assert (row.agent_id, row.proj_total, row.salary, row.players) == ("chalk_anchor", 161.67, 50000, ("A Player (WR-GB)",))
+    assert build_chalk_anchor_row({"agent_lineups": []}, 2026, 5) is None
