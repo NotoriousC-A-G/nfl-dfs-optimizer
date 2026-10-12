@@ -24,6 +24,7 @@ from nfl_dfs.tracking.postmortem.exposure import (
     compute_positional_deltas,
     compute_stack_thesis_reviews,
 )
+from nfl_dfs.tracking.postmortem.optimal import compute_optimal_lineup
 from nfl_dfs.tracking.postmortem.models import LineupOutcome, PlayerOutcome, PostMortemReport
 from nfl_dfs.tracking.postmortem.player_context import build_player_context_by_id
 from nfl_dfs.tracking.postmortem.retrospective import compute_process_grade, compute_signal_verdicts, extract_ceiling_patterns
@@ -318,6 +319,7 @@ def run_postmortem(
         week=week,
         lineup_outcomes=lineup_outcomes_t,
         archived_lineup_outcomes=archived_outcomes,
+        optimal=compute_optimal_lineup(player_pool, actual_by_id, lineup_outcomes_t),
         top_performers=top_performers,
         missed_players=missed_players,
         chalk_comparison=chalk_comparison,

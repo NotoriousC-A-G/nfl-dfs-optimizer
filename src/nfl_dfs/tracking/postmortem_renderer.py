@@ -342,6 +342,29 @@ def _render_season_records(season_records: tuple[SeasonRecord, ...]) -> str:
     )
 
 
+def _render_optimal(report: PostMortemReport) -> str:
+    opt = report.optimal
+    if opt is None:
+        return ""
+    if opt.infeasible or opt.lineup is None:
+        return f'<h2>Optimal Lineup</h2><div class="card"><p>Unavailable: {html.escape(opt.reason)}</p></div>'
+    fraction_rows = "".join(
+        f"<tr><td>{html.escape(label)}</td><td class=\"num\">{_fmt(actual)}</td>"
+        f"<td class=\"num\">{fraction:.0%}</td><td class=\"num\">{_fmt(opt.optimal_total - actual)}</td></tr>"
+        for label, actual, fraction in opt.fractions
+    )
+    return (
+        f"<h2>Optimal Lineup (perfect hindsight): {_fmt(opt.optimal_total)}</h2>"
+        '<div class="card">'
+        f"{_render_roster_table(opt.lineup.players)}"
+        '<table><thead><tr><th>Our lineup</th><th>Actual</th><th>% of optimal</th><th>Gap</th></tr></thead>'
+        f"<tbody>{fraction_rows}</tbody></table>"
+        f'<p class="note">Best possible under the real roster shape and $50K cap, from players with a real '
+        f"settled score ({opt.unresolved_count} pool players had none -- inactive or unmatched). Ties break "
+        "toward the lower salary.</p></div>"
+    )
+
+
 def _render_exposure(report: PostMortemReport) -> str:
     meaningful = [p for p in report.player_exposure if p.count >= 3]
     if not meaningful:
@@ -450,6 +473,7 @@ def render_postmortem_html(
 {_render_redesign_outcomes(redesign_outcomes)}
 {_render_process_grade(report)}
 {_render_chalk_comparison(report)}
+{_render_optimal(report)}
 {_render_player_table("Top Performers", report.top_performers, "No real settled scores yet.")}
 {_render_player_table("Missed Players (real scorers, not on any of our lineups)", report.missed_players, "No high scorers missed this week.")}
 {_render_exposure(report)}
