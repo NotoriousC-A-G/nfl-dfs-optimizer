@@ -42,6 +42,7 @@ FIELDNAMES = [
     "rank",
     "fpts",
     "winnings",
+    "entry_fee",  # blank when unknown (rows logged before fees were tracked)
 ]
 
 
@@ -57,10 +58,16 @@ class ContestResult:
     rank: int
     fpts: float
     winnings: float
+    entry_fee: float | None = None  # None = not recorded; never guessed
 
     @property
     def cashed(self) -> bool:
         return self.winnings > 0
+
+    @property
+    def net(self) -> float | None:
+        """Winnings minus entry fee, or None when the fee isn't known."""
+        return None if self.entry_fee is None else self.winnings - self.entry_fee
 
 
 def _row_to_csv_dict(row: ContestResult) -> dict[str, str]:
@@ -75,6 +82,7 @@ def _row_to_csv_dict(row: ContestResult) -> dict[str, str]:
         "rank": str(row.rank),
         "fpts": str(row.fpts),
         "winnings": str(row.winnings),
+        "entry_fee": "" if row.entry_fee is None else str(row.entry_fee),
     }
 
 
@@ -90,7 +98,27 @@ def _csv_dict_to_row(d: dict[str, str]) -> ContestResult:
         rank=int(d["rank"]),
         fpts=float(d["fpts"]),
         winnings=float(d["winnings"]),
+        entry_fee=float(d["entry_fee"]) if d.get("entry_fee") else None,
     )
+
+
+def _upgrade_header_if_needed(path: Path) -> None:
+    """Rewrite a CSV written before `entry_fee` existed so appended rows line up with the header."""
+    with open(path, newline="") as f:
+        reader = csv.DictReader(f)
+        if reader.fieldnames == FIELDNAMES:
+            return
+        old_rows = list(reader)
+    write_contest_rows(path, [_csv_dict_to_row(d) for d in old_rows])
+
+
+def write_contest_rows(path: Path, rows: list[ContestResult]) -> None:
+    """Overwrite `path` with exactly `rows` (used for the header upgrade and fee backfills)."""
+    with open(path, "w", newline="") as f:
+        writer = csv.DictWriter(f, fieldnames=FIELDNAMES)
+        writer.writeheader()
+        for row in rows:
+            writer.writerow(_row_to_csv_dict(row))
 
 
 def save_contest_results(rows: list[ContestResult], *, path: Path | None = None) -> Path | None:
@@ -104,6 +132,7 @@ def save_contest_results(rows: list[ContestResult], *, path: Path | None = None)
 
     existing_keys: set[tuple[str, str, str, str, str]] = set()
     if results_path.exists():
+        _upgrade_header_if_needed(results_path)
         with open(results_path, newline="") as f:
             for existing in csv.DictReader(f):
                 existing_keys.add(

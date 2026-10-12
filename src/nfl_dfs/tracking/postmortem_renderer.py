@@ -263,8 +263,12 @@ def _render_contest_results(contest_results: tuple[ContestResult, ...]) -> str:
         for c in sorted(contest_results, key=lambda c: c.rank / c.entries)
     )
     total_winnings = sum(c.winnings for c in contest_results)
+    fee_summary = ""
+    if all(c.entry_fee is not None for c in contest_results):
+        fees = sum(c.entry_fee for c in contest_results)
+        fee_summary = f", ${fees:,.2f} in fees, net ${total_winnings - fees:+,.2f}"
     return (
-        f"<h2>Real Contest Results ({total} entries, {cashed} cashed, ${total_winnings:,.2f})</h2>"
+        f"<h2>Real Contest Results ({total} entries, {cashed} cashed, ${total_winnings:,.2f}{fee_summary})</h2>"
         '<div class="card"><table><thead><tr><th>Lineup</th><th>Contest</th><th>Entries</th>'
         "<th>Rank</th><th>Percentile</th><th>FPTS</th><th>Winnings</th><th>Result</th></tr></thead>"
         f"<tbody>{rows}</tbody></table></div>"
