@@ -101,3 +101,14 @@ def test_parse_projected_ownership_parses_real_nonzero_percent_and_bare_number()
     rows = {row.name: row for row in parse_projected_ownership(payload)}
     assert rows["Chalk Player"].projected_ownership == pytest.approx(41.48)
     assert rows["Zero Owned"].projected_ownership == pytest.approx(0.0)
+
+
+def test_parse_skips_placeholder_row_without_a_player():
+    from nfl_dfs.ingestion.rotogrinders import parse_projected_ownership, parse_user_projections
+
+    payload = {"data": {"source": {
+        "": {"PLAYERID": None, "PARTNERID": None},
+        "1": {"PLAYERID": "1", "PLAYER": "Bo Nix", "POS": "QB", "TEAM": "DEN", "SALARY": "5100", "POWN": "10%"},
+    }}}
+    assert [p.name for p in parse_user_projections(payload)] == ["Bo Nix"]
+    assert [r.name for r in parse_projected_ownership(payload)] == ["Bo Nix"]
