@@ -81,6 +81,10 @@ def parse_user_projections(payload: dict) -> list[SourcePlayer]:
     source = payload.get("data", {}).get("source", {})
     players = []
     for player_id, row in source.items():
+        if "PLAYER" not in row:
+            # Live-confirmed 2026-10-16: the grid carries a stray placeholder row ({"PLAYERID": null,
+            # "PARTNERID": null}, empty key) with no player behind it -- skip it, don't crash the pull.
+            continue
         players.append(
             SourcePlayer(
                 native_id=str(row.get("PLAYERID") or player_id),
@@ -199,6 +203,10 @@ def parse_projected_ownership(payload: dict) -> list[LineupHqOwnershipRow]:
     source = payload.get("data", {}).get("source", {})
     rows = []
     for player_id, row in source.items():
+        if "PLAYER" not in row:
+            # Live-confirmed 2026-10-16: the grid carries a stray placeholder row ({"PLAYERID": null,
+            # "PARTNERID": null}, empty key) with no player behind it -- skip it, don't crash the pull.
+            continue
         salary_raw = row.get("SALARY")
         # Live-confirmed: a handful of non-rosterable-this-slate players (e.g. a kicker with no DK salary
         # line) carry SALARY: null, not a numeric string like every real rosterable player does.
