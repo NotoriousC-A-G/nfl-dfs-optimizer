@@ -18,7 +18,7 @@ from nfl_dfs.ingestion.official_injury_report import fetch_official_injury_repor
 from nfl_dfs.storage.official_injury_snapshot_store import OfficialInjurySnapshot, write_snapshot
 
 SEASON = 2026
-TARGET_WEEK = 5
+TARGET_WEEK = 6
 
 
 def main() -> None:
