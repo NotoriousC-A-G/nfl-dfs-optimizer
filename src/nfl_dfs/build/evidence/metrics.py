@@ -8,7 +8,8 @@ which does not exist for 2026.
 
 Offense-side metrics are named exactly as `build.thesis.contracts.PROXY_METRICS`; defense-side
 counterparts (`def_sack_rate`, `def_qb_hit_rate`: pass rush *generated*; `def_pass_epa`, `def_rush_epa`: EPA
-*allowed* per dropback / per rush, i.e. what the opponent's offense produced against this defense) are evidence only, not valid
+*allowed* per dropback / per rush, i.e. what the opponent's offense produced against this defense; `def_takeaway_rate`:
+turnovers the defense forces per opposing offensive play) are evidence only, not valid
 question proxies. Pace is a draft proxy (seconds between consecutive offensive plays in a drive).
 """
 
@@ -29,6 +30,8 @@ RATE_PARTS: dict[str, tuple[str, str]] = {
     "def_qb_hit_rate": ("def_qb_hits", "def_dropbacks"),
     "def_pass_epa": ("def_pass_epa_sum", "def_pass_epa_n"),
     "def_rush_epa": ("def_rush_epa_sum", "def_rush_epa_n"),
+    "giveaway_rate": ("giveaways", "scrimmage_plays"),
+    "def_takeaway_rate": ("def_takeaways", "def_scrimmage_plays"),
     "pass_epa": ("pass_epa_sum", "pass_epa_n"),
     "rush_epa": ("rush_epa_sum", "rush_epa_n"),
     "pass_rate_over_expected": ("oe_sum", "oe_n"),
@@ -37,7 +40,7 @@ RATE_PARTS: dict[str, tuple[str, str]] = {
 }
 SUM_METRICS = ("total_plays", "rush_attempts_leading", "combined_pass_attempts")  # per-game averages
 FLAG_METRICS = ("lead_at_q3_start", "lead_at_q4")  # share of games
-DEFENSE_METRICS_ALL = ("def_sack_rate", "def_qb_hit_rate", "def_pass_epa", "def_rush_epa")
+DEFENSE_METRICS_ALL = ("def_sack_rate", "def_qb_hit_rate", "def_pass_epa", "def_rush_epa", "def_takeaway_rate")
 OFFENSE_METRICS = tuple(m for m in RATE_PARTS if m not in DEFENSE_METRICS_ALL) + SUM_METRICS + FLAG_METRICS
 DEFENSE_METRICS = DEFENSE_METRICS_ALL
 _PACE_MAX_SECONDS = 45.0
@@ -67,6 +70,7 @@ def team_game_metrics(pbp: pd.DataFrame, *, season_type: str | None = "REG") -> 
         oe = g["pass_oe"]
         pass_epa = g.loc[db, "epa"].dropna()
         rush_epa = g.loc[rush, "epa"].dropna()
+        turnover = (g["interception"].fillna(0) == 1) | (g["fumble_lost"].fillna(0) == 1)  # a giveaway = INT or fumble lost
         oe_all = oe.dropna()
         oe_lead = oe[leading].dropna()
         pace_sum, pace_n = _pace(g)
@@ -80,6 +84,7 @@ def team_game_metrics(pbp: pd.DataFrame, *, season_type: str | None = "REG") -> 
                 "oe_sum": float(oe_all.sum()), "oe_n": int(len(oe_all)),
                 "oe_lead_sum": float(oe_lead.sum()), "oe_lead_n": int(len(oe_lead)),
                 "pace_sum": pace_sum, "pace_n": pace_n,
+                "giveaways": int(turnover.sum()), "scrimmage_plays": len(g),
                 "total_plays": len(g),
                 "rush_attempts_leading": int((rush & (g["score_differential"] >= 4) & (g["qtr"] >= 3)).sum()),
                 "combined_pass_attempts": int(passes.sum()),  # this team's attempts
@@ -91,9 +96,10 @@ def team_game_metrics(pbp: pd.DataFrame, *, season_type: str | None = "REG") -> 
         "team": "opp_team", "sacks": "def_sacks", "qb_hits": "def_qb_hits", "dropbacks": "def_dropbacks",
         "pass_epa_sum": "def_pass_epa_sum", "pass_epa_n": "def_pass_epa_n",
         "rush_epa_sum": "def_rush_epa_sum", "rush_epa_n": "def_rush_epa_n",
+        "giveaways": "def_takeaways", "scrimmage_plays": "def_scrimmage_plays",
     })[
         ["game_id", "opp_team", "def_sacks", "def_qb_hits", "def_dropbacks",
-         "def_pass_epa_sum", "def_pass_epa_n", "def_rush_epa_sum", "def_rush_epa_n"]
+         "def_pass_epa_sum", "def_pass_epa_n", "def_rush_epa_sum", "def_rush_epa_n", "def_takeaways", "def_scrimmage_plays"]
     ]
     out = out.merge(opp, on="game_id")
     out = out[out["team"] != out["opp_team"]].drop(columns="opp_team").reset_index(drop=True)
