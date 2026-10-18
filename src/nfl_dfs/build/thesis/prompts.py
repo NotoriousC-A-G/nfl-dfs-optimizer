@@ -107,6 +107,9 @@ _GLOSSARY = """\
 METRIC GLOSSARY (all season-to-date, pooled; `n` in the packet is the sample behind each value):
 - sack_rate, qb_hit_rate: sacks / QB hits that team's OWN offense takes per dropback (pass protection; higher = worse). The `def_` versions are the
   pass rush that team's DEFENSE generates (evidence only -- NOT usable as a question metric). Both have n = dropbacks.
+- def_pass_epa, def_rush_epa: EPA per dropback / per rush that team's DEFENSE ALLOWS (what opposing offenses produced against it; LOWER = stingier,
+  a percentile near 1.0 means one of the league's worst defenses). Evidence only -- NOT usable as a question metric. Read a matchup by setting one
+  team's pass_epa / rush_epa against the other's def_pass_epa / def_rush_epa.
 - explosive_pass_rate: share of its pass attempts gaining 20+ yards. pass_epa / rush_epa: EPA per dropback / per rush. pass_rate_over_expected
   (and ..._leading, when ahead): points above the pass rate the situation predicts (positive = throws more than expected).
 - pace_seconds_per_play: seconds between consecutive offensive plays (lower = faster).

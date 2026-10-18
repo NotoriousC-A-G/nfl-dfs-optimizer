@@ -340,3 +340,25 @@ def test_a_q_player_counts_as_out_unless_a_decision_cleared_him():
 def test_a_team_missing_from_the_shares_is_named_not_skipped_silently():
     pk = build_evidence_packets(_pool(), _sp(), None, season=2026, week=5, opportunity={"AAA": _opp_table()["AAA"]})["BBB@AAA"]
     assert any("BBB: no play-by-play shares" in g for g in pk.data_gaps)
+
+
+def test_defense_epa_allowed_is_the_opponents_offensive_epa_in_the_same_game():
+    tg = team_game_metrics(_pbp())
+    h = tg[tg["team"] == "HOM"].iloc[0]  # HOM's defense faced AWY's offense: two dropbacks (0.2, -0.2), no rushes
+    assert h["def_pass_epa"] == pytest.approx(0.0) and h["def_pass_epa_n"] == 2
+    assert h["def_rush_epa_n"] == 0 and pd.isna(h["def_rush_epa"])
+    a = tg[tg["team"] == "AWY"].iloc[0]  # AWY's defense faced HOM's offense
+    assert a["def_pass_epa"] == pytest.approx(0.0)  # (1 - 2 + 0 + 1) / 4 -- and equals HOM's own pass_epa
+    assert a["def_rush_epa"] == pytest.approx(0.0) and a["def_rush_epa_n"] == 3
+
+
+def test_def_epa_flows_into_the_packet_as_evidence_only():
+    from nfl_dfs.build.thesis.contracts import PROXY_METRICS
+
+    tg = team_game_metrics(_pbp())
+    pool = [_rec("HOM_qb", "QB HOM", "HOM", "QB", 6000, 20.0), _rec("AWY_qb", "QB AWY", "AWY", "QB", 6000, 19.0)]
+    p = build_evidence_packets(pool, [{"home_team": "HOM", "away_team": "AWY", "spread": -2.0}], tg, season=2026, week=2)["AWY@HOM"]
+    assert {"def_pass_epa", "def_rush_epa"} <= set(p.teams["HOM"].def_metrics)
+    assert "def_pass_epa" not in p.teams["HOM"].metrics
+    assert "units.HOM.def_pass_epa" in packet_keys(p)
+    assert "def_pass_epa" not in PROXY_METRICS and "def_rush_epa" not in PROXY_METRICS

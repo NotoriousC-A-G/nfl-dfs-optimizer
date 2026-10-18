@@ -7,7 +7,8 @@ the 2026 play-by-play are used -- no participation data (time to throw, box coun
 which does not exist for 2026.
 
 Offense-side metrics are named exactly as `build.thesis.contracts.PROXY_METRICS`; defense-side
-counterparts (`def_sack_rate`, `def_qb_hit_rate`: pass rush *generated*) are evidence only, not valid
+counterparts (`def_sack_rate`, `def_qb_hit_rate`: pass rush *generated*; `def_pass_epa`, `def_rush_epa`: EPA
+*allowed* per dropback / per rush, i.e. what the opponent's offense produced against this defense) are evidence only, not valid
 question proxies. Pace is a draft proxy (seconds between consecutive offensive plays in a drive).
 """
 
@@ -26,6 +27,8 @@ RATE_PARTS: dict[str, tuple[str, str]] = {
     "explosive_pass_rate": ("explosive_passes", "pass_attempts"),
     "def_sack_rate": ("def_sacks", "def_dropbacks"),
     "def_qb_hit_rate": ("def_qb_hits", "def_dropbacks"),
+    "def_pass_epa": ("def_pass_epa_sum", "def_pass_epa_n"),
+    "def_rush_epa": ("def_rush_epa_sum", "def_rush_epa_n"),
     "pass_epa": ("pass_epa_sum", "pass_epa_n"),
     "rush_epa": ("rush_epa_sum", "rush_epa_n"),
     "pass_rate_over_expected": ("oe_sum", "oe_n"),
@@ -34,9 +37,9 @@ RATE_PARTS: dict[str, tuple[str, str]] = {
 }
 SUM_METRICS = ("total_plays", "rush_attempts_leading", "combined_pass_attempts")  # per-game averages
 FLAG_METRICS = ("lead_at_q3_start", "lead_at_q4")  # share of games
-DEFENSE_METRICS_ALL = ("def_sack_rate", "def_qb_hit_rate")
+DEFENSE_METRICS_ALL = ("def_sack_rate", "def_qb_hit_rate", "def_pass_epa", "def_rush_epa")
 OFFENSE_METRICS = tuple(m for m in RATE_PARTS if m not in DEFENSE_METRICS_ALL) + SUM_METRICS + FLAG_METRICS
-DEFENSE_METRICS = ("def_sack_rate", "def_qb_hit_rate")
+DEFENSE_METRICS = DEFENSE_METRICS_ALL
 _PACE_MAX_SECONDS = 45.0
 
 
@@ -83,9 +86,14 @@ def team_game_metrics(pbp: pd.DataFrame, *, season_type: str | None = "REG") -> 
             }
         )
     out = pd.DataFrame(rows)
-    # Defense: pass rush generated = what the opponent's offense suffered in the same game.
-    opp = out.rename(columns={"team": "opp_team", "sacks": "def_sacks", "qb_hits": "def_qb_hits", "dropbacks": "def_dropbacks"})[
-        ["game_id", "opp_team", "def_sacks", "def_qb_hits", "def_dropbacks"]
+    # Defense: pass rush generated / EPA allowed = what the opponent's offense suffered / produced in the same game.
+    opp = out.rename(columns={
+        "team": "opp_team", "sacks": "def_sacks", "qb_hits": "def_qb_hits", "dropbacks": "def_dropbacks",
+        "pass_epa_sum": "def_pass_epa_sum", "pass_epa_n": "def_pass_epa_n",
+        "rush_epa_sum": "def_rush_epa_sum", "rush_epa_n": "def_rush_epa_n",
+    })[
+        ["game_id", "opp_team", "def_sacks", "def_qb_hits", "def_dropbacks",
+         "def_pass_epa_sum", "def_pass_epa_n", "def_rush_epa_sum", "def_rush_epa_n"]
     ]
     out = out.merge(opp, on="game_id")
     out = out[out["team"] != out["opp_team"]].drop(columns="opp_team").reset_index(drop=True)
