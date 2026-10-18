@@ -23,6 +23,7 @@ _LABELS = {
     "combined_pass_attempts": "Pass attempts / game", "lead_at_q3_start": "Led entering Q3 (share of games)",
     "lead_at_q4": "Led entering Q4 (share of games)", "def_sack_rate": "Pass rush: sack rate generated",
     "def_qb_hit_rate": "Pass rush: QB-hit rate generated",
+    "def_pass_epa": "Defense: pass EPA / dropback allowed", "def_rush_epa": "Defense: rush EPA / rush allowed",
 }
 _STYLE = """
 <style>
