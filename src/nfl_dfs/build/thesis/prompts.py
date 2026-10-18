@@ -110,6 +110,9 @@ METRIC GLOSSARY (all season-to-date, pooled; `n` in the packet is the sample beh
 - def_pass_epa, def_rush_epa: EPA per dropback / per rush that team's DEFENSE ALLOWS (what opposing offenses produced against it; LOWER = stingier,
   a percentile near 1.0 means one of the league's worst defenses). Evidence only -- NOT usable as a question metric. Read a matchup by setting one
   team's pass_epa / rush_epa against the other's def_pass_epa / def_rush_epa.
+- giveaway_rate: interceptions + fumbles lost per offensive scrimmage play (pass and run plays; higher = more careless offense).
+  def_takeaway_rate: the same events forced by that team's DEFENSE per opposing scrimmage play (higher = more ball-hawking). Both evidence only --
+  NOT usable as question metrics; turnovers are high-variance, so weigh them against their n and treat extremes as partly luck.
 - explosive_pass_rate: share of its pass attempts gaining 20+ yards. pass_epa / rush_epa: EPA per dropback / per rush. pass_rate_over_expected
   (and ..._leading, when ahead): points above the pass rate the situation predicts (positive = throws more than expected).
 - pace_seconds_per_play: seconds between consecutive offensive plays (lower = faster).

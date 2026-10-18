@@ -17,11 +17,12 @@ from nfl_dfs.build.thesis.contracts import PivotalQuestion
 # metrics: a tiny hand-checkable game, HOM vs AWY
 # ---------------------------------------------------------------------------------------------
 def _play(pid, posteam, defteam, play_type, *, dropback=0, sack=0, hit=0, pass_att=0, rush=0, yards=0, epa=0.0, oe=None,
-          diff=0, qtr=1, home=0, away=0, drive=1, gsr=3000.0, week=1):
+          diff=0, qtr=1, home=0, away=0, drive=1, gsr=3000.0, week=1, ints=0, fumbles_lost=0):
     return dict(season=2026, season_type="REG", week=week, game_id=f"g{week}", home_team="HOM", away_team="AWY",
                 posteam=posteam, defteam=defteam, play_type=play_type, qb_dropback=dropback, sack=sack, qb_hit=hit,
                 pass_attempt=pass_att, rush=rush, yards_gained=yards, epa=epa, pass_oe=oe, score_differential=diff, qtr=qtr,
-                total_home_score=home, total_away_score=away, drive=drive, play_id=pid, game_seconds_remaining=gsr)
+                total_home_score=home, total_away_score=away, drive=drive, play_id=pid, game_seconds_remaining=gsr,
+                interception=ints, fumble_lost=fumbles_lost)
 
 
 def _pbp():
@@ -29,7 +30,7 @@ def _pbp():
         # HOM offense: 4 dropbacks (1 sack+hit, 1 explosive 25-yd completion, 2 short), 2 rushes
         _play(1, "HOM", "AWY", "pass", dropback=1, pass_att=1, yards=25, epa=1.0, oe=10.0, diff=0, qtr=1, gsr=3000),
         _play(2, "HOM", "AWY", "pass", dropback=1, sack=1, hit=1, yards=-7, epa=-2.0, oe=20.0, diff=0, qtr=1, gsr=2970),
-        _play(3, "HOM", "AWY", "pass", dropback=1, pass_att=1, yards=5, epa=0.0, oe=-10.0, diff=0, qtr=1, gsr=2940),
+        _play(3, "HOM", "AWY", "pass", dropback=1, pass_att=1, yards=5, epa=0.0, oe=-10.0, diff=0, qtr=1, gsr=2940, ints=1),
         _play(4, "HOM", "AWY", "pass", dropback=1, pass_att=1, yards=3, epa=1.0, oe=0.0, diff=0, qtr=1, gsr=2910),
         _play(5, "HOM", "AWY", "run", rush=1, yards=4, epa=0.5, oe=-30.0, diff=7, qtr=3, home=14, away=7, gsr=1700, drive=2),
         _play(6, "HOM", "AWY", "run", rush=1, yards=2, epa=-0.5, oe=-30.0, diff=7, qtr=3, home=14, away=7, gsr=1670, drive=2),
@@ -37,7 +38,7 @@ def _pbp():
         _play(7, "HOM", "AWY", "run", rush=1, yards=1, epa=0.0, oe=-30.0, diff=7, qtr=4, home=14, away=7, gsr=900, drive=3),
         # AWY offense: 2 dropbacks, no sacks; the opponent (HOM defense) got 0 sacks, so def_sack_rate for HOM = 0
         _play(8, "AWY", "HOM", "pass", dropback=1, pass_att=1, yards=8, epa=0.2, oe=5.0, diff=-7, qtr=3, home=14, away=7, gsr=1600),
-        _play(9, "AWY", "HOM", "pass", dropback=1, pass_att=1, yards=0, epa=-0.2, oe=5.0, diff=-7, qtr=3, home=14, away=7, gsr=1575),
+        _play(9, "AWY", "HOM", "pass", dropback=1, pass_att=1, yards=0, epa=-0.2, oe=5.0, diff=-7, qtr=3, home=14, away=7, gsr=1575, fumbles_lost=1),
     ]
     return pd.DataFrame(rows)
 
@@ -362,3 +363,24 @@ def test_def_epa_flows_into_the_packet_as_evidence_only():
     assert "def_pass_epa" not in p.teams["HOM"].metrics
     assert "units.HOM.def_pass_epa" in packet_keys(p)
     assert "def_pass_epa" not in PROXY_METRICS and "def_rush_epa" not in PROXY_METRICS
+
+
+def test_giveaways_and_takeaways_are_interceptions_plus_fumbles_lost_per_scrimmage_play():
+    tg = team_game_metrics(_pbp())
+    h = tg[tg["team"] == "HOM"].iloc[0]  # HOM threw 1 INT in 7 plays; its defense forced AWY's 1 lost fumble in 2 plays
+    assert h["giveaway_rate"] == pytest.approx(1 / 7)
+    assert h["def_takeaway_rate"] == pytest.approx(1 / 2)
+    a = tg[tg["team"] == "AWY"].iloc[0]
+    assert a["giveaway_rate"] == pytest.approx(1 / 2) and a["def_takeaway_rate"] == pytest.approx(1 / 7)
+    std = season_to_date(tg, "HOM", 2026, 1)
+    assert std["giveaway_rate"] == (pytest.approx(1 / 7), 7) and std["def_takeaway_rate"] == (pytest.approx(0.5), 2)
+
+
+def test_turnover_rates_are_evidence_only():
+    from nfl_dfs.build.thesis.contracts import PROXY_METRICS
+
+    tg = team_game_metrics(_pbp())
+    pool = [_rec("HOM_qb", "QB HOM", "HOM", "QB", 6000, 20.0), _rec("AWY_qb", "QB AWY", "AWY", "QB", 6000, 19.0)]
+    p = build_evidence_packets(pool, [{"home_team": "HOM", "away_team": "AWY", "spread": -2.0}], tg, season=2026, week=2)["AWY@HOM"]
+    assert "giveaway_rate" in p.teams["HOM"].metrics and "def_takeaway_rate" in p.teams["HOM"].def_metrics
+    assert "giveaway_rate" not in PROXY_METRICS and "def_takeaway_rate" not in PROXY_METRICS

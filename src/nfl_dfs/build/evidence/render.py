@@ -14,6 +14,7 @@ from nfl_dfs.build.evidence.contracts import EvidencePacket, MetricValue, packet
 
 _RATE_METRICS = {
     "sack_rate", "qb_hit_rate", "explosive_pass_rate", "def_sack_rate", "def_qb_hit_rate", "lead_at_q3_start", "lead_at_q4",
+    "giveaway_rate", "def_takeaway_rate",
 }
 _LABELS = {
     "sack_rate": "Sack rate (allowed)", "qb_hit_rate": "QB-hit rate (allowed)", "explosive_pass_rate": "Explosive pass rate (20+ yds)",
@@ -23,6 +24,7 @@ _LABELS = {
     "combined_pass_attempts": "Pass attempts / game", "lead_at_q3_start": "Led entering Q3 (share of games)",
     "lead_at_q4": "Led entering Q4 (share of games)", "def_sack_rate": "Pass rush: sack rate generated",
     "def_qb_hit_rate": "Pass rush: QB-hit rate generated",
+    "giveaway_rate": "Giveaway rate (INT + fumbles lost / play)", "def_takeaway_rate": "Defense: takeaway rate (turnovers forced / opp play)",
     "def_pass_epa": "Defense: pass EPA / dropback allowed", "def_rush_epa": "Defense: rush EPA / rush allowed",
 }
 _STYLE = """
