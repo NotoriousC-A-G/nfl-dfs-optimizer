@@ -135,22 +135,43 @@ def _player_name_cell(p: PlayerOutcome) -> str:
 _ROSTER_POSITION_ORDER = {"QB": 0, "RB": 1, "WR": 2, "TE": 3, "FLEX": 4, "DST": 5}
 
 
-def _in_roster_order(players: tuple[PlayerOutcome, ...]) -> list[PlayerOutcome]:
-    """QB-RB-RB-WR-WR-WR-TE-FLEX-DST, matching DK's own roster-slot order -- `lineup.players` in
-    the slate snapshot preserves whatever order the solver happened to emit (confirmed live: not
+def _slot_labels(players: tuple[PlayerOutcome, ...]) -> dict[str, str]:
+    """canonical_id -> DK slot label for the one player who occupies the FLEX slot, when the lineup
+    carries real positions rather than slot labels (the operator's own rows already carry "FLEX").
+    A 9-man lineup has exactly one RB/WR/TE beyond the 2 RB / 3 WR / 1 TE minimums; DK itself doesn't
+    mark which one sits in FLEX, so for display the lowest-salary player at that position is shown
+    there (ties broken by name) -- deterministic, and independent of how anyone scored."""
+    if any(p.position == "FLEX" for p in players):
+        return {}
+    by_pos: dict[str, list[PlayerOutcome]] = {}
+    for p in players:
+        by_pos.setdefault(p.position, []).append(p)
+    for pos, minimum in (("RB", 2), ("WR", 3), ("TE", 1)):
+        group = by_pos.get(pos, [])
+        if len(group) == minimum + 1:
+            flex = min(group, key=lambda p: (p.salary if p.salary is not None else 10**9, p.display_name))
+            return {flex.canonical_id: "FLEX"}
+    return {}
+
+
+def _in_roster_order(players: tuple[PlayerOutcome, ...]) -> list[tuple[str, PlayerOutcome]]:
+    """(slot label, player) in DK roster-slot order, QB-RB-RB-WR-WR-WR-TE-FLEX-DST -- `lineup.players`
+    in the slate snapshot preserves whatever order the solver happened to emit (confirmed live: not
     slot order), so this is a real, needed sort, not just a stable no-op. A stable sort keeps
     same-position players (RB1 vs RB2, WR1 vs WR2 vs WR3) in their original relative order, since
     `PlayerOutcome.position` doesn't carry the slot number, only the position label."""
-    return sorted(players, key=lambda p: _ROSTER_POSITION_ORDER.get(p.position, 99))
+    flex = _slot_labels(players)
+    labeled = [(flex.get(p.canonical_id, p.position), p) for p in players]
+    return sorted(labeled, key=lambda lp: _ROSTER_POSITION_ORDER.get(lp[0], 99))
 
 
 def _render_roster_table(players: tuple[PlayerOutcome, ...]) -> str:
     rows = "".join(
-        f"<tr><td class=\"pos\">{p.position}</td>{_player_name_cell(p)}<td>{p.team}</td>"
+        f"<tr><td class=\"pos\">{slot}</td>{_player_name_cell(p)}<td>{p.team}</td>"
         f"<td class=\"num\">{_salary(p.salary)}</td>"
         f"<td class=\"num\">{_fmt(p.projected)}</td><td class=\"num\">{_fmt(p.actual)}</td>"
         f"<td class=\"num {_delta_class(p.delta)}\">{'--' if p.delta is None else f'{p.delta:+.1f}'}</td></tr>"
-        for p in _in_roster_order(players)
+        for slot, p in _in_roster_order(players)
     )
     return (
         '<table class="roster-table"><thead><tr><th>Pos</th><th>Player</th><th>Team</th><th>Salary</th>'
@@ -342,6 +363,29 @@ def _render_season_records(season_records: tuple[SeasonRecord, ...]) -> str:
     )
 
 
+def _render_optimal(report: PostMortemReport) -> str:
+    opt = report.optimal
+    if opt is None:
+        return ""
+    if opt.infeasible or opt.lineup is None:
+        return f'<h2>Optimal Lineup</h2><div class="card"><p>Unavailable: {html.escape(opt.reason)}</p></div>'
+    fraction_rows = "".join(
+        f"<tr><td>{html.escape(label)}</td><td class=\"num\">{_fmt(actual)}</td>"
+        f"<td class=\"num\">{fraction:.0%}</td><td class=\"num\">{_fmt(opt.optimal_total - actual)}</td></tr>"
+        for label, actual, fraction in opt.fractions
+    )
+    return (
+        f"<h2>Optimal Lineup (perfect hindsight): {_fmt(opt.optimal_total)}</h2>"
+        '<div class="card">'
+        f"{_render_roster_table(opt.lineup.players)}"
+        '<table><thead><tr><th>Our lineup</th><th>Actual</th><th>% of optimal</th><th>Gap</th></tr></thead>'
+        f"<tbody>{fraction_rows}</tbody></table>"
+        f'<p class="note">Best possible under the real roster shape and $50K cap, from players with a real '
+        f"settled score ({opt.unresolved_count} pool players had none -- inactive or unmatched). Ties break "
+        "toward the lower salary.</p></div>"
+    )
+
+
 def _render_exposure(report: PostMortemReport) -> str:
     meaningful = [p for p in report.player_exposure if p.count >= 3]
     if not meaningful:
@@ -450,6 +494,7 @@ def render_postmortem_html(
 {_render_redesign_outcomes(redesign_outcomes)}
 {_render_process_grade(report)}
 {_render_chalk_comparison(report)}
+{_render_optimal(report)}
 {_render_player_table("Top Performers", report.top_performers, "No real settled scores yet.")}
 {_render_player_table("Missed Players (real scorers, not on any of our lineups)", report.missed_players, "No high scorers missed this week.")}
 {_render_exposure(report)}

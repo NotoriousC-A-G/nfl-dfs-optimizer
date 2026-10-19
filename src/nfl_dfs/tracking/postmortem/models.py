@@ -117,6 +117,21 @@ class ChalkComparison:
 
 
 @dataclass(frozen=True)
+class OptimalComparison:
+    """The best possible lineup this week (perfect hindsight, real roster shape + salary cap) and
+    each of our live lineups as a fraction of it."""
+
+    lineup: LineupOutcome | None = None
+    optimal_total: float | None = None
+    # (label, actual_total, fraction_of_optimal), best first
+    fractions: tuple[tuple[str, float, float], ...] = field(default_factory=tuple)
+    # pool players with no real settled score (not candidates -- inactive, or a name-match miss)
+    unresolved_count: int = 0
+    infeasible: bool = False
+    reason: str = ""
+
+
+@dataclass(frozen=True)
 class CeilingPatterns:
     """Actionable patterns extracted from the real high scorers no lineup rostered this week --
     same job as MLB's own `extract_ceiling_patterns`, DK-NFL salary bands and QB/RB/WR/TE/DST
@@ -200,3 +215,4 @@ class PostMortemReport:
     # Retired agents' lineups for this week (kept for historical comparison, shown in a drawer;
     # excluded from every analytic above).
     archived_lineup_outcomes: tuple[LineupOutcome, ...] = field(default_factory=tuple)
+    optimal: OptimalComparison | None = None
