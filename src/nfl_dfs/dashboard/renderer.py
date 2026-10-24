@@ -144,6 +144,7 @@ from datetime import datetime, timezone
 
 from dataclasses import dataclass
 
+from nfl_dfs.dashboard.panels import EMPTY_STATE, PACKETS_EMPTY_STATE
 from nfl_dfs.composition.lineup_dup_risk import LineupDupRiskAssessment
 from nfl_dfs.composition.player_detail import (
     MatchupThisWeek,
@@ -1784,13 +1785,17 @@ _PAGE_TEMPLATE = """<!doctype html>
 <p class="sub">__SUBTITLE__ &middot; generated __GENERATED_AT__</p>
 
 <div class="tabs">
-  <div class="tab active" data-panel="lineups" onclick="showTab('lineups')">Lineups</div>
+  <div class="tab active" data-panel="build" onclick="showTab('build')">Build lineups</div>
+  <div class="tab" data-panel="packets" onclick="showTab('packets')">Evidence packets</div>
+  <div class="tab" data-panel="lineups" onclick="showTab('lineups')">Baseline lineups</div>
   <div class="tab" data-panel="exposure" onclick="showTab('exposure')">Exposure</div>
   <div class="tab" data-panel="players" onclick="showTab('players')">Player Detail</div>
   <div class="tab" data-panel="slate" onclick="showTab('slate')">Slate Overview</div>
 </div>
 
-<div id="panel-lineups" class="panel active">__LINEUPS_HTML__</div>
+<div id="panel-build" class="panel active"><!--build-panel:start-->__BUILD_HTML__<!--build-panel:end--></div>
+<div id="panel-packets" class="panel"><!--packets-panel:start-->__PACKETS_HTML__<!--packets-panel:end--></div>
+<div id="panel-lineups" class="panel">__LINEUPS_HTML__</div>
 <div id="panel-exposure" class="panel">__EXPOSURE_HTML__</div>
 <div id="panel-players" class="panel">__PLAYERS_HTML__</div>
 <div id="panel-slate" class="panel">__SLATE_HTML__</div>
@@ -1825,6 +1830,7 @@ def render_dashboard_html(
     player_details: list[PlayerDetailRecord],
     slate_games: list[SlateGameRow] | None = None,
     dup_risk_by_lineup: dict[int, LineupDupRiskAssessment] | None = None,
+    build_html: str | None = None,
 ) -> str:
     """Render the full weekly dashboard as one self-contained HTML string -- inline CSS, vanilla
     JS for tab-switching and the Player Detail search filter only, no external dependency of any
@@ -1868,6 +1874,8 @@ def render_dashboard_html(
     html_out = html_out.replace("__JS__", _JS)
     html_out = html_out.replace("__SUBTITLE__", subtitle)
     html_out = html_out.replace("__GENERATED_AT__", generated_at)
+    html_out = html_out.replace("__BUILD_HTML__", build_html or EMPTY_STATE)
+    html_out = html_out.replace("__PACKETS_HTML__", PACKETS_EMPTY_STATE)
     html_out = html_out.replace("__LINEUPS_HTML__", lineups_html)
     html_out = html_out.replace("__EXPOSURE_HTML__", exposure_html)
     html_out = html_out.replace("__PLAYERS_HTML__", players_html)

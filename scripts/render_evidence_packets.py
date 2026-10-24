@@ -3,7 +3,7 @@ writes a browsable page and one JSON file per game -- so you can see exactly wha
 be given. Read-only apart from the files below.
 
     PYTHONPATH=. .venv/bin/python scripts/render_evidence_packets.py
-    -> dashboard_output/evidence_packets.html   (open via the dashboard preview server)
+    -> dashboard_output/evidence_packets.html   (standalone copy) and the dashboard's "Evidence packets" tab
     -> dashboard_output/evidence_packets/<AWAY@HOME>.json
 
 SEASON/WEEK come from `live_integration_check_dashboard.py`. Availability decisions and weather are
@@ -27,6 +27,7 @@ from nfl_dfs.build.evidence.builder import build_evidence_packets
 from nfl_dfs.build.evidence.opportunity import trailing_shares
 from nfl_dfs.build.evidence.metrics import team_game_metrics
 from nfl_dfs.build.evidence.render import render_evidence_page
+from nfl_dfs.dashboard.panels import refresh_packets_panel
 from nfl_dfs.storage.slate_snapshot_store import load_latest_slate_snapshot
 from scripts.live_integration_check_dashboard import SEASON, WEEK
 
@@ -52,9 +53,13 @@ def main() -> None:
     for game_id, packet in packets.items():
         (OUT_DIR / "evidence_packets" / f"{game_id}.json").write_text(json.dumps(asdict(packet), indent=2, default=str))
     stamp = dt.datetime.now(dt.timezone.utc).strftime("%Y-%m-%d %H:%MZ")
-    (OUT_DIR / "evidence_packets.html").write_text(
-        render_evidence_page(packets, title=f"Evidence packets -- {SEASON} week {WEEK}", generated_at=f"built {stamp} from snapshot {snapshot.get('snapshot_filename')}")
-    )
+    page = render_evidence_page(packets, title=f"Evidence packets -- {SEASON} week {WEEK}", generated_at=f"built {stamp} from snapshot {snapshot.get('snapshot_filename')}")
+    (OUT_DIR / "evidence_packets.html").write_text(page)
+    try:  # also fill the dashboard's "Evidence packets" tab
+        refresh_packets_panel(str(OUT_DIR / "weekly_dashboard.html"), page)
+        print("Updated the 'Evidence packets' tab in the dashboard")
+    except (OSError, ValueError) as exc:
+        print(f"WARNING: could not update the dashboard's Evidence packets tab ({exc})")
     print(f"Wrote {len(packets)} packets -> {OUT_DIR / 'evidence_packets.html'} (+ JSON per game)")
 
 
