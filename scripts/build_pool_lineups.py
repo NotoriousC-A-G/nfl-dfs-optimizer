@@ -15,6 +15,7 @@ NOT part of `pytest` (loads play-by-play and a saved snapshot).
 from __future__ import annotations
 
 import argparse
+import json
 import sys
 from dataclasses import asdict
 import warnings
@@ -22,6 +23,7 @@ from pathlib import Path
 
 import nfl_data_py as nfl
 
+from nfl_dfs.dashboard.panels import refresh_build_panel
 from nfl_dfs.build.agents import POOL_AGENT_BY_ID
 from nfl_dfs.build.availability import availability_from_snapshot
 from nfl_dfs.build.evidence.builder import build_evidence_packets
@@ -44,6 +46,7 @@ from scripts.run_llm_stages import ANALYST_FRESHNESS, MODEL_ID, _freshness
 
 TABLE = Path("data/cache/tail_value_cells.json")
 RATES = Path("data/cache/opportunity_points.json")
+DASHBOARD_HTML = "dashboard_output/weekly_dashboard.html"
 RG_STATUS = {"O": "OUT", "D": "D", "Q": "Q"}
 
 
@@ -166,6 +169,11 @@ def main() -> int:
         "agents": agents_record, "exit_code": exit_code,
     })
     print(f"\nWrote the build record (theses, pools, lineups, failures) to {path}")
+    try:  # the dashboard script runs BEFORE the build, so the "Build lineups" tab is filled here
+        refresh_build_panel(DASHBOARD_HTML, json.loads(path.read_text()), snapshot)
+        print(f"Updated the 'Build lineups' tab in {DASHBOARD_HTML}")
+    except (OSError, ValueError) as exc:
+        print(f"WARNING: could not update the dashboard's Build lineups tab ({exc}); run live_integration_check_dashboard.py first")
     return exit_code
 
 
