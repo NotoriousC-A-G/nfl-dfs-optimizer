@@ -100,6 +100,19 @@ DRAFT_GROUP_ID: int | None = 155198  # 2026-10-24: the 10-game Sunday-only main 
 def main() -> None:
     print(f"=== Live dashboard integration check -- season={SEASON}, week={WEEK} ===\n")
 
+    # The circumstance synthesis is the one real Anthropic call; a stale key used to be swallowed call by call ("synthesis FAILED"), leaving the
+    # run quietly without circumstance assessments (Week 7, 2026-10-24). Check it first and stop loudly if it is rejected.
+    from nfl_dfs.analysis.circumstance.engine import AnthropicKeyError, check_anthropic_key
+
+    try:
+        key_status = check_anthropic_key(config.anthropic_api_key)
+    except AnthropicKeyError as exc:
+        raise SystemExit("\n" + "!" * 78 + f"\n!! {exc}\n!! Nothing was fetched. Fix the key (or remove it to skip synthesis on purpose), then re-run.\n" + "!" * 78)
+    if key_status == "missing":
+        print("!" * 78 + "\n!! ANTHROPIC_API_KEY is not set: circumstance synthesis will be SKIPPED this run.\n" + "!" * 78 + "\n")
+    elif key_status == "unreachable":
+        print("!! Could not reach api.anthropic.com to verify the key; continuing, but synthesis calls may fail.\n")
+
     print("Fetching DraftKings (anchor)...")
     dk_payload, dk_pool, dk_slate = fetch_dk_raw_for_live_slate(draft_group_id=DRAFT_GROUP_ID)
     slate_teams = sorted(dk_slate.teams)
@@ -459,6 +472,7 @@ def main() -> None:
             )
         except Exception as exc:  # noqa: BLE001 -- one bad synthesis call must not kill the run
             print(f"  {label}: synthesis FAILED -- {exc}")
+            circumstance_stats["failed"] = circumstance_stats.get("failed", 0) + 1
             return
         for subject_id in source.circumstance_subjects():
             circumstance_assessments_by_gsis_id[subject_id] = assessment
@@ -564,6 +578,8 @@ def main() -> None:
                     f"{divergence.usage_leader.player_name or divergence.usage_leader.player_id}"
                 )
                 _run_synthesis(divergence, relevant_articles, label=label)
+            if circumstance_stats.get("failed"):
+                print("!" * 78 + f"\n!! {circumstance_stats['failed']} circumstance synthesis call(s) FAILED (see above): those players have NO circumstance assessment.\n" + "!" * 78)
             print(
                 f"  {circumstance_stats['real_calls']} real API call(s), {circumstance_stats['cache_hits']} cache "
                 f"hit(s) -- {circumstance_stats['input_tokens']} input / {circumstance_stats['output_tokens']} "

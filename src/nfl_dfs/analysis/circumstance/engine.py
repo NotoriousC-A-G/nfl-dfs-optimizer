@@ -448,3 +448,28 @@ def build_anthropic_messages_client(api_key: str):  # pragma: no cover -- thin r
             )
 
     return _RealMessagesClient()
+
+
+class AnthropicKeyError(RuntimeError):
+    """The configured ANTHROPIC_API_KEY was rejected -- every circumstance synthesis would fail, silently degrading the run."""
+
+
+def check_anthropic_key(api_key: str | None, *, session=None) -> str:
+    """Preflight for the one real Anthropic call in the pipeline (a free models-list request, no tokens spent).
+
+    Returns "missing" (no key configured: synthesis is skipped, by design), "ok", or "unreachable" (network trouble: unknown, not a verdict).
+    Raises `AnthropicKeyError` when the API rejects the key (401/403), so a stale key fails the run up front instead of being swallowed
+    call by call. Session injected for tests.
+    """
+    if not api_key:
+        return "missing"
+    import requests
+
+    http = session or requests
+    try:
+        resp = http.get("https://api.anthropic.com/v1/models", headers={"x-api-key": api_key, "anthropic-version": "2023-06-01"}, timeout=20)
+    except requests.RequestException:
+        return "unreachable"
+    if resp.status_code in (401, 403):
+        raise AnthropicKeyError(f"ANTHROPIC_API_KEY was rejected by the Anthropic API (HTTP {resp.status_code}). Generate a new key and update .env.")
+    return "ok"
