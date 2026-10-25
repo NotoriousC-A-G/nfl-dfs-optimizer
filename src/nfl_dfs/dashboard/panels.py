@@ -73,8 +73,9 @@ def _lineup_html(lu: dict, tiers: dict[str, tuple[str, str]], table: dict[str, d
                     f"<td class='bp-num'>{_num(p['proj'], '{:.1f}')}</td><td class='bp-num'>{_num(p['own'], '{:.1f}%')}</td>"
                     f"<td>{_e(tier)}</td><td class='bp-why'>{_e(why)}</td></tr>")
     t = lu["tiers"]
-    head = (f"<h3>${lu['salary']:,} &middot; proj {lu['projected']:.1f} &middot; views {_e(', '.join(lu['views']))} &middot; "
-            f"core {t.get('core', 0)} / eligible {t.get('eligible', 0)} / reach {t.get('reach', 0)} &middot; summed ownership {own_total:.0f}%</h3>"
+    views = f" &middot; views {_e(', '.join(lu['views']))}" if lu["views"] else ""
+    tier_counts = f" &middot; core {t.get('core', 0)} / eligible {t.get('eligible', 0)} / reach {t.get('reach', 0)}" if t else ""
+    head = (f"<h3>${lu['salary']:,} &middot; proj {lu['projected']:.1f}{views}{tier_counts} &middot; summed ownership {own_total:.0f}%</h3>"
             f"<p class='bp-meta'>{_e(lu['note'])}</p>")
     body = ('<table class="bp-table"><thead><tr><th>Slot</th><th>Player</th><th>Game</th><th>Salary</th><th>Proj (vendor)</th><th>Own</th>'
             "<th>Tier</th><th>Why</th></tr></thead><tbody>" + "".join(rows) + "</tbody></table>")
@@ -82,7 +83,18 @@ def _lineup_html(lu: dict, tiers: dict[str, tuple[str, str]], table: dict[str, d
     return head + body + bad
 
 
-def render_build_panel(build: dict, table: dict[str, dict]) -> str:
+def chalk_anchor_lineup(snapshot: dict) -> dict | None:
+    """The Chalk Anchor (the plain best-projection baseline, not pooled -- see `build/agents.py`) shaped like a build lineup, or None."""
+    for entry in snapshot.get("agent_lineups", []):
+        if entry["agent"]["agent_id"] == "chalk_anchor":
+            lu = entry["lineup"]
+            return {"views": [], "stack": [], "player_ids": [p["canonical_id"] for p in lu["slots"].values()],
+                    "note": "Plain best projection under the salary cap. Not an expert design: the field-average lineup to compare the five designs against.",
+                    "salary": lu["total_salary"], "projected": lu["total_projected_points"], "tiers": {}, "unresolved_players": []}
+    return None
+
+
+def render_build_panel(build: dict, table: dict[str, dict], chalk_anchor: dict | None = None) -> str:
     parts = [_CSS, f"<p class='bp-meta'>Build {_e(build['created_at'][:16])}Z from snapshot {_e(build['snapshot_filename'])}. "
                    f"Unavailable agents: {_e(', '.join(build['expert']['unavailable']) or 'none')}. Entry candidates; the Lineups tab shows the ILP-only baselines.</p>",
              f"<p>{_e(build['expert'].get('portfolio_notes', ''))}</p>"]
@@ -100,6 +112,10 @@ def render_build_panel(build: dict, table: dict[str, dict]) -> str:
             parts.append(_lineup_html(lu, tiers, table))
         parts.extend(f"<p class='bp-bad'>warning: {_e(w)}</p>" for w in a["warnings"])
         parts.append("</div>")
+    if chalk_anchor is not None:
+        parts.append("<div class='bp-agent'><h2>chalk_anchor (reference baseline)</h2>"
+                     "<p class='bp-meta'>Not one of the five designs: the plain best-projection lineup, shown so the designs can be judged against the chalk.</p>"
+                     + _lineup_html(chalk_anchor, {}, table) + "</div>")
     return "".join(parts)
 
 
@@ -130,7 +146,7 @@ def _refresh(path: str, name: str, panel_html: str) -> None:
 
 
 def refresh_build_panel(path: str, build: dict, snapshot: dict) -> None:
-    _refresh(path, "build", render_build_panel(build, player_table_from_snapshot(snapshot)))
+    _refresh(path, "build", render_build_panel(build, player_table_from_snapshot(snapshot), chalk_anchor_lineup(snapshot)))
 
 
 def refresh_packets_panel(path: str, page_html: str) -> None:

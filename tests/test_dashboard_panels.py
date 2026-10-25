@@ -51,3 +51,16 @@ def test_splice_replaces_only_the_named_panel():
 def test_splice_without_markers_fails_loudly():
     with pytest.raises(ValueError):
         splice_panel("<html></html>", "build", "x")
+
+
+def test_chalk_anchor_reference_section_is_rendered_from_the_snapshot():
+    from nfl_dfs.dashboard.panels import chalk_anchor_lineup
+
+    slots = {k: {"canonical_id": cid} for k, cid in [("QB", "q"), ("DST", "DST_AAA"), ("RB1", "r1"), ("RB2", "r2"), ("WR1", "w1"), ("WR2", "w2"), ("WR3", "w3"), ("TE", "t"), ("FLEX", "w4")]}
+    snap = {"agent_lineups": [{"agent": {"agent_id": "other"}, "lineup": {}},
+                              {"agent": {"agent_id": "chalk_anchor"}, "lineup": {"slots": slots, "total_salary": 50000, "total_projected_points": 160.2}}]}
+    lu = chalk_anchor_lineup(snap)
+    assert lu["salary"] == 50000 and len(lu["player_ids"]) == 9 and chalk_anchor_lineup({"agent_lineups": []}) is None
+    html = render_build_panel(_build(), {}, lu)
+    assert "chalk_anchor (reference baseline)" in html and "$50,000" in html and "160.2" in html
+    assert "reference baseline" not in render_build_panel(_build(), {})
