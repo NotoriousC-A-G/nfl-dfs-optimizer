@@ -282,3 +282,47 @@ Hampton was out for week 10 — a live pipeline gates that separately, upstream 
   ADR-0009→ADR-0011's shrinkage-form addendum.
 - No Phase 4 concepts introduced (no discrete-outcome modeling, no roster/depth-chart ingestion added) — both
   fixes are pure aggregation-logic corrections to data already in scope.
+
+
+## Amendment 1 (2026-10-25) -- ConcurrentActivityWindow drops a blanked RB's week from HIS share only
+
+**Trigger.** Week 7 2026: ARI's lead RB Jeremiyah Love missed week 6. Decision 2 as built excluded week 6
+from the *whole* ARI backfield, so Zonovan "Bam" Knight's 15 carries + 2 targets and Tyler Allgeier's 18
+carries that week vanished -- Knight showed 3 trailing carries / 2.5% share (snapshot
+`data/snapshots/2026-07_133419.json`) while the play-by-play shows a real inheritor. The injury-circumstance
+step's "remaining candidates" list for the vacated Love role was therefore built from the stale picture.
+
+**Why the original scope was wrong.** Decision 2's evidence (LAC Hampton/Vidal) validated dropping the missed
+weeks from the *absent player's own* share (Hampton 29% -> 53-58%). It never validated dropping them from the
+replacement's share; the ADR's own "Vidal 43.2% is still inflated" argument is about what Vidal's share would
+be if Hampton were *healthy* -- but that is the question the availability layer already answers separately
+(Scope note above), and it is only true when the absent player is back. When he is still out, the absence
+week is the single most informative sample of who inherits the role.
+
+**Change.** `_rb_concurrent_activity_blanked_weeks` returns the blanked weeks *per candidate*. Each candidate's
+numerator, team-week denominator and `weeks_played` (shrinkage `n`) drop only that candidate's own blanked weeks;
+everyone else keeps the week and its denominator. `compute_role_shares_for_week(concurrent_window_scope=...)`
+takes `"player"` (new default) or `"team"` (the original behaviour, retained only so the backtest can compare).
+The "established candidate" floor, top-2 eligibility and causal reading are unchanged.
+
+**Evidence** (`scripts/concurrent_window_scope_backtest.py`, 2021-2025, 3,761 candidate-weeks on teams where
+the window fires; predicted blended RoleShare vs the candidate's real carry share in `target_week`):
+
+| Segment | n | MAE team scope | MAE player scope |
+|---|---|---|---|
+| All | 3761 | 0.1558 | 0.1426 |
+| Other RBs (non-blanked) | 2989 | 0.1575 | 0.1413 |
+| Blanked player himself | 772 | 0.1496 | 0.1479 |
+| Blanked player still out at target (others) | 803 | 0.1830 | 0.1601 |
+| Blanked player back at target (others) | 2186 | 0.1481 | 0.1344 |
+| Still out, others with actual share >= 25% | 319 | 0.1924 | 0.1783 |
+
+Player scope wins in every segment, including the one that motivated the change (80% of paired comparisons
+for others when the blanked player is still out; paired diff +0.023, se 0.0012) and, as hoped, does not hurt
+the blanked player's own number. It also wins when the blanked player has returned (+0.014), i.e. the
+"replacement share inflated for a healthy week" worry did not show up as net harm in the data. Remaining
+weakness: RBs who actually get a big share are still under-predicted by ~0.15 in the still-out case --
+shrinkage toward the league prior and the trailing average both lag a role change; not addressed here.
+
+**Not changed.** Decision 1 (uncontested prior) consumes the post-window candidates and is untouched in
+structure; it now sees the replacement's real volume as the "second candidate", which is more correct.
