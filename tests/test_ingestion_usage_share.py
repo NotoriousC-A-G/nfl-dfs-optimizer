@@ -2,6 +2,7 @@ import pandas as pd
 import pytest
 
 from nfl_dfs.ingestion.usage_share import (
+    CONCURRENT_WINDOW_SCOPE_TEAM,
     PRIOR_LEAGUE_AVERAGE,
     PRIOR_UNCONTESTED,
     ROLE_RB,
@@ -135,7 +136,9 @@ def _team_week_frames_for(rows: list[dict]) -> tuple[pd.DataFrame, int]:
     return aggregate_player_week(df), df
 
 
-def _result_for(rows: list[dict], team: str, role: str, target_week: int) -> RoleShareResult:
+def _result_for(
+    rows: list[dict], team: str, role: str, target_week: int, **kwargs
+) -> RoleShareResult:
     df = pd.DataFrame(rows)
     player_week = aggregate_player_week(df)
     team_week_volume = aggregate_team_week_volume(df)
@@ -148,6 +151,7 @@ def _result_for(rows: list[dict], team: str, role: str, target_week: int) -> Rol
         target_week=target_week,
         all_teams=frozenset({team}),
         k=6.0,
+        **kwargs,
     )
     return next(r for r in results if r.team == team and r.role == role)
 
@@ -290,7 +294,7 @@ def test_wr1_gate_uses_its_own_thresholds():
 # --------------------------------------------------------------------------------------------
 
 
-def test_concurrent_activity_window_excludes_blanked_established_candidates_weeks():
+def test_concurrent_activity_window_team_scope_excludes_blanked_established_candidates_weeks():
     # Reproduces the real 2025 LAC Hampton/Vidal pattern this ADR fixes: RB_LEAD (Hampton-like) is
     # the clear starter weeks 1-5, then goes to zero touches weeks 6-9 (a complete sever, e.g.
     # injury/IR -- not just a quiet game). RB_BACKUP (Vidal-like) is a token backup weeks 1-4
@@ -307,7 +311,9 @@ def test_concurrent_activity_window_excludes_blanked_established_candidates_week
     for wk, start in zip((6, 7, 8, 9), (500, 600, 700, 800)):
         rows += _rush(wk, "LAC2", "RB_BACKUP", "Backup Back", 20, start)
 
-    result = _result_for(rows, "LAC2", ROLE_RB, target_week=10)
+    result = _result_for(
+        rows, "LAC2", ROLE_RB, target_week=10, concurrent_window_scope=CONCURRENT_WINDOW_SCOPE_TEAM
+    )
 
     # weeks_played (RB role) reflects only the post-filter, concurrent weeks -- 5, not the raw 9.
     lead = next(c for c in result.candidates if c.player_id == "RB_LEAD")
@@ -323,6 +329,54 @@ def test_concurrent_activity_window_excludes_blanked_established_candidates_week
     assert result.identified is not None
     assert result.identified.player_id == "RB_LEAD"
     assert any("ConcurrentActivityWindow" in note for note in result.notes)
+
+
+def _arizona_style_backfield() -> list[dict]:
+    """Weeks 1-5: RB_LEAD (Love-like) carries 15/wk, RB_SECOND (Allgeier-like) 5, RB_THIRD (Knight-like)
+    3 in week 1 only. Week 6: RB_LEAD is blanked (injured) and RB_THIRD takes 15 of 25 carries."""
+    rows = []
+    for wk in range(1, 6):
+        rows += _rush(wk, "ARI2", "RB_LEAD", "Lead Back", 15, wk * 1000)
+        rows += _rush(wk, "ARI2", "RB_SECOND", "Second Back", 5, wk * 1000 + 100)
+    rows += _rush(1, "ARI2", "RB_THIRD", "Third Back", 3, 1500)
+    rows += _rush(6, "ARI2", "RB_SECOND", "Second Back", 10, 6000)
+    rows += _rush(6, "ARI2", "RB_THIRD", "Third Back", 15, 6100)
+    return rows
+
+
+def test_concurrent_activity_window_player_scope_keeps_absence_week_for_other_backs():
+    # The week the established lead is out is the MOST informative one for who inherits the role
+    # (ADR-0020 Amendment 1): RB_THIRD's 15 week-6 carries must count, and the week-6 team denominator
+    # must count for him -- only RB_LEAD's own share/week count drops the blanked week.
+    result = _result_for(_arizona_style_backfield(), "ARI2", ROLE_RB, target_week=7)
+    by_id = {c.player_id: c for c in result.candidates}
+
+    lead, second, third = by_id["RB_LEAD"], by_id["RB_SECOND"], by_id["RB_THIRD"]
+    assert lead.weeks_played == 5  # week 6 dropped from his own sample only
+    assert lead.trailing_volume == 75
+    assert lead.trailing_team_volume == 5 * 20 + 3  # week 6 not in his denominator
+    assert second.weeks_played == 6 and third.weeks_played == 6
+    assert third.trailing_volume == 18  # 3 + the 15 week-6 carries
+    assert third.trailing_team_volume == 103 + 25
+    assert third.trailing_share == pytest.approx(18 / 128)
+    assert second.trailing_volume == 35
+    assert any("RB_LEAD" in n or "Lead Back" in n for n in result.notes)
+    assert any("other RBs keep the week" in n for n in result.notes)
+
+
+def test_concurrent_activity_window_team_scope_hides_the_absence_week_from_other_backs():
+    # Regression pin for the failure mode Amendment 1 fixes (legacy scope): week 6 vanishes from
+    # EVERYONE, so RB_THIRD looks like a 3-carry nobody.
+    result = _result_for(
+        _arizona_style_backfield(),
+        "ARI2",
+        ROLE_RB,
+        target_week=7,
+        concurrent_window_scope=CONCURRENT_WINDOW_SCOPE_TEAM,
+    )
+    third = next(c for c in result.candidates if c.player_id == "RB_THIRD")
+    assert third.trailing_volume == 3
+    assert third.weeks_played == 5
 
 
 def test_concurrent_activity_window_does_not_apply_to_wr_role():

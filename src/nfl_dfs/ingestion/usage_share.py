@@ -53,6 +53,12 @@ this round doesn't build.
 ## Judgment call 3 -- `ConcurrentActivityWindow` (ADR-0020 Decision 2, RB role only): two deviations
 ## from the ADR's literal wording, both confirmed necessary against real 2025 data, not guesses
 
+**Scope amendment (ADR-0020 Amendment 1, 2026-10-25):** the excluded week now drops only from the BLANKED
+candidate's own share/week count; every other RB keeps that week (it is the most informative one for who
+inherits an absent lead's role). The original whole-backfield behaviour survives as
+`concurrent_window_scope=CONCURRENT_WINDOW_SCOPE_TEAM`, for the backtest only. Text below describes the
+firing rule (unchanged), not the scope.
+
 ADR-0020 Decision 2 says to exclude a trailing week from the RB role's whole team-week computation
 whenever an "established candidate" (>=10 combined RB+WR touches "elsewhere in the trailing window")
 is completely blanked that week. Implemented exactly as literally worded, this **fails on the exact
@@ -240,6 +246,12 @@ UNCONTESTED_RB_PRIOR = 0.56  # Decision 1a -- validated trailing-window figure (
 UNCONTESTED_RB_SECOND_CANDIDATE_MAX_CARRIES = 5  # Decision 1b -- the validated ≤5 cut
 QB_EXCLUSION_MIN_TRAILING_PASS_ATTEMPTS = 5  # Decision 1c -- new, unvalidated heuristic
 
+# ADR-0020 Decision 2 scope of a blanked candidate's excluded weeks (see ADR-0020 Amendment 1):
+# PLAYER = dropped only from the blanked player's own share/week count (default); TEAM = the original
+# whole-backfield exclusion, kept only so the backtest can compare the two.
+CONCURRENT_WINDOW_SCOPE_PLAYER = "player"
+CONCURRENT_WINDOW_SCOPE_TEAM = "team"
+
 PRIOR_LEAGUE_AVERAGE = "league_average"
 PRIOR_UNCONTESTED = "uncontested"
 
@@ -426,26 +438,37 @@ def _tier_for_rb_share(role_share_blended: float) -> str:
 
 def _build_candidates(
     prior_players: pd.DataFrame,
+    team_volume_rows: pd.DataFrame,
     team: str,
     role: str,
-    weeks_played: int,
-    team_trailing_volume: int,
     k: float,
+    excluded_weeks_by_player: dict[str, set[int]] | None = None,
+    shared_excluded_weeks: set[int] | None = None,
 ) -> list[PlayerRoleShare]:
     """Every player with trailing volume in this role for this team, shrinkage-blended and sorted
-    descending by role_share_blended (== descending by raw trailing_share, see module docstring's
-    monotonicity note)."""
+    descending by role_share_blended.
+
+    Each candidate's share is computed over the team-weeks NOT in that candidate's own exclusion set:
+    `shared_excluded_weeks` (dropped for everyone -- the legacy whole-backfield ConcurrentActivityWindow
+    scope) unioned with `excluded_weeks_by_player[player_id]` (dropped only from that player's own
+    numerator/denominator/week count -- the per-player scope). With neither supplied (WR role, or an RB
+    team with no blanked candidate) every candidate sees the full window."""
     rows = prior_players[(prior_players["team"] == team) & (prior_players["role"] == role)]
     if rows.empty:
         return []
-    agg = rows.groupby(["player_id", "player_name"], observed=True, dropna=False)["volume"].sum().reset_index()
-
+    excluded_weeks_by_player = excluded_weeks_by_player or {}
+    shared_excluded_weeks = shared_excluded_weeks or set()
+    volume_col = "team_rush_attempts" if role == ROLE_RB else "team_targets"
     prior_value = LEAGUE_PRIOR_SHARE[role]
-    weight = shrinkage_weight(weeks_played, k)
 
     candidates: list[PlayerRoleShare] = []
-    for _, r in agg.iterrows():
-        trailing_volume = int(r["volume"])
+    for (player_id, player_name), player_rows in rows.groupby(["player_id", "player_name"], observed=True, dropna=False):
+        excluded = shared_excluded_weeks | excluded_weeks_by_player.get(str(player_id), set())
+        kept_team_rows = team_volume_rows[~team_volume_rows["week"].isin(excluded)]
+        trailing_volume = int(player_rows.loc[~player_rows["week"].isin(excluded), "volume"].sum())
+        team_trailing_volume = int(kept_team_rows[volume_col].sum())
+        if trailing_volume == 0:
+            continue  # all of this player's volume fell in excluded weeks -- no candidate row
         # team_trailing_volume must be >= trailing_volume here: this player's own plays are a
         # subset of the team's plays that produced the denominator, so it can never be 0 when a
         # candidate row exists -- asserted explicitly rather than silently divided-by-zero.
@@ -453,12 +476,14 @@ def _build_candidates(
             f"team_trailing_volume=0 but {team}/{role} has a candidate with {trailing_volume} "
             "trailing plays -- denominator/player aggregation are out of sync"
         )
+        weeks_played = int(len(kept_team_rows))
+        weight = shrinkage_weight(weeks_played, k)
         trailing_share = trailing_volume / team_trailing_volume
         blended = blend_toward_prior(trailing_share, prior_value, weight)
         candidates.append(
             PlayerRoleShare(
-                player_id=str(r["player_id"]),
-                player_name=str(r["player_name"]) if pd.notna(r["player_name"]) else None,
+                player_id=str(player_id),
+                player_name=str(player_name) if pd.notna(player_name) else None,
                 role=role,
                 weeks_played=weeks_played,
                 trailing_volume=trailing_volume,
@@ -474,8 +499,10 @@ def _build_candidates(
     return candidates
 
 
-def _rb_concurrent_activity_excluded_weeks(team_role_rows: pd.DataFrame, team_weeks: list[int]) -> set[int]:
-    """ADR-0020 Decision 2 -- weeks to exclude from a team's RB-role trailing computation because an
+def _rb_concurrent_activity_blanked_weeks(
+    team_role_rows: pd.DataFrame, team_weeks: list[int]
+) -> dict[str, set[int]]:
+    """ADR-0020 Decision 2 -- per established candidate, the weeks in which THAT candidate was blanked: an
     established candidate was completely blanked (zero combined RB+WR touches) that week while
     having real volume elsewhere -- almost always a missed-game/injury artifact, not a real quiet
     week. See module docstring Judgment call 3 for the two deliberate deviations from ADR-0020's
@@ -488,7 +515,7 @@ def _rb_concurrent_activity_excluded_weeks(team_role_rows: pd.DataFrame, team_we
     activity from every RB candidate is still considered, not silently skipped."""
     rb_candidate_ids = set(team_role_rows.loc[team_role_rows["role"] == ROLE_RB, "player_id"])
     if not rb_candidate_ids or not team_weeks:
-        return set()
+        return {}
 
     relevant = team_role_rows[team_role_rows["player_id"].isin(rb_candidate_ids)]
     combined = relevant.groupby(["week", "player_id"], observed=True)["volume"].sum().reset_index()
@@ -496,7 +523,7 @@ def _rb_concurrent_activity_excluded_weeks(team_role_rows: pd.DataFrame, team_we
         index="player_id", columns="week", values="volume", fill_value=0, aggfunc="sum"
     ).reindex(columns=sorted(team_weeks), fill_value=0)
     if pivot.empty:
-        return set()
+        return {}
 
     # Judgment call 3b: only the top-2 candidates by total trailing combined touches are eligible
     # to be an "established candidate" -- see module docstring for why a flat floor applied to
@@ -505,19 +532,22 @@ def _rb_concurrent_activity_excluded_weeks(team_role_rows: pd.DataFrame, team_we
 
     # Judgment call 3a: "elsewhere" is read causally -- a candidate's established-volume total only
     # accumulates from weeks strictly BEFORE the week under test, walking the window chronologically.
-    excluded: set[int] = set()
+    blanked: dict[str, set[int]] = {}
     established_prior = dict.fromkeys(eligible_ids, 0.0)
     for week in pivot.columns:
-        blanked_established = [
-            pid
-            for pid in eligible_ids
-            if established_prior[pid] >= RB_ESTABLISHED_CANDIDATE_TOUCH_FLOOR and pivot.loc[pid, week] == 0
-        ]
-        if blanked_established:
-            excluded.add(int(week))
+        for pid in eligible_ids:
+            if established_prior[pid] >= RB_ESTABLISHED_CANDIDATE_TOUCH_FLOOR and pivot.loc[pid, week] == 0:
+                blanked.setdefault(str(pid), set()).add(int(week))
         for pid in eligible_ids:
             established_prior[pid] += pivot.loc[pid, week]
-    return excluded
+    return blanked
+
+
+def _rb_concurrent_activity_excluded_weeks(team_role_rows: pd.DataFrame, team_weeks: list[int]) -> set[int]:
+    """Union of every blanked established candidate's weeks -- the legacy, whole-backfield exclusion
+    set (`CONCURRENT_WINDOW_SCOPE_TEAM`). See `_rb_concurrent_activity_blanked_weeks`."""
+    blanked = _rb_concurrent_activity_blanked_weeks(team_role_rows, team_weeks)
+    return set().union(*blanked.values()) if blanked else set()
 
 
 def _trailing_qb_ids(prior_passer_week: pd.DataFrame, team: str) -> set[str]:
@@ -577,34 +607,47 @@ def _role_share_result_for_team(
     team: str,
     role: str,
     k: float,
+    concurrent_window_scope: str = CONCURRENT_WINDOW_SCOPE_PLAYER,
 ) -> RoleShareResult:
     team_volume_rows = prior_team_volume[prior_team_volume["team"] == team]
-    candidate_rows = prior_players
     notes: list[str] = []
+    excluded_weeks_by_player: dict[str, set[int]] = {}
+    shared_excluded_weeks: set[int] = set()
 
     if role == ROLE_RB:
         # ADR-0020 Decision 2 -- applied BEFORE Decision 1's gate/prior-swap check, per the ADR's
         # explicit ordering ("Decision 2 cleans the input Decision 1's signal is computed from").
         team_role_rows = prior_players[prior_players["team"] == team]
         team_weeks = sorted(team_volume_rows["week"].unique().tolist())
-        excluded_weeks = _rb_concurrent_activity_excluded_weeks(team_role_rows, team_weeks)
-        if excluded_weeks:
+        blanked = _rb_concurrent_activity_blanked_weeks(team_role_rows, team_weeks)
+        names = (
+            team_role_rows.dropna(subset=["player_name"]).drop_duplicates("player_id").set_index("player_id")["player_name"]
+        )
+        if concurrent_window_scope == CONCURRENT_WINDOW_SCOPE_TEAM:
+            shared_excluded_weeks = set().union(*blanked.values()) if blanked else set()
+        else:
+            excluded_weeks_by_player = blanked
+        for pid, weeks in sorted(blanked.items()):
+            who = names.get(pid, pid)
+            if concurrent_window_scope == CONCURRENT_WINDOW_SCOPE_TEAM:
+                effect = "dropped from the whole RB backfield's denominators and week counts"
+            else:
+                effect = f"dropped from {who}'s own share and week count only (other RBs keep the week)"
             notes.append(
-                "ADR-0020 ConcurrentActivityWindow excluded trailing week(s) "
-                f"{sorted(excluded_weeks)} for the RB role -- an established RB candidate recorded "
-                "zero combined RB+WR touches that week while active elsewhere in the trailing "
-                "window; treated as a missed-game artifact, not a real quiet week. Both team-week "
-                "denominator and weeks_played reflect only the remaining weeks (see module "
-                "docstring, PlayerRoleShare.weeks_played)."
+                f"ADR-0020 ConcurrentActivityWindow: established RB candidate {who} recorded zero "
+                f"combined RB+WR touches in trailing week(s) {sorted(weeks)} while active elsewhere "
+                f"in the trailing window; treated as a missed-game artifact -- {effect}."
             )
-            team_volume_rows = team_volume_rows[~team_volume_rows["week"].isin(excluded_weeks)]
-            candidate_rows = prior_players[~prior_players["week"].isin(excluded_weeks)]
 
-    weeks_played = int(len(team_volume_rows))
-    volume_col = "team_rush_attempts" if role == ROLE_RB else "team_targets"
-    team_trailing_volume = int(team_volume_rows[volume_col].sum())
-
-    candidates = _build_candidates(candidate_rows, team, role, weeks_played, team_trailing_volume, k)
+    candidates = _build_candidates(
+        prior_players,
+        team_volume_rows,
+        team,
+        role,
+        k,
+        excluded_weeks_by_player=excluded_weeks_by_player,
+        shared_excluded_weeks=shared_excluded_weeks,
+    )
     if not candidates:
         return RoleShareResult(
             season=season,
@@ -670,6 +713,7 @@ def compute_role_shares_for_week(
     *,
     all_teams: frozenset[str] = CANONICAL_TEAMS,
     k: float = DEFAULT_K,
+    concurrent_window_scope: str = CONCURRENT_WINDOW_SCOPE_PLAYER,
 ) -> list[RoleShareResult]:
     """Pure computation for one target week: for every team in `all_teams` and both roles
     (`ROLE_RB`, `ROLE_WR`), identify the trailing-only lead player (weeks `1..target_week-1` only,
@@ -691,7 +735,15 @@ def compute_role_shares_for_week(
         for role in (ROLE_RB, ROLE_WR):
             results.append(
                 _role_share_result_for_team(
-                    prior_players, prior_team_volume, prior_passer_week, season, target_week, team, role, k
+                    prior_players,
+                    prior_team_volume,
+                    prior_passer_week,
+                    season,
+                    target_week,
+                    team,
+                    role,
+                    k,
+                    concurrent_window_scope,
                 )
             )
     return results
