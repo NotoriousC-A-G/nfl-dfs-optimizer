@@ -33,66 +33,68 @@ from nfl_dfs.storage.contest_results_store import ContestResult, save_contest_re
 from nfl_dfs.storage.slate_snapshot_store import load_latest_slate_snapshot
 
 SEASON = 2026
-WEEK = 6
+WEEK = 7
 
 # (display_name, position_label, team) -- position_label is the DK roster-slot label (FLEX for
 # the flex slot, not the player's real position), matching every other writer of this field
 # (see `tracking/name_matching.parse_player_token`'s "Name (POS-TEAM)" contract).
 OPERATOR_LINEUPS: dict[str, list[tuple[str, str, str]]] = {
     "L1": [
-        ("Caleb Williams", "QB", "CHI"),
+        ("Jordan Love", "QB", "GB"),
+        ("Jahmyr Gibbs", "RB", "DET"),
         ("Bijan Robinson", "RB", "ATL"),
-        ("Kyren Williams", "RB", "LAR"),
-        ("Germie Bernard", "WR", "PIT"),
-        ("Luther Burden III", "WR", "CHI"),
-        ("Wan'Dale Robinson", "WR", "TEN"),
-        ("Isaiah Likely", "TE", "NYG"),
-        ("Brock Bowers", "FLEX", "LV"),
-        ("Chargers", "DST", "LAC"),
+        ("Christian Watson", "WR", "GB"),
+        ("Savion Williams", "WR", "GB"),
+        ("Ja'Kobi Lane", "WR", "BAL"),
+        ("George Kittle", "TE", "SF"),
+        ("Tyler Higbee", "FLEX", "LAR"),
+        ("Browns", "DST", "CLE"),
     ],
     "L2": [
-        ("Matthew Stafford", "QB", "LAR"),
-        ("Kenneth Walker III", "RB", "KC"),
-        ("Jaylen Warren", "RB", "PIT"),
-        ("Germie Bernard", "WR", "PIT"),
-        ("Puka Nacua", "WR", "LAR"),
-        ("Xavier Worthy", "WR", "KC"),
+        ("C.J. Stroud", "QB", "HOU"),
+        ("Christian McCaffrey", "RB", "SF"),
+        ("Braelon Allen", "RB", "NYJ"),
+        ("Matthew Golden", "WR", "GB"),
+        ("Nico Collins", "WR", "HOU"),
+        ("Ja'Kobi Lane", "WR", "BAL"),
         ("Isaiah Likely", "TE", "NYG"),
-        ("Kendrick Bourne", "FLEX", "ARI"),
-        ("Raiders", "DST", "LV"),
+        ("Woody Marks", "FLEX", "HOU"),
+        ("Jets", "DST", "NYJ"),
     ],
     "L3": [
-        ("Drake Maye", "QB", "NE"),
-        ("James Cook III", "RB", "BUF"),
-        ("Chuba Hubbard", "RB", "CAR"),
-        ("A.J. Brown", "WR", "NE"),
-        ("Drake London", "WR", "ATL"),
+        ("Bo Nix", "QB", "DEN"),
+        ("Christian McCaffrey", "RB", "SF"),
+        ("Woody Marks", "RB", "HOU"),
+        ("Jaylen Waddle", "WR", "DEN"),
         ("Malik Nabers", "WR", "NYG"),
-        ("Dallas Goedert", "TE", "PHI"),
-        ("Tyler Higbee", "FLEX", "LAR"),
-        ("Panthers", "DST", "CAR"),
+        ("Ted Hurst III", "WR", "TB"),
+        ("Tyler Higbee", "TE", "LAR"),
+        ("Jahmyr Gibbs", "FLEX", "DET"),
+        ("49ers", "DST", "SF"),
     ],
 }
 
-# Transcribed by hand from DK's GameCenter, 2026-10-19 (week 6, main slate 10/18 only).
+# Transcribed by hand from DK's GameCenter, 2026-10-31 (week 7, main slate 10/25 only; cross-checked against the entry-history export).
 # (lineup_label, contest_name, entries, positions_paid, total_prizes, rank, fpts, winnings)
 CONTEST_RESULTS: list[tuple[str, str, int, int, float, int, float, float]] = [
-    ("L3", "$6K Pylon [Single Entry]", 2378, 618, 6000, 529, 140.90, 5.0),
-    ("L2", "$15K Pylon [Single Entry]", 5945, 1523, 15000, 1010, 146.18, 5.0),
-    ("L2", "$75K Fair Catch [Single Entry]", 7352, 1524, 75000, 1354, 146.18, 25.0),
-    ("L3", "$50K Fair Catch [Single Entry]", 4901, 1046, 50000, 1216, 140.90, 0.0),
-    ("L1", "$30K Pylon [Single Entry]", 11890, 3053, 30000, 6247, 123.80, 0.0),
-    ("L1", "$125K Fair Catch [Single Entry]", 12254, 2563, 125000, 6779, 123.80, 0.0),
-    ("L1", "$100K Huddle [Single Entry]", 23781, 5805, 100000, 12432, 123.80, 0.0),
-    ("L1", "$100K First Down [20 Entry Max]", 118906, 32096, 100000, 56815, 123.80, 0.0),
-    ("L2", "$100K First Down [20 Entry Max]", 118906, 32096, 100000, 16357, 146.18, 1.5),
-    ("L3", "$100K First Down [20 Entry Max]", 118906, 32096, 100000, 23509, 140.90, 1.5),
-    ("L1", "$2.75M Fantasy Football Millionaire [$1M to 1st]", 158904, 37425, 2750000, 80107, 123.80, 0.0),
-    ("L2", "$2.75M Fantasy Football Millionaire [$1M to 1st]", 158904, 37425, 2750000, 24282, 146.18, 30.0),
-    ("L3", "$2.75M Fantasy Football Millionaire [$1M to 1st]", 158904, 37425, 2750000, 34448, 140.90, 30.0),
-    ("L1", "$600K Play-Action [20 Entry Max]", 237812, 59650, 600000, 114822, 123.80, 0.0),
-    ("L2", "$600K Play-Action [20 Entry Max]", 237812, 59650, 600000, 33955, 146.18, 6.0),
-    ("L3", "$600K Play-Action [20 Entry Max]", 237812, 59650, 600000, 48675, 140.90, 5.0),
+    ("L1", "$100K First Down [20 Entry Max]", 118906, 32096, 100000, 77500, 104.96, 0.0),
+    ("L2", "$100K First Down [20 Entry Max]", 118906, 32096, 100000, 101696, 92.22, 0.0),
+    ("L3", "$100K First Down [20 Entry Max]", 118906, 32096, 100000, 63749, 110.88, 0.0),
+    ("L1", "$500K Play-Action [20 Entry Max]", 198176, 48591, 500000, 128084, 104.96, 0.0),
+    ("L2", "$500K Play-Action [20 Entry Max]", 198176, 48591, 500000, 168992, 92.22, 0.0),
+    ("L3", "$500K Play-Action [20 Entry Max]", 198176, 48591, 500000, 104962, 110.88, 0.0),
+    ("L1", "$2.5M Fantasy Football Millionaire [$1M to 1st]", 147058, 30413, 2500000, 97585, 104.96, 0.0),
+    ("L2", "$2.5M Fantasy Football Millionaire [$1M to 1st]", 147058, 30413, 2500000, 127355, 92.22, 0.0),
+    ("L3", "$2.5M Fantasy Football Millionaire [$1M to 1st]", 147058, 30413, 2500000, 80392, 110.88, 0.0),
+    ("L1", "$80K Huddle [$10K to 1st, Single Entry]", 19024, 4826, 80000, 12289, 104.96, 0.0),
+    ("L1", "$100K Fair Catch [Single Entry]", 9803, 1974, 100000, 6445, 104.96, 0.0),
+    ("L1", "$20K Pylon [Single Entry]", 7927, 2011, 20000, 5197, 104.96, 0.0),
+    ("L3", "$50K Fair Catch [Single Entry]", 4901, 1046, 50000, 2638, 110.88, 0.0),
+    ("L2", "$75K Fair Catch [Single Entry]", 7352, 1524, 75000, 6395, 92.22, 0.0),
+    ("L2", "$6K Pylon [Single Entry]", 2378, 618, 6000, 2047, 92.22, 0.0),
+    ("L3", "$6K Pylon [Single Entry]", 2378, 618, 6000, 1244, 110.88, 0.0),
+    ("L3", "$6K Huddle [Single Entry]", 1426, 300, 6000, 751, 110.88, 0.0),
+    ("L2", "$6K Huddle [Single Entry]", 1426, 300, 6000, 1248, 92.22, 0.0),
 ]
 
 
