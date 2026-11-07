@@ -124,3 +124,20 @@ season,week,lineup_label,contest_name,entries,positions_paid,total_prizes,rank,f
 2026,7,L3,$6K Pylon [Single Entry],2378,618,6000.0,1244,110.88,0.0,3.0
 2026,7,L3,$6K Huddle [Single Entry],1426,300,6000.0,751,110.88,0.0,5.0
 2026,7,L2,$6K Huddle [Single Entry],1426,300,6000.0,1248,92.22,0.0,5.0
+2026,8,L3,$7.5K Huddle [Single Entry],1783,390,7500.0,207,155.98,10.0,5.0
+2026,8,L3,$6K Pylon [Single Entry],2378,618,6000.0,296,155.98,6.0,3.0
+2026,8,L2,$7.5K Huddle [Single Entry],1783,390,7500.0,1703,74.06,0.0,5.0
+2026,8,L2,$500K Play-Action [20 Entry Max],198176,48591,500000.0,188525,74.06,0.0,3.0
+2026,8,L1,$500K Play-Action [20 Entry Max],198176,48591,500000.0,108047,115.6,0.0,3.0
+2026,8,L3,$500K Play-Action [20 Entry Max],198176,48591,500000.0,23860,155.98,5.0,3.0
+2026,8,L3,$50K Fair Catch [Single Entry],4901,1046,50000.0,655,155.98,25.0,12.0
+2026,8,L1,$25K Pylon [Single Entry],9908,2576,25000.0,5538,115.6,0.0,3.0
+2026,8,L2,$75K Fair Catch [Single Entry],7352,1524,75000.0,7065,74.06,0.0,12.0
+2026,8,L1,$100K Fair Catch [Single Entry],9803,1974,100000.0,5606,115.6,0.0,12.0
+2026,8,L1,"$80K Huddle [$10K to 1st, Single Entry]",19024,4826,80000.0,10460,115.6,0.0,5.0
+2026,8,L2,$2.5M Fantasy Football Millionaire [$1M to 1st],147058,30413,2500000.0,140547,74.06,0.0,20.0
+2026,8,L1,$2.5M Fantasy Football Millionaire [$1M to 1st],147058,30413,2500000.0,81676,115.6,0.0,20.0
+2026,8,L3,$2.5M Fantasy Football Millionaire [$1M to 1st],147058,30413,2500000.0,17448,155.98,30.0,20.0
+2026,8,L2,$100K First Down [20 Entry Max],118906,32096,100000.0,113401,74.06,0.0,1.0
+2026,8,L1,$100K First Down [20 Entry Max],118906,32096,100000.0,66421,115.6,0.0,1.0
+2026,8,L3,$100K First Down [20 Entry Max],118906,32096,100000.0,15388,155.98,1.5,1.0
