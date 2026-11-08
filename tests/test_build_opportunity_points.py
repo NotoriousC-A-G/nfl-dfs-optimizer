@@ -77,3 +77,9 @@ def test_team_volume_is_carries_and_targets_per_game_over_the_last_four_games():
     from tests.test_build_opportunity import _pbp
     v = team_volume(_pbp(), season=2026, through_week=5)["KC"]
     assert v == pytest.approx((10.0, 20.0))  # 10 real carries (kneel/scramble excluded) and 20 targets in each of the 4 window games
+
+
+def test_a_player_back_from_an_absence_is_not_priced_extra_vendors_already_price_a_returning_starter():
+    hall = _p("hall", "RB", 12.8, 0.0, 0.60)
+    hall.games_played_l4 = 0
+    assert opportunity_adjustments([hall], {"TEN": (24.0, 30.0)}, RATES) == {}
