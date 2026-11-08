@@ -74,11 +74,13 @@ class PlayerEvidence:
     status_after_q_pass: str | None  # e.g. "Q_CLEARED", "BARRED", "OUT" from the Q/override pass
     circumstance_note: str | None
     qb_designed_run_rate: float | None = None
-    # Opportunity (play-by-play, last 4 team games; `evidence/opportunity.py`). Carries/targets only -- no snap or route data.
+    # Opportunity (play-by-play, last 4 team games, over the games he played; `evidence/opportunity.py`). Carries/targets only.
     carry_share_l4: float | None = None
     target_share_l4: float | None = None
     touch_share_l4: float | None = None  # (carries + targets) share
     touch_share_min_l4: float | None = None  # lowest single-game touch share: the floor-role stability measure
+    games_played_l4: int | None = None  # of `window_games_l4`: games he was on the field -- the sample behind the shares above
+    window_games_l4: int | None = None
     carry_share_expected: float | None = None  # trailing + his portion of what unavailable teammates leave behind
     target_share_expected: float | None = None
     opportunity_note: str | None = None

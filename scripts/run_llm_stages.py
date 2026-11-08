@@ -25,7 +25,7 @@ import nfl_data_py as nfl
 
 from nfl_dfs.build.availability import availability_from_snapshot
 from nfl_dfs.build.evidence.builder import build_evidence_packets
-from nfl_dfs.build.evidence.opportunity import trailing_shares
+from nfl_dfs.build.evidence.opportunity import fetch_played_weeks, trailing_shares
 from nfl_dfs.build.evidence.metrics import league_values, team_game_metrics
 from nfl_dfs.build.expert.stage import expert_spec
 from nfl_dfs.build.pool.contracts import PlayerRef
@@ -66,7 +66,7 @@ def _load(games: set[str] | None):
     availability, _warn = availability_from_snapshot(snapshot)
     if _warn:
         print(f"WARNING: {_warn}")
-    packets = build_evidence_packets(snapshot["player_pool"], snapshot["stack_profiles"], tg_current, season=SEASON, week=WEEK, as_of=as_of, availability=availability, opportunity=trailing_shares(pbp, season=SEASON, through_week=WEEK - 1))
+    packets = build_evidence_packets(snapshot["player_pool"], snapshot["stack_profiles"], tg_current, season=SEASON, week=WEEK, as_of=as_of, availability=availability, opportunity=trailing_shares(pbp, season=SEASON, through_week=WEEK - 1, played_weeks=fetch_played_weeks(snapshot["player_pool"], season=SEASON, through_week=WEEK - 1)))
     if games:
         unknown = games - set(packets)
         if unknown:

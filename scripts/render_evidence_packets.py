@@ -24,7 +24,7 @@ import nfl_data_py as nfl
 
 from nfl_dfs.build.availability import availability_from_snapshot
 from nfl_dfs.build.evidence.builder import build_evidence_packets
-from nfl_dfs.build.evidence.opportunity import trailing_shares
+from nfl_dfs.build.evidence.opportunity import fetch_played_weeks, trailing_shares
 from nfl_dfs.build.evidence.metrics import team_game_metrics
 from nfl_dfs.build.evidence.render import render_evidence_page
 from nfl_dfs.dashboard.panels import refresh_packets_panel
@@ -46,7 +46,7 @@ def main() -> None:
     availability, _warn = availability_from_snapshot(snapshot)
     if _warn:
         print(f"WARNING: {_warn}")
-    packets = build_evidence_packets(snapshot["player_pool"], snapshot["stack_profiles"], tg, season=SEASON, week=WEEK, availability=availability, opportunity=trailing_shares(pbp, season=SEASON, through_week=WEEK - 1))
+    packets = build_evidence_packets(snapshot["player_pool"], snapshot["stack_profiles"], tg, season=SEASON, week=WEEK, availability=availability, opportunity=trailing_shares(pbp, season=SEASON, through_week=WEEK - 1, played_weeks=fetch_played_weeks(snapshot["player_pool"], season=SEASON, through_week=WEEK - 1)))
 
     OUT_DIR.mkdir(exist_ok=True)
     (OUT_DIR / "evidence_packets").mkdir(exist_ok=True)
