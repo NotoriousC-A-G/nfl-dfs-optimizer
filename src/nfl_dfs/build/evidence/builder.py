@@ -105,6 +105,11 @@ def _with_opportunity(pe: PlayerEvidence, shares: dict, team_opp: TeamOpportunit
     )
 
 
+def _with_depth(pe: PlayerEvidence, depth_by_id: dict[str, int], last_played: dict[str, int]) -> PlayerEvidence:
+    rank, lp = depth_by_id.get(pe.canonical_id), last_played.get(pe.canonical_id)
+    return pe if rank is None and lp is None else replace(pe, depth_rank=rank, last_played_week=lp)
+
+
 def _team_metric_values(
     tg: pd.DataFrame | None, teams: Iterable[str], season: int, through_week: int
 ) -> dict[str, dict[str, tuple[float | None, int | None]]]:
@@ -130,6 +135,8 @@ def build_evidence_packets(
     weather_by_home_team: dict[str, dict[str, Any]] | None = None,
     as_of: str = "",
     opportunity: OpportunityTable | None = None,
+    depth_chart: Iterable[Any] | None = None,
+    played_weeks: dict[str, set[int]] | None = None,
 ) -> dict[str, EvidencePacket]:
     """`{game_id: EvidencePacket}`. `availability` are `AvailabilityDecision`s from the Q/override pass;
     `team_game_table` may be `None`/empty (the packet then records the missing metrics as a data gap)."""
@@ -142,6 +149,8 @@ def build_evidence_packets(
             if value is not None:
                 league_by_metric.setdefault(metric, []).append(value)
 
+    depth_by_id = {e.player_id: e.depth_rank for e in depth_chart} if depth_chart is not None else {}
+    last_played = {pid: max(w) for pid, w in (played_weeks or {}).items() if w}
     availability = list(availability)
     decision_by_key = {(d.name, d.team): d for d in availability}
     by_team: dict[str, list[dict]] = {}
@@ -212,7 +221,9 @@ def build_evidence_packets(
             usable.sort(key=lambda r: -r["projection"])
             skill = [r for r in usable if r["position"] != "DST"][: MAX_PLAYERS_PER_TEAM - 1]
             dst = [r for r in usable if r["position"] == "DST"][:1]
-            players += [_with_opportunity(_player_evidence(r, decision_by_key), (opportunity or {}).get(team, {}), opp_by_team.get(team)) for r in skill + dst]
+            players += [_with_depth(_with_opportunity(_player_evidence(r, decision_by_key), (opportunity or {}).get(team, {}), opp_by_team.get(team)), depth_by_id, last_played) for r in skill + dst]
+        if depth_chart is None:
+            gaps.append("current depth chart was not loaded for this packet (depth rank is blank)")
         owned = sum(1 for p in players if p.ownership_pct is not None)
         if owned < len(players):
             gaps.append(f"ownership is populated for {owned} of {len(players)} listed players")

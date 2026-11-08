@@ -84,6 +84,8 @@ class PlayerEvidence:
     carry_share_expected: float | None = None  # trailing + his portion of what unavailable teammates leave behind
     target_share_expected: float | None = None
     opportunity_note: str | None = None
+    depth_rank: int | None = None  # current nflverse depth-chart slot at his position (1 = starter); None = not on the chart or chart unavailable
+    last_played_week: int | None = None  # most recent week he took an offensive snap (None = none in the data)
 
 
 @dataclass(frozen=True)

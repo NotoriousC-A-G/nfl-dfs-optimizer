@@ -384,3 +384,19 @@ def test_turnover_rates_are_evidence_only():
     p = build_evidence_packets(pool, [{"home_team": "HOM", "away_team": "AWY", "spread": -2.0}], tg, season=2026, week=2)["AWY@HOM"]
     assert "giveaway_rate" in p.teams["HOM"].metrics and "def_takeaway_rate" in p.teams["HOM"].def_metrics
     assert "giveaway_rate" not in PROXY_METRICS and "def_takeaway_rate" not in PROXY_METRICS
+
+
+def test_depth_rank_and_last_played_week_reach_the_player_lines():
+    from types import SimpleNamespace
+    chart = [SimpleNamespace(player_id="AAA_p13", depth_rank=1), SimpleNamespace(player_id="AAA_p12", depth_rank=2)]
+    p = build_evidence_packets(_pool(), _sp(), None, season=2026, week=5, depth_chart=chart, played_weeks={"AAA_p13": {1, 2, 3}})["BBB@AAA"]
+    by = {x.canonical_id: x for x in p.players}
+    assert by["AAA_p13"].depth_rank == 1 and by["AAA_p13"].last_played_week == 3
+    assert by["AAA_p12"].depth_rank == 2 and by["AAA_p12"].last_played_week is None
+    assert by["BBB_p13"].depth_rank is None
+    assert not any("depth chart was not loaded" in g for g in p.data_gaps)
+
+
+def test_a_missing_depth_chart_is_named_as_a_data_gap_not_silently_blank():
+    p = build_evidence_packets(_pool(), _sp(), None, season=2026, week=5)["BBB@AAA"]
+    assert any("depth chart was not loaded" in g for g in p.data_gaps)

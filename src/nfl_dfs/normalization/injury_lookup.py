@@ -176,6 +176,46 @@ def overlay_injury_report_exclusions(
     return merged
 
 
+_OFFICIAL_TO_DK_STATUS = {"Out": "OUT", "Doubtful": "D"}
+# Statuses a prior pass (the Q rule, an override, DK/RotoGrinders) already settled -- the official overlay never second-guesses them.
+_SETTLED_STATUSES = frozenset({"IR", "OUT", "D", "Q", "BARRED", CLEARED_QUESTIONABLE_STATUS, UNRESOLVED_STATUS})
+
+
+def overlay_official_game_status(
+    dk_injury_status: dict[str, str],
+    identities: list[PlayerIdentity],
+    official_entries: list["OfficialInjuryReportEntry"],
+    *,
+    week: int,
+    as_of: str = "",
+) -> tuple[dict[str, str], list["AvailabilityDecision"]]:
+    """A player the OFFICIAL report lists Out/Doubtful for `week` is unavailable, whatever DK and RotoGrinders say.
+
+    Found live (Week 9, 2026): Sam Darnold was officially Out, yet DK/RotoGrinders carried no status, so the snapshot called him
+    healthy, no availability entry existed and the packets never mentioned it. Players already settled by another pass (any
+    excluded status, the Q rule, or a Chris override) are left alone. Returns `(new status dict, one "excluded" decision per
+    player changed)` so the packets show the Out with its basis.
+    """
+    merged = dict(dk_injury_status)
+    decisions: list[AvailabilityDecision] = []
+    by_gsis = {i.canonical_id: i for i in identities}
+    stamp = f" (as of {as_of})" if as_of else ""
+    for e in official_entries:
+        mapped = _OFFICIAL_TO_DK_STATUS.get(e.report_status or "")
+        identity = by_gsis.get(e.gsis_id)
+        if mapped is None or e.week != week or identity is None:
+            continue
+        dk = identity.sources.get("draftkings")
+        if dk is None or dk.native_id is None:
+            continue
+        key = str(dk.native_id)
+        if merged.get(key) in _SETTLED_STATUSES:
+            continue
+        merged[key] = mapped
+        decisions.append(AvailabilityDecision(identity.display_name, identity.team, "excluded", f"official game status {e.report_status}{stamp}", "official_report"))
+    return merged, decisions
+
+
 @dataclass(frozen=True)
 class AvailabilityDecision:
     """One player's Q/override decision with the evidence behind it -- printed every run and saved
