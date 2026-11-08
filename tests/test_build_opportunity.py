@@ -136,3 +136,37 @@ def test_a_player_back_from_a_miss_is_not_diluted_by_the_games_he_missed():
 def test_a_player_missing_from_the_snap_data_counts_only_the_weeks_he_touched_the_ball():
     t = trailing_shares(_pbp(), season=2026, through_week=5, played_weeks={"rb1": {2, 3, 4, 5}})["KC"]
     assert t["wr3"].games_played == 3 and t["wr3"].target_share == pytest.approx(6 * 3 / 60)
+
+
+def _hall_allen_pbp():
+    """NYJ: Hall 60% of carries in weeks 1-3, then misses 4-7; Allen carries the load while he is away."""
+    rows = []
+    def carry(week, pid, n):
+        rows.extend({"season": 2026, "week": week, "season_type": "REG", "posteam": "NYJ", "rush_attempt": 1, "pass_attempt": 0,
+                     "rusher_player_id": pid, "rusher_player_name": pid, "receiver_player_id": None, "receiver_player_name": None} for _ in range(n))
+    for w in (1, 2, 3):
+        carry(w, "HALL", 6); carry(w, "ALLEN", 2); carry(w, "OTHER", 2)
+    for w in (4, 5, 6, 7):
+        carry(w, "ALLEN", 8); carry(w, "OTHER", 2)
+    return pd.DataFrame(rows)
+
+
+def test_a_player_back_from_a_long_absence_gets_his_pre_absence_role_and_teammates_shrink():
+    from nfl_dfs.build.evidence.opportunity import redistribute
+    played = {"HALL": {1, 2, 3}, "ALLEN": {1, 2, 3, 4, 5, 6, 7}, "OTHER": {1, 2, 3, 4, 5, 6, 7}}
+    t = trailing_shares(_hall_allen_pbp(), season=2026, through_week=7, played_weeks=played)["NYJ"]
+    assert t["HALL"].carry_share == 0.0 and t["HALL"].games_played == 0  # nothing in the window...
+    assert t["HALL"].prior_carry_share == pytest.approx(0.6) and t["HALL"].prior_games == 3 and t["HALL"].prior_last_week == 3
+    assert t["ALLEN"].carry_share == pytest.approx(0.8)
+    opp = redistribute("NYJ", t, {}, {"HALL": "RB", "ALLEN": "RB"})
+    assert opp.expected["HALL"].carry_share == pytest.approx(0.6)
+    assert opp.expected["ALLEN"].carry_share == pytest.approx(0.8 * 0.4)  # what Hall's return leaves him
+    assert opp.expected["ALLEN"].carry_gain < 0 and "HALL" in opp.expected["ALLEN"].note.upper()
+
+
+def test_a_returner_who_is_out_hands_nothing_back():
+    from nfl_dfs.build.evidence.opportunity import redistribute
+    played = {"HALL": {1, 2, 3}, "ALLEN": {1, 2, 3, 4, 5, 6, 7}, "OTHER": {1, 2, 3, 4, 5, 6, 7}}
+    t = trailing_shares(_hall_allen_pbp(), season=2026, through_week=7, played_weeks=played)["NYJ"]
+    opp = redistribute("NYJ", t, {"HALL": ("HALL", "excluded")}, {"ALLEN": "RB"})
+    assert "HALL" not in opp.expected and not opp.vacated  # his window share is 0: nothing to vacate, Allen keeps the role he has

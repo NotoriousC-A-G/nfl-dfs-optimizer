@@ -89,6 +89,8 @@ def opportunity_adjustments(
     for p in players:
         if p.projection is None or p.position not in ("RB", "WR", "TE"):
             continue
+        if getattr(p, "games_played_l4", None) == 0:
+            continue  # back from an absence: vendors already price a returning starter, so the "gain" over his empty window is not extra
         cg = max((p.carry_share_expected or 0.0) - (p.carry_share_l4 or 0.0), 0.0) if p.carry_share_expected is not None else 0.0
         tg = max((p.target_share_expected or 0.0) - (p.target_share_l4 or 0.0), 0.0) if p.target_share_expected is not None else 0.0
         if cg <= 0.0 and tg <= 0.0:
