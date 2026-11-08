@@ -110,3 +110,29 @@ def test_small_roles_are_not_treated_as_vacated_and_nothing_vanishes_silently():
 
 def test_a_team_with_nobody_out_gets_no_redistribution():
     assert redistribute("KC", _shares(), {}, {"wr2": "WR"}).vacated == ()
+
+
+def test_shares_are_measured_over_the_games_the_player_played():
+    # wr3 caught 6 of the team's 20 targets in weeks 2, 4 and 5 and did not play in week 3 (the window is weeks 2-5)
+    t = trailing_shares(_pbp(), season=2026, through_week=5, played_weeks={"wr3": {2, 4, 5}})["KC"]
+    assert t["wr3"].target_share == pytest.approx(6 / 20)  # 18 of 60 over the 3 games he played, not 18 of 80
+    assert t["wr3"].games_played == 3 and t["wr3"].window_games == 4
+    assert t["wr3"].touch_share_min == pytest.approx(6 / 30)  # the week he sat is no longer scored as a 0
+    # without snap data the old whole-window behaviour stands
+    old = trailing_shares(_pbp(), season=2026, through_week=5)["KC"]["wr3"]
+    assert old.target_share == pytest.approx(18 / 80) and old.touch_share_min == 0.0 and old.games_played == 4
+
+
+def test_a_player_back_from_a_miss_is_not_diluted_by_the_games_he_missed():
+    # one game played in the window with 4 of the team's 20 targets in it: 20%, not the diluted 4 of 68
+    pbp = _pbp()
+    pbp = pbp[~((pbp["week"].isin([2, 3, 4])) & (pbp["receiver_player_id"] == "wr2"))]
+    t = trailing_shares(pbp, season=2026, through_week=5, played_weeks={"wr2": {5}})["KC"]
+    assert t["wr2"].games_played == 1 and t["wr2"].target_share == pytest.approx(4 / 20)
+    # the old whole-window share counted every team target in the games he missed
+    assert trailing_shares(pbp, season=2026, through_week=5)["KC"]["wr2"].target_share == pytest.approx(4 / 68)
+
+
+def test_a_player_missing_from_the_snap_data_counts_only_the_weeks_he_touched_the_ball():
+    t = trailing_shares(_pbp(), season=2026, through_week=5, played_weeks={"rb1": {2, 3, 4, 5}})["KC"]
+    assert t["wr3"].games_played == 3 and t["wr3"].target_share == pytest.approx(6 * 3 / 60)

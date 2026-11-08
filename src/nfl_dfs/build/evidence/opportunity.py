@@ -6,8 +6,13 @@ Chris, 2026-10-07: for skill players what matters is opportunity (snap/route sha
 Two things are computed from play-by-play, per team, over the team's last `WINDOW` games:
 
 1. **Trailing shares** per player: share of the team's carries, of its targets, and of its combined touches (carries +
-   targets), pooled over the window, plus the *lowest single-game* touch share in the window -- the stability measure
-   behind a floor role (an opportunity that held every week, not one big week).
+   targets), pooled over the games HE PLAYED in the window (his volume over the team's volume in those same games --
+   Chris, 2026-11-08: a share that divides by games he missed understates a player back from injury, e.g. Rice at 6.3%
+   when he took 21% of the targets in the game he played), plus the *lowest single-game* touch share over those games --
+   the stability measure behind a floor role (an opportunity that held every week, not one big week). `games_played` and
+   `window_games` ride along so the reader sees how thin the sample is. "Played" = a snap-count entry (`played_weeks`); with
+   none supplied the old behaviour applies (the whole window), and a player absent from the snap data counts only the
+   weeks he had a touch.
 2. **Redistribution** of the shares held by players who will not play (unavailable) to the players who will: a
    deterministic baseline, pro rata to each candidate's own trailing share with a small prior so a player who had no
    role yet can still inherit one. Carries go to running backs; targets go to every non-QB. Whatever share goes to
@@ -45,6 +50,8 @@ class PlayerShares:
     touch_share: float  # (carries + targets) / team (carries + targets), pooled over the window
     touch_share_min: float  # lowest single-game touch share in the window (0.0 if he missed a game the team played)
     games: int  # games in the window in which he had a carry or target
+    games_played: int = 0  # games in the window he was on the field (snap count), or the whole window when no snap data was supplied
+    window_games: int = 0  # games the team played in the window
 
 
 @dataclass(frozen=True)
@@ -69,8 +76,13 @@ class ExpectedShare:
 OpportunityTable = dict[str, dict[str, PlayerShares]]  # team -> player_id -> shares
 
 
-def trailing_shares(pbp: pd.DataFrame, *, season: int, through_week: int, window: int = WINDOW) -> OpportunityTable:
-    """Per team, each player's shares over the team's last `window` regular-season games up to `through_week`."""
+def trailing_shares(
+    pbp: pd.DataFrame, *, season: int, through_week: int, window: int = WINDOW,
+    played_weeks: dict[str, set[int]] | None = None,
+) -> OpportunityTable:
+    """Per team, each player's shares over the games he played within the team's last `window` regular-season games up to
+    `through_week`. `played_weeks` maps a player id (gsis) to the weeks he was on the field; without it every player is
+    measured over the whole window (the earlier behaviour, which dilutes a player who missed games)."""
     d = pbp[(pbp["season"] == season) & (pbp["week"] <= through_week)]
     if "season_type" in d.columns:
         d = d[d["season_type"] == "REG"]
@@ -88,23 +100,56 @@ def trailing_shares(pbp: pd.DataFrame, *, season: int, through_week: int, window
         for df, idc, nc in ((rush, "rusher_player_id", "rusher_player_name"), (targ, "receiver_player_id", "receiver_player_name")):
             for pid, nm in zip(df[idc], df[nc]):
                 names.setdefault(pid, nm)
-        team_c, team_t = len(rush), len(targ)
-        team_touch_by_week = {w: int((rush["week"] == w).sum() + (targ["week"] == w).sum()) for w in weeks}
+        team_c_by_w = {w: int((rush["week"] == w).sum()) for w in weeks}
+        team_t_by_w = {w: int((targ["week"] == w).sum()) for w in weeks}
+        team_touch_by_week = {w: team_c_by_w[w] + team_t_by_w[w] for w in weeks}
         players = set(carries.index.get_level_values(1)) | set(targets.index.get_level_values(1))
         shares: dict[str, PlayerShares] = {}
         for pid in players:
             c_by_w = {w: int(carries.get((w, pid), 0)) for w in weeks}
             t_by_w = {w: int(targets.get((w, pid), 0)) for w in weeks}
-            c, tg = sum(c_by_w.values()), sum(t_by_w.values())
-            weekly = [(c_by_w[w] + t_by_w[w]) / team_touch_by_week[w] for w in weeks if team_touch_by_week[w]]
+            if played_weeks is None:
+                mine = list(weeks)
+            elif pid in played_weeks:
+                mine = [w for w in weeks if w in played_weeks[pid]]
+            else:  # not in the snap data: only the weeks he demonstrably took part in
+                mine = [w for w in weeks if c_by_w[w] + t_by_w[w] > 0]
+            team_c = sum(team_c_by_w[w] for w in mine)
+            team_t = sum(team_t_by_w[w] for w in mine)
+            c, tg = sum(c_by_w[w] for w in mine), sum(t_by_w[w] for w in mine)
+            weekly = [(c_by_w[w] + t_by_w[w]) / team_touch_by_week[w] for w in mine if team_touch_by_week[w]]
             shares[pid] = PlayerShares(
                 pid, names.get(pid, pid),
                 c / team_c if team_c else 0.0, tg / team_t if team_t else 0.0,
                 (c + tg) / (team_c + team_t) if (team_c + team_t) else 0.0,
                 min(weekly) if weekly else 0.0,
                 sum(1 for w in weeks if c_by_w[w] + t_by_w[w] > 0),
+                len(mine), len(weeks),
             )
         out[normalize_team("nflverse_schedule", raw_team) or raw_team] = shares
+    return out
+
+
+def fetch_played_weeks(player_pool: list[dict], *, season: int, through_week: int) -> dict[str, set[int]] | None:
+    """`{gsis id: weeks he was on the field}` from the nflverse snap counts, joined through each pool identity's pfr id.
+    Returns None (with a warning -- the shares then fall back to the whole window) if the snap counts cannot be fetched."""
+    import warnings
+
+    try:
+        import nfl_data_py as nfl
+
+        snaps = nfl.import_snap_counts([season])
+    except Exception as exc:  # network, 404 for an in-progress season, missing dependency
+        warnings.warn(f"snap counts unavailable ({exc!r}); opportunity shares fall back to the whole window", stacklevel=2)
+        return None
+    snaps = snaps[(snaps["game_type"] == "REG") & (snaps["week"] <= through_week) & (snaps["offense_snaps"] > 0)]
+    weeks_by_pfr = snaps.groupby("pfr_player_id")["week"].apply(lambda w: {int(x) for x in w}).to_dict()
+    out: dict[str, set[int]] = {}
+    for p in player_pool:
+        ident = p.get("identity") or {}
+        gsis, pfr = ident.get("nflverse_gsis_id"), ident.get("nflverse_pfr_id")
+        if gsis and pfr in weeks_by_pfr:
+            out[gsis] = weeks_by_pfr[pfr]
     return out
 
 

@@ -99,6 +99,7 @@ def _with_opportunity(pe: PlayerEvidence, shares: dict, team_opp: TeamOpportunit
         pe,
         carry_share_l4=s.carry_share if s else None, target_share_l4=s.target_share if s else None,
         touch_share_l4=s.touch_share if s else None, touch_share_min_l4=s.touch_share_min if s else None,
+        games_played_l4=s.games_played if s else None, window_games_l4=s.window_games if s else None,
         carry_share_expected=e.carry_share if e else None, target_share_expected=e.target_share if e else None,
         opportunity_note=e.note if e else None,
     )
