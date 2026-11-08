@@ -400,3 +400,25 @@ def test_depth_rank_and_last_played_week_reach_the_player_lines():
 def test_a_missing_depth_chart_is_named_as_a_data_gap_not_silently_blank():
     p = build_evidence_packets(_pool(), _sp(), None, season=2026, week=5)["BBB@AAA"]
     assert any("depth chart was not loaded" in g for g in p.data_gaps)
+
+
+def test_a_listed_player_with_no_projection_is_not_a_candidate_to_inherit_or_to_return():
+    """IR/OUT players carry a DK salary but no vendor projection; they must not soak up (or be handed back) a role."""
+    import pandas as pd
+    rows = []
+    for w in (1, 2, 3, 4):
+        for pid, n in (("AAA_p13", 5), ("AAA_p12", 3)):
+            rows.extend({"season": 2026, "week": w, "season_type": "REG", "posteam": "AAA", "rush_attempt": 1, "pass_attempt": 0,
+                         "rusher_player_id": pid, "rusher_player_name": pid, "receiver_player_id": None, "receiver_player_name": None} for _ in range(n))
+    for _ in range(6):  # a back who carried in week 1 only, now on IR (salaried, unprojected)
+        rows.append({"season": 2026, "week": 1, "season_type": "REG", "posteam": "AAA", "rush_attempt": 1, "pass_attempt": 0,
+                     "rusher_player_id": "AAA_ir", "rusher_player_name": "IR Back", "receiver_player_id": None, "receiver_player_name": None})
+    from nfl_dfs.build.evidence.opportunity import trailing_shares
+    pbp = pd.DataFrame(rows)
+    pool = _pool()
+    pool.append(_rec("AAA_ir", "IR Back", "AAA", "RB", 4500, None))  # salary, no projection
+    opp = trailing_shares(pbp, season=2026, through_week=4, window=3, played_weeks={"AAA_p13": {1, 2, 3, 4}, "AAA_p12": {1, 2, 3, 4}, "AAA_ir": {1}})
+    assert opp["AAA"]["AAA_ir"].prior_games == 1  # the share table does see him as a would-be returner...
+    p = build_evidence_packets(pool, _sp(), None, season=2026, week=5, opportunity=opp)["BBB@AAA"]
+    mine = {x.canonical_id: x for x in p.players}
+    assert "AAA_ir" not in mine and not any("is back" in (x.opportunity_note or "") for x in p.players)  # ...but the packet does not hand him a role
