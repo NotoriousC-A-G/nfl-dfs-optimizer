@@ -155,7 +155,14 @@ def test_official_doubtful_maps_to_d_and_questionable_is_ignored():
 
 def test_official_overlay_never_overrides_a_settled_status_or_another_week():
     ids = [_named_identity("A", "SEA", "1", gsis="00-1"), _named_identity("B", "SEA", "2", gsis="00-2"), _named_identity("C", "SEA", "3", gsis="00-3")]
-    start = {"1": "Q_CLEARED", "2": "IR"}  # a Chris override / an existing exclusion
+    start = {"1": "Q_CLEARED", "2": "BARRED"}  # a Chris override
     status, decisions = overlay_official_game_status(
         start, ids, [_official_status("00-1", "Out"), _official_status("00-2", "Out"), _official_status("00-3", "Out", week=4)], week=5)
     assert status == start and decisions == []
+
+
+def test_a_vendor_out_is_kept_but_still_gets_a_decision_so_the_packets_name_it():
+    ids = [_named_identity("Sam Darnold", "SEA", "1", gsis="00-1")]
+    status, decisions = overlay_official_game_status({"1": "OUT"}, ids, [_official_status("00-1", "Out")], week=5)
+    assert status == {"1": "OUT"}
+    assert [(d.name, d.decision) for d in decisions] == [("Sam Darnold", "excluded")] and "vendor status OUT" in decisions[0].basis
