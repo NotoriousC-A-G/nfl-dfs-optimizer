@@ -27,7 +27,7 @@ from nfl_dfs.dashboard.panels import refresh_build_panel
 from nfl_dfs.build.agents import POOL_AGENT_BY_ID
 from nfl_dfs.build.availability import availability_from_snapshot
 from nfl_dfs.build.evidence.builder import build_evidence_packets
-from nfl_dfs.build.evidence.opportunity import fetch_played_weeks, team_volume, trailing_shares
+from nfl_dfs.build.evidence.opportunity import fetch_depth_chart, fetch_played_weeks, team_volume, trailing_shares
 from nfl_dfs.build.evidence.metrics import league_values, team_game_metrics
 from nfl_dfs.build.expert.repair import build_with_repair, output_to_json
 from nfl_dfs.build.expert.stage import expert_spec
@@ -69,7 +69,8 @@ def main() -> int:
     availability, _warn = availability_from_snapshot(snapshot)
     if _warn:
         print(f"WARNING: {_warn}")
-    packets = build_evidence_packets(snapshot["player_pool"], snapshot["stack_profiles"], tg[tg["season"] == SEASON], season=SEASON, week=WEEK, as_of=as_of, availability=availability, opportunity=trailing_shares(pbp, season=SEASON, through_week=WEEK - 1, played_weeks=fetch_played_weeks(snapshot["player_pool"], season=SEASON, through_week=WEEK - 1)))
+    _played = fetch_played_weeks(snapshot["player_pool"], season=SEASON, through_week=WEEK - 1)
+    packets = build_evidence_packets(snapshot["player_pool"], snapshot["stack_profiles"], tg[tg["season"] == SEASON], season=SEASON, week=WEEK, as_of=as_of, availability=availability, opportunity=trailing_shares(pbp, season=SEASON, through_week=WEEK - 1, played_weeks=_played), depth_chart=fetch_depth_chart(SEASON), played_weeks=_played)
     fresh, kw = _freshness(), dict(season=SEASON, week=WEEK)
 
     a_res = collect_results(analyst_specs(packets, league_fn, model=MODEL_ID, freshness=ANALYST_FRESHNESS), **kw)

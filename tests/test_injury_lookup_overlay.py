@@ -127,3 +127,35 @@ def test_a_more_severe_vendor_status_is_never_downgraded_by_a_less_severe_one():
     # DK already says OUT; RotoGrinders only says Q -> stays OUT. (Severity only moves up.)
     out = overlay_injury_report_exclusions({"1": "OUT"}, [_identity("a", "1", "9")], [_entry("9", "Q")], EXCLUDED)
     assert out["1"] == "OUT"
+
+
+# --- official Out/Doubtful the vendors don't carry (Week 9 2026: Darnold officially Out, DK/RotoGrinders silent) ---
+
+from nfl_dfs.normalization.injury_lookup import overlay_official_game_status
+
+
+def _official_status(gsis, report_status, week=5):
+    return OfficialInjuryReportEntry(gsis_id=gsis, season=2026, week=week, team="NYJ", position="QB",
+                                     full_name="x", report_status=report_status, practice_status=None, report_primary_injury=None)
+
+
+def test_official_out_with_no_vendor_status_becomes_an_excluded_decision():
+    ids = [_named_identity("Sam Darnold", "SEA", "1", gsis="00-1")]
+    status, decisions = overlay_official_game_status({}, ids, [_official_status("00-1", "Out")], week=5, as_of="t")
+    assert status == {"1": "OUT"}
+    assert [(d.name, d.decision, d.source) for d in decisions] == [("Sam Darnold", "excluded", "official_report")]
+    assert "official game status Out" in decisions[0].basis
+
+
+def test_official_doubtful_maps_to_d_and_questionable_is_ignored():
+    ids = [_named_identity("A", "SEA", "1", gsis="00-1"), _named_identity("B", "SEA", "2", gsis="00-2")]
+    status, decisions = overlay_official_game_status({}, ids, [_official_status("00-1", "Doubtful"), _official_status("00-2", "Questionable")], week=5)
+    assert status == {"1": "D"} and len(decisions) == 1
+
+
+def test_official_overlay_never_overrides_a_settled_status_or_another_week():
+    ids = [_named_identity("A", "SEA", "1", gsis="00-1"), _named_identity("B", "SEA", "2", gsis="00-2"), _named_identity("C", "SEA", "3", gsis="00-3")]
+    start = {"1": "Q_CLEARED", "2": "IR"}  # a Chris override / an existing exclusion
+    status, decisions = overlay_official_game_status(
+        start, ids, [_official_status("00-1", "Out"), _official_status("00-2", "Out"), _official_status("00-3", "Out", week=4)], week=5)
+    assert status == start and decisions == []

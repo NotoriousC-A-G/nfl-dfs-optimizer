@@ -103,7 +103,7 @@ def _player_rows(p: EvidencePacket) -> str:
             f"<td class='num'>{'&mdash;' if pl.salary is None else f'${pl.salary:,}'}</td><td class='num'>{_fmt(pl.projection)}</td>"
             f"<td class='num'>{_fmt(pl.ownership_pct)}</td><td class='num'>{_fmt(pl.ownership_vs_baseline)}</td>"
             f"<td class='num'>{_fmt(pl.carry_share_trailing, 0, pct=True)}</td><td class='num'>{_fmt(pl.target_share_trailing, 0, pct=True)}</td>"
-            f"<td class='num'>{_fmt(pl.ceiling_multiplier, 2)}</td><td>{_e(' '.join(x for x in (pl.circumstance_note, pl.opportunity_note) if x))}</td></tr>"
+            f"<td class='num'>{_fmt(pl.ceiling_multiplier, 2)}</td><td class='num'>{'&mdash;' if pl.depth_rank is None else f'{_e(pl.position)}{pl.depth_rank}'}</td><td class='num'>{'&mdash;' if pl.games_played_l4 is None else f'{pl.games_played_l4}/{pl.window_games_l4}'}</td><td>{_e(' '.join(x for x in (pl.circumstance_note, pl.opportunity_note) if x))}</td></tr>"
         )
     return "".join(out)
 
@@ -132,7 +132,7 @@ def _game_card(p: EvidencePacket) -> str:
         f"<h3>Teams</h3><div class='grid2'>{_team_block(p, p.away)}{_team_block(p, p.home)}</div>"
         f"<h3>Players listed (top by projection, plus DST)</h3>"
         "<table><tr><th>Player</th><th>Team</th><th>Pos</th><th class='num'>Salary</th><th class='num'>Proj</th><th class='num'>Own %</th>"
-        "<th class='num'>Own vs baseline</th><th class='num'>RZ carry sh.</th><th class='num'>RZ target sh.</th><th class='num'>Ceil mult</th><th>Note</th></tr>"
+        "<th class='num'>Own vs baseline</th><th class='num'>RZ carry sh.</th><th class='num'>RZ target sh.</th><th class='num'>Ceil mult</th><th class='num'>Depth</th><th class='num'>Played L4</th><th>Note</th></tr>"
         f"{_player_rows(p)}</table>"
         f"<h3>Roles vacated (share of the team's last-4-game carries / targets)</h3><table><tr><th>Player</th><th>Team</th><th>Status</th><th class='num'>Carries</th><th class='num'>Targets</th></tr>{vac}</table>"
         f"<h3>Availability</h3><table><tr><th>Player</th><th>Team</th><th>Decision</th><th>Basis</th><th>Source</th></tr>{avail}</table>"

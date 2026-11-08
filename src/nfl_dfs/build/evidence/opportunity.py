@@ -153,6 +153,19 @@ def fetch_played_weeks(player_pool: list[dict], *, season: int, through_week: in
     return out
 
 
+def fetch_depth_chart(season: int) -> list | None:
+    """The latest nflverse depth chart (skill positions), or None with a warning if it cannot be fetched (the packets then say so)."""
+    import warnings
+
+    try:
+        from nfl_dfs.ingestion.nflverse_depth_charts import fetch_current_depth_chart
+
+        return fetch_current_depth_chart(season)
+    except Exception as exc:  # network / schema
+        warnings.warn(f"depth chart unavailable ({exc!r}); depth rank is blank in the packets", stacklevel=2)
+        return None
+
+
 @dataclass(frozen=True)
 class TeamOpportunity:
     vacated: tuple[VacatedRole, ...] = ()

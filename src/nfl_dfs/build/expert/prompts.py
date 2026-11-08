@@ -69,7 +69,7 @@ def render_universe(packets: dict[str, EvidencePacket]) -> str:
             out.append(
                 f"- {p.canonical_id} | {p.name} | {p.team} {p.position} | game {gid} | salary {_v(p.salary)} | proj {_v(p.projection)} | "
                 f"own% {_v(p.ownership_pct)} | chalk {'yes' if p.is_chalk else 'no'} | leverage {'yes' if p.is_leverage else 'no'} | "
-                f"status {_v(p.status_after_q_pass or p.injury_status)} | last-4 touch share {_v(p.touch_share_l4)} | "
+                f"status {_v(p.status_after_q_pass or p.injury_status)} | depth {p.position}{_v(p.depth_rank)} | played {_v(p.games_played_l4)} of last {_v(p.window_games_l4)} | last-4 touch share {_v(p.touch_share_l4)} | "
                 f"expected carry share {_v(p.carry_share_expected)} / target share {_v(p.target_share_expected)}"
                 + (f" | BENEFICIARY: {p.opportunity_note}" if p.opportunity_note else "")
             )

@@ -59,6 +59,7 @@ from nfl_dfs.matchup.context import MatchupFacetInputs, PlayerMatchupInput, buil
 from nfl_dfs.normalization.crosswalk import fetch_crosswalk
 from nfl_dfs.normalization.injury_lookup import (
     overlay_injury_report_exclusions,
+    overlay_official_game_status,
     resolve_questionable_players,
     team_injuries,
 )
@@ -231,6 +232,13 @@ def main() -> None:
         dk_injury_status, identities, official_entries, read_overrides(season=SEASON, week=WEEK), week=WEEK, as_of=_fetched_at[:16] + "Z",
         history=_history, stage=_stage,
     )
+    # An official Out/Doubtful the vendors don't carry (Darnold, Week 9) must still reach the pool and the packets.
+    dk_injury_status, _official_out_decisions = overlay_official_game_status(
+        dk_injury_status, identities, official_entries, week=WEEK, as_of=_fetched_at[:16] + "Z",
+    )
+    q_decisions = q_decisions + _official_out_decisions
+    if _official_out_decisions:
+        print(f"  Official Out/Doubtful the vendors missed ({len(_official_out_decisions)}): " + ", ".join(f"{d.name} ({d.team})" for d in _official_out_decisions))
     for o in unmatched_overrides:
         print(f"  WARNING: override {o.decision} for {o.name} ({o.team}) matched no eligible player -- typo, OUT/IR, or not Q/D; ignored")
     for label in ("cleared", "unresolved", "barred", "excluded"):
