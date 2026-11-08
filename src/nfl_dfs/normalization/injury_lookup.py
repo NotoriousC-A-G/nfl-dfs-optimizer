@@ -178,6 +178,7 @@ def overlay_injury_report_exclusions(
 
 _OFFICIAL_TO_DK_STATUS = {"Out": "OUT", "Doubtful": "D"}
 # Statuses a prior pass (the Q rule, an override, DK/RotoGrinders) already settled -- the official overlay never second-guesses them.
+_VENDOR_EXCLUDED_STATUSES = frozenset({"IR", "OUT", "D"})
 _SETTLED_STATUSES = frozenset({"IR", "OUT", "D", "Q", "BARRED", CLEARED_QUESTIONABLE_STATUS, UNRESOLVED_STATUS})
 
 
@@ -209,7 +210,11 @@ def overlay_official_game_status(
         if dk is None or dk.native_id is None:
             continue
         key = str(dk.native_id)
-        if merged.get(key) in _SETTLED_STATUSES:
+        current = merged.get(key)
+        if current in _SETTLED_STATUSES:
+            if current in _VENDOR_EXCLUDED_STATUSES:
+                # DK already holds him out (Darnold, Week 9): keep the status, but still say so in the packets, which read decisions.
+                decisions.append(AvailabilityDecision(identity.display_name, identity.team, "excluded", f"official game status {e.report_status}; vendor status {current}{stamp}", "official_report"))
             continue
         merged[key] = mapped
         decisions.append(AvailabilityDecision(identity.display_name, identity.team, "excluded", f"official game status {e.report_status}{stamp}", "official_report"))
