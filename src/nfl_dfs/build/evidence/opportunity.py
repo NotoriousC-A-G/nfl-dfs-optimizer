@@ -307,7 +307,7 @@ def _returner_expected(
     orig: dict[str, PlayerShares], scaled: dict[str, PlayerShares], returners: dict[str, PlayerShares], listed: dict[str, str], unavailable: dict,
 ) -> dict[str, ExpectedShare]:
     out: dict[str, ExpectedShare] = {}
-    back = ", ".join(r.name for r in returners.values())
+    back = ", ".join(sorted(r.name for r in returners.values()))  # sorted: set iteration order varies per process and would change the packet hash
     for pid, r in returners.items():
         out[pid] = ExpectedShare(
             r.prior_carry_share, r.prior_target_share, r.prior_carry_share, r.prior_target_share,
