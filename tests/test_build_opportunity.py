@@ -170,3 +170,14 @@ def test_a_returner_who_is_out_hands_nothing_back():
     t = trailing_shares(_hall_allen_pbp(), season=2026, through_week=7, played_weeks=played)["NYJ"]
     opp = redistribute("NYJ", t, {"HALL": ("HALL", "excluded")}, {"ALLEN": "RB"})
     assert "HALL" not in opp.expected and not opp.vacated  # his window share is 0: nothing to vacate, Allen keeps the role he has
+
+
+def test_the_returner_note_lists_names_in_a_fixed_order():
+    from nfl_dfs.build.evidence.opportunity import PlayerShares, _returner_expected
+    def sh(pid, name, c=0.0): return PlayerShares(pid, name, 0.0, 0.0, 0.0, 0.0, 0, 0, 4, prior_carry_share=c, prior_games=3, prior_last_week=3)
+    base = {"a": PlayerShares("a", "Z.Zed", 0.5, 0, 0, 0, 4, 4, 4), "r1": sh("r1", "X.Back", 0.3), "r2": sh("r2", "B.Back", 0.2)}
+    rets = {"r2": base["r2"], "r1": base["r1"]}
+    scaled = {**base, "a": PlayerShares("a", "Z.Zed", 0.25, 0, 0, 0, 4, 4, 4)}
+    a = _returner_expected(base, scaled, rets, {"a": "RB", "r1": "RB", "r2": "RB"}, {})
+    b = _returner_expected(base, scaled, dict(reversed(list(rets.items()))), {"a": "RB", "r1": "RB", "r2": "RB"}, {})
+    assert a["a"].note == b["a"].note and "B.Back, X.Back" in a["a"].note
