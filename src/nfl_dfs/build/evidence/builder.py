@@ -211,7 +211,9 @@ def build_evidence_packets(
                     r["identity"]["canonical_id"]: (r["identity"]["display_name"], _unavailable_status(r, decision_by_key))
                     for r in recs if _unavailable_status(r, decision_by_key)
                 }
-                listed = {r["identity"]["canonical_id"]: r["position"] for r in recs if r.get("salary") is not None}
+                # a player with no vendor projection is not playing (IR/OUT players have none): he must neither inherit a vacated role nor be handed a
+                # "returning" one back (Week 9: Pierce, Achane, Etienne, Dart ... are on IR yet were treated as available returners)
+                listed = {r["identity"]["canonical_id"]: r["position"] for r in recs if r.get("salary") is not None and r.get("projection") is not None}
                 opp_by_team[team] = redistribute(team, opportunity[team], out_players, listed)
                 gaps.extend(f"{team}: {u}" for u in opp_by_team[team].unassigned)
 
