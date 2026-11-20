@@ -88,14 +88,14 @@ from scripts.live_integration_check_projection import fetch_footballguys_raw, fe
 
 SEASON = 2026
 # NFL_DFS_WEEK is for dry runs of the build scripts against a saved earlier week (e.g. NFL_DFS_WEEK=4); unset in production.
-WEEK = int(os.environ.get("NFL_DFS_WEEK", 9))
+WEEK = int(os.environ.get("NFL_DFS_WEEK", 11))
 # Set to a specific DK draftGroupId to target that exact slate directly, bypassing auto-detection
 # entirely -- required once DK is serving more than one plausible main-shaped slate at once (a
 # real, live 2026-09-19 case; see ingestion.draftkings.fetch_slate_by_draft_group_id's own
 # docstring). Leave None to auto-detect (works fine when only one real main slate is live) -- if
 # auto-detection hits real ambiguity, it now fails loudly with the real candidate ids to choose
 # from here, rather than silently substituting an unrelated slate.
-DRAFT_GROUP_ID: int | None = 155994  # 2026-11-07: the 11-game Sunday-only main slate (week 9; DET@MIA ... ARI@SEA, no SNF/MNF). 155995 early-only, 155997 afternoon-only, 155996 Sun-Mon, 155999 primetime.
+DRAFT_GROUP_ID: int | None = 156561  # 2026-11-20: the 10-game Sunday-only main slate (week 11, no SNF/MNF; unlabeled). 156776 is Sun-Mon (12 games, includes SNF CIN@WAS), 156775 early-only, 156777 4:05, 156778 4:25, 156779 SNF.
 
 
 def main() -> None:
