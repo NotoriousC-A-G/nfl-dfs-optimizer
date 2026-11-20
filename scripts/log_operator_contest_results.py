@@ -33,67 +33,71 @@ from nfl_dfs.storage.contest_results_store import ContestResult, save_contest_re
 from nfl_dfs.storage.slate_snapshot_store import load_latest_slate_snapshot
 
 SEASON = 2026
-WEEK = 8
+WEEK = 9
 
 # (display_name, position_label, team) -- position_label is the DK roster-slot label (FLEX for
 # the flex slot, not the player's real position), matching every other writer of this field
 # (see `tracking/name_matching.parse_player_token`'s "Name (POS-TEAM)" contract).
 OPERATOR_LINEUPS: dict[str, list[tuple[str, str, str]]] = {
     "L1": [
-        ("Dak Prescott", "QB", "DAL"),
-        ("Rhamondre Stevenson", "RB", "NE"),
-        ("Bhayshul Tuten", "RB", "JAX"),
-        ("Zay Flowers", "WR", "BAL"),
-        ("CeeDee Lamb", "WR", "DAL"),
-        ("Michael Wilson", "WR", "ARI"),
-        ("Mason Taylor", "TE", "NYJ"),
-        ("Keon Coleman", "FLEX", "BUF"),
-        ("Broncos", "DST", "DEN"),
-    ],
-    "L2": [
-        ("Jacoby Brissett", "QB", "ARI"),
-        ("Rhamondre Stevenson", "RB", "NE"),
-        ("Javonte Williams", "RB", "DAL"),
+        ("Malik Willis", "QB", "MIA"),
+        ("Jahmyr Gibbs", "RB", "DET"),
+        ("Kenneth Walker III", "RB", "KC"),
         ("KC Concepcion Jr.", "WR", "CLE"),
         ("Omar Cooper Jr.", "WR", "NYJ"),
-        ("Ted Hurst III", "WR", "TB"),
-        ("Trey McBride", "TE", "ARI"),
-        ("Derrick Henry", "FLEX", "BAL"),
-        ("Rams", "DST", "LAR"),
+        ("DeMario Douglas", "WR", "NE"),
+        ("Greg Dulcich", "TE", "MIA"),
+        ("George Kittle", "FLEX", "SF"),
+        ("Eagles", "DST", "PHI"),
+    ],
+    "L2": [
+        ("Drew Lock", "QB", "SEA"),
+        ("Jonah Coleman", "RB", "DEN"),
+        ("Javonte Williams", "RB", "DAL"),
+        ("Malik Nabers", "WR", "NYG"),
+        ("Jaxon Smith-Njigba", "WR", "SEA"),
+        ("Jameson Williams", "WR", "DET"),
+        ("Greg Dulcich", "TE", "MIA"),
+        ("Devin Singletary", "FLEX", "NYG"),
+        ("Broncos", "DST", "DEN"),
     ],
     "L3": [
-        ("Joe Burrow", "QB", "CIN"),
-        ("Braelon Allen", "RB", "NYJ"),
-        ("Kenneth Walker III", "RB", "KC"),
-        ("Elic Ayomanor", "WR", "TEN"),
-        ("Zay Flowers", "WR", "BAL"),
-        ("Tee Higgins", "WR", "CIN"),
-        ("Brenton Strange", "TE", "JAX"),
-        ("Jonah Coleman", "FLEX", "DEN"),
-        ("Jets", "DST", "NYJ"),
+        ("Brock Purdy", "QB", "SF"),
+        ("Christian McCaffrey", "RB", "SF"),
+        ("Devin Singletary", "RB", "NYG"),
+        ("KC Concepcion Jr.", "WR", "CLE"),
+        ("Keenan Allen", "WR", "IND"),
+        ("Makai Lemon", "WR", "PHI"),
+        ("Brock Bowers", "TE", "LV"),
+        ("George Kittle", "FLEX", "SF"),
+        ("Packers", "DST", "GB"),
     ],
 }
 
-# Transcribed by hand from DK's GameCenter + entry-history export, 2026-11-07 (week 8, main slate 11/1 only).
+# Transcribed from DK's entry-history export, 2026-11-20 (week 9, main slate 11/8 only).
 # (lineup_label, contest_name, entries, positions_paid, total_prizes, rank, fpts, winnings)
 CONTEST_RESULTS: list[tuple[str, str, int, int, float, int, float, float]] = [
-    ("L3", "$7.5K Huddle [Single Entry]", 1783, 390, 7500, 207, 155.98, 10.0),
-    ("L3", "$6K Pylon [Single Entry]", 2378, 618, 6000, 296, 155.98, 6.0),
-    ("L2", "$7.5K Huddle [Single Entry]", 1783, 390, 7500, 1703, 74.06, 0.0),
-    ("L2", "$500K Play-Action [20 Entry Max]", 198176, 48591, 500000, 188525, 74.06, 0.0),
-    ("L1", "$500K Play-Action [20 Entry Max]", 198176, 48591, 500000, 108047, 115.60, 0.0),
-    ("L3", "$500K Play-Action [20 Entry Max]", 198176, 48591, 500000, 23860, 155.98, 5.0),
-    ("L3", "$50K Fair Catch [Single Entry]", 4901, 1046, 50000, 655, 155.98, 25.0),
-    ("L1", "$25K Pylon [Single Entry]", 9908, 2576, 25000, 5538, 115.60, 0.0),
-    ("L2", "$75K Fair Catch [Single Entry]", 7352, 1524, 75000, 7065, 74.06, 0.0),
-    ("L1", "$100K Fair Catch [Single Entry]", 9803, 1974, 100000, 5606, 115.60, 0.0),
-    ("L1", "$80K Huddle [$10K to 1st, Single Entry]", 19024, 4826, 80000, 10460, 115.60, 0.0),
-    ("L2", "$2.5M Fantasy Football Millionaire [$1M to 1st]", 147058, 30413, 2500000, 140547, 74.06, 0.0),
-    ("L1", "$2.5M Fantasy Football Millionaire [$1M to 1st]", 147058, 30413, 2500000, 81676, 115.60, 0.0),
-    ("L3", "$2.5M Fantasy Football Millionaire [$1M to 1st]", 147058, 30413, 2500000, 17448, 155.98, 30.0),
-    ("L2", "$100K First Down [20 Entry Max]", 118906, 32096, 100000, 113401, 74.06, 0.0),
-    ("L1", "$100K First Down [20 Entry Max]", 118906, 32096, 100000, 66421, 115.60, 0.0),
-    ("L3", "$100K First Down [20 Entry Max]", 118906, 32096, 100000, 15388, 155.98, 1.5),
+    ('L2', '$6K Pylon [Single Entry]', 2378, 618, 6000.0, 1940, 99.5, 0.0),
+    ('L3', '$50K Fair Catch [Single Entry]', 4901, 1046, 50000.0, 805, 140.48, 25.0),
+    ('L2', '$150K mini-MAX [150 Entry Max]', 356718, 75700, 150000.0, 293709, 99.5, 0.0),
+    ('L1', '$150K mini-MAX [150 Entry Max]', 356718, 75700, 150000.0, 121598, 130.52, 0.0),
+    ('L3', '$150K mini-MAX [150 Entry Max]', 356718, 75700, 150000.0, 69641, 140.48, 1.0),
+    ('L1', '$80K Huddle [$10K to 1st, Single Entry]', 19024, 4826, 80000.0, 5657, 130.52, 0.0),
+    ('L1', '$125K Fair Catch [Single Entry]', 12254, 2563, 125000.0, 3791, 130.52, 0.0),
+    ('L1', '$25K Pylon [Single Entry]', 9908, 2576, 25000.0, 3033, 130.52, 0.0),
+    ('L2', '$75K Fair Catch [Single Entry]', 7352, 1524, 75000.0, 5938, 99.5, 0.0),
+    ('L2', '$500K Flea Flicker [$100K to 1st]', 118906, 25250, 500000.0, 97110, 99.5, 0.0),
+    ('L1', '$500K Flea Flicker [$100K to 1st]', 118906, 25250, 500000.0, 38933, 130.52, 0.0),
+    ('L3', '$500K Flea Flicker [$100K to 1st]', 118906, 25250, 500000.0, 22261, 140.48, 8.0),
+    ('L2', '$2.5M Fantasy Football Millionaire [$1M to 1st]', 147058, 30413, 2500000.0, 116809, 99.5, 0.0),
+    ('L1', '$2.5M Fantasy Football Millionaire [$1M to 1st]', 147058, 30413, 2500000.0, 44235, 130.52, 0.0),
+    ('L3', '$2.5M Fantasy Football Millionaire [$1M to 1st]', 147058, 30413, 2500000.0, 24953, 140.48, 30.0),
+    ('L2', '$100K First Down [20 Entry Max]', 118906, 32096, 100000.0, 94516, 99.5, 0.0),
+    ('L1', '$100K First Down [20 Entry Max]', 118906, 32096, 100000.0, 37436, 130.52, 0.0),
+    ('L3', '$100K First Down [20 Entry Max]', 118906, 32096, 100000.0, 21029, 140.48, 1.5),
+    ('L2', '$500K Play-Action [20 Entry Max]', 198176, 48591, 500000.0, 155511, 99.5, 0.0),
+    ('L1', '$500K Play-Action [20 Entry Max]', 198176, 48591, 500000.0, 59399, 130.52, 0.0),
+    ('L3', '$500K Play-Action [20 Entry Max]', 198176, 48591, 500000.0, 33318, 140.48, 5.0),
 ]
 
 
