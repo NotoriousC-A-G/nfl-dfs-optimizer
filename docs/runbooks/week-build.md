@@ -1,8 +1,17 @@
 # Weekly build runbook (ADR-0046) -- from `main` only
 
 All commands: `PYTHONPATH=. .venv/bin/python scripts/<name>.py`. Live scripts run from `main`, never a feature branch (CLAUDE.md).
-Bump `WEEK` and `DRAFT_GROUP_ID` in `scripts/live_integration_check_dashboard.py` first (Week 5: draft group 154468 -- confirm it is the main slate).
+Bump the week constants first (checklist below). Week 5 main slate was draft group 154468, Week 6's was 154941 -- always confirm the draft group with Chris.
 `NFL_DFS_WEEK=<n>` overrides `WEEK` for dry runs against a saved earlier week; leave it unset for a real run.
+
+## Start of week -- constants checklist (nothing auto-detects the week)
+A stale constant produced wrong-week output twice in Week 6 (a dashboard run on Week 5 constants, and an injury capture saved as week 5). Bump all of these, then confirm each script's header prints the new week before trusting any output:
+- `scripts/live_integration_check_dashboard.py`: the `WEEK` default (the number inside `os.environ.get("NFL_DFS_WEEK", <n>)`) and `DRAFT_GROUP_ID`. `run_llm_stages.py`, `build_pool_lineups.py`, `render_evidence_packets.py` and `sunday_availability_check.py` all import these.
+- `scripts/official_injury_capture.py`: `TARGET_WEEK`.
+- `scripts/injury_snapshot_capture.py`: `TARGET_WEEK`.
+- After the slate: `scripts/log_operator_contest_results.py` (`WEEK`, `OPERATOR_LINEUPS`, `CONTEST_RESULTS`) and `scripts/run_postmortem.py` (`WEEK`).
+Finding the draft group: DK often serves several plausible slates at once (all-day, early-only, Sun-Mon, ...). Run `fetch_classic_draft_group_id()` from `nfl_dfs.ingestion.draftkings` with `DRAFT_GROUP_ID = None`; when it is ambiguous it raises an error listing every candidate with its games -- pick the all-day Sunday slate and confirm with Chris.
+Editing tip (macOS): `sed -i` needs `sed -i ''`; a failed `sed` in a `&&` chain silently leaves the old week in place, so re-read the constant after editing.
 
 ## Wed / Thu / Fri / Sat / Sun morning -- capture practice evidence
 `official_injury_capture.py` (archives the official report; the Wed -> Fri trajectory exists only if we capture it).
