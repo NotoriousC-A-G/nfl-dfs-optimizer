@@ -112,3 +112,25 @@ def test_parse_skips_placeholder_row_without_a_player():
     }}}
     assert [p.name for p in parse_user_projections(payload)] == ["Bo Nix"]
     assert [r.name for r in parse_projected_ownership(payload)] == ["Bo Nix"]
+
+
+def _row(i, name, team, slate):
+    return LineupHqOwnershipRow(native_id=str(i), name=name, position="WR", team=team, salary=5000, projected_ownership=5.0, slate=slate)
+
+
+def test_filter_by_slate_teams_keeps_mia_buf_tagged_sun_and_maps_rg_codes():
+    # Week 11 shape: RG tagged BUF/MIA rows SUN though the DK draft group includes MIA@BUF; RG uses KCC/JAC.
+    rows = [
+        _row(1, "James Cook", "BUF", "SUN"),
+        _row(2, "Tyreek Hill-ish", "MIA", "SUN"),
+        _row(3, "Kelce", "KCC", "MAIN"),
+        _row(4, "Jags WR", "JAC", "MAIN"),
+        _row(5, "Thursday Only", "PIT", "THU"),
+        _row(6, "SNF Only", "CIN", "SNF"),
+        _row(7, "Blank Team Main", None, "MAIN"),
+        _row(8, "Blank Team Thu", None, "THU"),
+    ]
+    kept = filter_to_main_slate(rows, slate_teams={"BUF", "MIA", "KC", "JAX"})
+    assert [r.name for r in kept] == ["James Cook", "Tyreek Hill-ish", "Kelce", "Jags WR", "Blank Team Main"]
+    # Legacy label-only behavior unchanged without slate_teams.
+    assert [r.name for r in filter_to_main_slate(rows)] == ["Kelce", "Jags WR", "Blank Team Main"]

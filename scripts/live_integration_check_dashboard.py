@@ -276,7 +276,7 @@ def main() -> None:
     leverage_by_native_id: dict[str, object] = {}
     if rg_payload:
         all_ownership_rows = parse_projected_ownership(rg_payload)
-        main_slate_rows = filter_to_main_slate(all_ownership_rows)
+        main_slate_rows = filter_to_main_slate(all_ownership_rows, slate_teams=dk_slate.teams)
         try:
             fbg_ownership = fetch_roster_percentages(WEEK)
             main_slate_rows, blend_report = blend_ownership_rows(main_slate_rows, fbg_ownership)

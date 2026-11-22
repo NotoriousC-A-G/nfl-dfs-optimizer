@@ -28,6 +28,11 @@ from typing import Sequence
 from nfl_dfs.analysis.ownership_calibration import CORE_POSITIONS, N_DECILES, ProductionCalibration
 from nfl_dfs.ingestion.rotogrinders import LineupHqOwnershipRow
 
+# Chalk needs BOTH a top-of-position rank AND meaningful absolute ownership for this slate: at least the
+# slate-wide (all core positions) top-decile cutoff of owned players' projected ownership, and above the
+# price-baseline when one exists. A flat position (Week 11 TE: Kelce 6.2%, McBride 5.25%) can rank top-10%
+# at its own position while being a differentiating ~6% play; a pure rank rule called those chalk.
+CHALK_SLATE_OWNERSHIP_PERCENTILE = 0.10
 # Relative thresholds only -- no fixed absolute ownership-percentage cap (see module docstring).
 CHALK_OWNERSHIP_PERCENTILE = 0.10
 LEVERAGE_SALARY_DECILE_MAX = 4
@@ -83,11 +88,21 @@ def _ownership_percentiles(rows: Sequence[LineupHqOwnershipRow]) -> dict[str, fl
     return percentiles
 
 
+def _chalk_floor(rows: Sequence[LineupHqOwnershipRow]) -> float:
+    """Slate-relative ownership floor for chalk: the ownership of the player at the top-decile boundary among
+    every owned (>0) core-position player on this slate -- never a fixed percentage."""
+    owned = sorted((r.projected_ownership for r in rows if r.projected_ownership > 0), reverse=True)
+    if not owned:
+        return float("inf")
+    index = max(0, int(len(owned) * CHALK_SLATE_OWNERSHIP_PERCENTILE) - 1)
+    return owned[index]
+
+
 def _note(row: LineupHqOwnershipRow, decile: int, baseline: float | None, deviation: float | None, is_chalk: bool, is_leverage: bool) -> str:
     if is_chalk:
         return (
-            f"Top decile of {row.position} ownership on this slate ({row.projected_ownership:.1f}% projected) "
-            "-- real chalk to build around or pointedly fade."
+            f"Top decile of {row.position} ownership on this slate AND high for the whole slate "
+            f"({row.projected_ownership:.1f}% projected) -- real chalk to build around or pointedly fade."
         )
     if is_leverage and baseline is not None and deviation is not None:
         return (
@@ -114,6 +129,7 @@ def build_leverage_assessments(
     salary_deciles = _salary_deciles(core_rows)
     ownership_percentiles = _ownership_percentiles(core_rows)
 
+    chalk_floor = _chalk_floor(core_rows)
     interim = []
     for row in core_rows:
         decile = salary_deciles[row.native_id]
@@ -121,7 +137,11 @@ def build_leverage_assessments(
         calibration = production.get(row.position)
         baseline = calibration.decile_ownership.get(decile) if calibration else None
         deviation = row.projected_ownership - baseline if baseline is not None else None
-        is_chalk = percentile <= CHALK_OWNERSHIP_PERCENTILE
+        is_chalk = (
+            percentile <= CHALK_OWNERSHIP_PERCENTILE
+            and row.projected_ownership >= chalk_floor
+            and (deviation is None or deviation > 0)
+        )
         interim.append((row, decile, percentile, baseline, deviation, is_chalk))
 
     # The leverage deviation cutoff is the bottom quartile of THIS slate's own deviation distribution among

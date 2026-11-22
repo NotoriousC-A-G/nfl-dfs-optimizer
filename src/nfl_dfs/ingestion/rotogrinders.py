@@ -18,12 +18,14 @@ from __future__ import annotations
 
 import re
 import time
+from collections.abc import Iterable
 from dataclasses import dataclass
 
 import requests
 
 from nfl_dfs.config import config
 from nfl_dfs.normalization.matcher import SourcePlayer
+from nfl_dfs.normalization.team_aliases import normalize_team
 
 LINEUPHQ_PAGE_URL = "https://rotogrinders.com/lineuphq/nfl"
 USER_INFO_URL = "https://rotogrinders.com/api/user-info"
@@ -228,13 +230,34 @@ def parse_projected_ownership(payload: dict) -> list[LineupHqOwnershipRow]:
 MAIN_SLATE_LABEL = "MAIN"
 
 
-def filter_to_main_slate(rows: list[LineupHqOwnershipRow]) -> list[LineupHqOwnershipRow]:
-    """Keeps only the combined Sunday main-slate rows (live-confirmed real `SLATE` value `"MAIN"`),
-    dropping the separate single-game slate windows (`WED`/`THU`/`SNF`/`MNF`) the same grid pull mixes in.
-    A player genuinely not part of the main slate correctly shows 0% ownership for it -- that is not the
-    same thing as a main-slate player being mispriced or underowned (ADR-0026).
+def filter_to_main_slate(
+    rows: list[LineupHqOwnershipRow], slate_teams: Iterable[str] | None = None
+) -> list[LineupHqOwnershipRow]:
+    """Keeps the rows for this week's main Classic slate, dropping the single-game windows
+    (`WED`/`THU`/`SNF`/`MNF`) the same grid pull mixes in. A player genuinely not part of the main slate
+    correctly shows 0% ownership for it -- that is not the same thing as a main-slate player being
+    mispriced or underowned (ADR-0026).
+
+    With `slate_teams` (canonical/DK team codes of the DraftKings slate actually being built, e.g.
+    `dk_slate.teams`), rows are selected by team, with RG's own codes (JAC/KCC/LVR/NOS/TBB...) mapped to
+    canonical -- NOT by the `MAIN` label alone. Week 11 real bug: RG tagged the 1:00 PM MIA@BUF game's rows
+    `SUN` while DK draft group 156561 included it, so the label-only filter silently dropped 28 rows
+    (Cook/Allen/Moore/Shakir/Knox/Coleman/Bills DST had no ownership). A team on the slate keeps its rows
+    whatever the label; a team off the slate (a THU/SNF/MNF-only game) is excluded. Rows with no team
+    fall back to the label (`MAIN` kept). Without `slate_teams`, the legacy label-only behavior applies.
     """
-    return [row for row in rows if row.slate == MAIN_SLATE_LABEL]
+    if slate_teams is None:
+        return [row for row in rows if row.slate == MAIN_SLATE_LABEL]
+    wanted = set(slate_teams)
+    kept = []
+    for row in rows:
+        team = normalize_team("rotogrinders", row.team) if row.team else None
+        if team is None:
+            if row.slate == MAIN_SLATE_LABEL:
+                kept.append(row)
+        elif team in wanted:
+            kept.append(row)
+    return kept
 
 
 def fetch_rotogrinders_ownership(

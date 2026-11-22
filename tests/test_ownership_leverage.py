@@ -86,3 +86,21 @@ def test_build_leverage_assessments_salary_deciles_and_ownership_percentiles_are
     assert top_qb.salary_decile == 0
     assert top_qb.ownership_percentile == 0.0
     assert top_qb.baseline_ownership is None  # no "QB" entry in this test's production dict
+
+
+def test_flat_position_top_rank_is_not_chalk_but_a_truly_high_owned_player_is():
+    # Week 11 shape: TE is flat (Kelce 6.2%, McBride 5.25% top the position) while a 62% RB sits on the
+    # same slate. Rank alone made the TEs chalk; chalk now also needs slate-relative absolute ownership.
+    rows = [
+        LineupHqOwnershipRow(native_id="te-1", name="Travis Kelce", position="TE", team="KCC", salary=4500, projected_ownership=6.2, slate="MAIN"),
+        LineupHqOwnershipRow(native_id="te-2", name="Trey McBride", position="TE", team="ARI", salary=6000, projected_ownership=5.25, slate="MAIN"),
+        LineupHqOwnershipRow(native_id="te-3", name="Other TE", position="TE", team="DAL", salary=3000, projected_ownership=2.0, slate="MAIN"),
+    ] + [
+        LineupHqOwnershipRow(native_id=f"rb-{i}", name=f"RB {i}", position="RB", team="DET", salary=9000 - 400 * i, projected_ownership=own, slate="MAIN")
+        for i, own in enumerate([62.0, 20.0, 15.0, 12.0, 10.0, 8.0, 7.0, 6.5, 5.0, 4.0, 3.0, 2.0])
+    ]
+    by_name = {a.name: a for a in build_leverage_assessments(rows, production={})}
+    assert by_name["RB 0"].is_chalk is True
+    assert by_name["Travis Kelce"].is_chalk is False
+    assert by_name["Trey McBride"].is_chalk is False
+    assert by_name["Travis Kelce"].ownership_percentile == 0.0  # still top of its position by rank
